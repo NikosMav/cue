@@ -27,6 +27,57 @@ function loadStore(fileContents) {
 const AVAILABLE = { available: true, appToken: 'pat_cue_x', disclosureVersion: 1 };
 const UNAVAILABLE = { available: false, appToken: '', disclosureVersion: 1 };
 
+test('external profile import is seen without restart; an old settings window cannot erase it', () => {
+  const { store, file, read } = loadStore({ apiKeys: { openai: 'test-only-key' }, resumeText: 'Original' });
+  const oldWindow = store.redactForRenderer(store.getSettings());
+  const imported = { ...read(), resumeText: 'Updated profile' };
+  fs.writeFileSync(file, JSON.stringify(imported));
+  assert.equal(store.getSettings().resumeText, 'Updated profile');
+  assert.throws(() => store.setRendererSettings(oldWindow), /Settings changed outside/);
+  assert.equal(read().resumeText, 'Updated profile');
+  assert.equal(read().apiKeys.openai, 'test-only-key');
+  const refreshed = store.redactForRenderer(store.getSettings());
+  refreshed.answerLength = 'balanced';
+  store.setRendererSettings(refreshed);
+  assert.equal(read().answerLength, 'balanced');
+  assert.equal(read().settingsMeta, undefined);
+});
+
+test('window movement and gateway updates do not invalidate a settings editor', () => {
+  const { store, read } = loadStore({ apiKeys: { openai: 'test-only' } });
+  const view = store.redactForRenderer(store.getSettings());
+  store.setSettings({ windowX: 23 });
+  store.setPublik({ balanceMicros: 50, apiKey: 'test-gateway-key' });
+  store.setRendererSettings({ ...view, answerLength: 'detailed' });
+  assert.equal(read().answerLength, 'detailed');
+  assert.equal(read().apiKeys.publik, 'test-gateway-key');
+  assert.equal(read().windowX, 23);
+});
+
+test('corrupt settings fail visibly without replacing existing data with blank defaults', () => {
+  const { store, file } = loadStore('{broken-json');
+  assert.throws(() => store.getSettings(), /Existing settings were not replaced/);
+  assert.throws(() => store.setSettings({ smart: true }), /Existing settings were not replaced/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{broken-json');
+});
+
+test('Windows UTF-8 BOM is accepted without losing saved credentials', () => {
+  const { store } = loadStore('\uFEFF' + JSON.stringify({ apiKeys: { openai: 'test-only' } }));
+  assert.equal(store.getSettings().apiKeys.openai, 'test-only');
+});
+
+test('a failed atomic replacement reports an error and keeps the original file', () => {
+  const { store, file, read } = loadStore({ apiKeys: { openai: 'test-only' }, answerLength: 'brief' });
+  const original = fs.readFileSync(file, 'utf8');
+  const rename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(new Error('test failure'), { code: 'EACCES' }); };
+  try { assert.throws(() => store.setSettings({ answerLength: 'detailed' }), /Could not save Cue settings/); }
+  finally { fs.renameSync = rename; }
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
+  assert.equal(read().apiKeys.openai, 'test-only');
+  assert.equal(store.getSettings().answerLength, 'brief');
+});
+
 test('old settings default to brief answers; style and screen preferences survive reload', () => {
   const { store, read } = loadStore({ provider: 'openai' });
   assert.equal(store.getSettings().answerLength, 'brief');

@@ -1,6 +1,7 @@
 // Simple JSON-file settings store (avoids native modules so `npm install` stays clean).
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 const { app } = require('electron');
 const { normalizeBaseUrl } = require('./openai-compatible');
 
@@ -108,9 +109,10 @@ const DEFAULTS = {
 
 // Fields the renderer may never write. settings:set passes patches through
 // stripRendererPatch; settings:get hands out redactForRenderer's view.
-const RENDERER_READ_ONLY = ['publik', 'shortcuts'];
+const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY'];
 
 let data = null;
+let hasSavedFile = false;
 
 function deepMerge(base, over) {
   const out = Array.isArray(base) ? base.slice() : { ...base };
@@ -129,15 +131,47 @@ function deepMerge(base, over) {
 }
 
 function load() {
-  if (data) return data;
-  try { data = deepMerge(DEFAULTS, JSON.parse(fs.readFileSync(FILE, 'utf8'))); }
-  catch { data = deepMerge(DEFAULTS, {}); }
-
-
+  // Read the current file: profile tools and another process may have changed it.
+  try {
+    const saved = JSON.parse(fs.readFileSync(FILE, 'utf8').replace(/^\uFEFF/, ''));
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
+    data = deepMerge(DEFAULTS, saved);
+    hasSavedFile = true;
+  } catch (error) {
+    if (error.code === 'ENOENT' && !hasSavedFile) data = deepMerge(DEFAULTS, {});
+    else throw new Error(`Cannot read Cue settings at ${FILE}. Existing settings were not replaced.`);
+  }
   return data;
 }
 // 0600: the file holds every BYO key and now a publik key. A no-op on Windows.
-function save() { try { fs.writeFileSync(FILE, JSON.stringify(data, null, 2), { mode: 0o600 }); } catch (e) { /* ignore */ } }
+function save() {
+  const temporary = `${FILE}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.renameSync(temporary, FILE);
+    hasSavedFile = true;
+  } catch {
+    try { fs.unlinkSync(temporary); } catch { /* best effort for our temporary file */ }
+    data = null;
+    throw new Error(`Could not save Cue settings at ${FILE}. Your previous file was kept.`);
+  }
+}
+
+function revision(settings) {
+  const editable = stripRendererPatch(settings);
+  delete editable.windowX;
+  delete editable.windowY;
+  return crypto.createHash('sha256').update(JSON.stringify(editable)).digest('hex');
+}
+
+function setRendererSettings(patch) {
+  const current = load();
+  if (patch.settingsMeta && patch.settingsMeta.revision !== revision(current)) {
+    throw new Error('Settings changed outside this window. Click Reload saved settings before making further edits.');
+  }
+  return module.exports.setSettings(stripRendererPatch(patch));
+}
 
 // Called by main.js at launch, before the window exists. publik becomes the
 // selected provider only where nothing works today: a build that carries an
@@ -168,6 +202,11 @@ function stripRendererPatch(patch) {
 function redactForRenderer(s) {
   return {
     ...s,
+    settingsMeta: {
+      file: FILE,
+      revision: revision(s),
+      keyProviders: Object.entries(s.apiKeys || {}).filter(([, value]) => typeof value === 'string' && value.trim()).map(([name]) => name)
+    },
     apiKeys: { ...(s.apiKeys || {}), publik: '' },
     publik: { ...(s.publik || {}), connected: !!(s.apiKeys && s.apiKeys.publik) }
   };
@@ -179,6 +218,8 @@ module.exports = {
   applyPublikDefault,
   stripRendererPatch,
   redactForRenderer,
+  setRendererSettings,
+  settingsFile: FILE,
   getSettings() { return load(); },
   // Main-process only: the provisioning flow writes the key and its state here.
   setPublik(patch) {

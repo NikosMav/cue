@@ -1281,17 +1281,29 @@
 
   // ---- settings ----------------------------------------------------------
   const scrim = $('#settings-scrim');
+  let settingsFormReady = false;
   async function closeSettings() {
     await stopRecording();
     if (await saveSettings()) scrim.classList.add('hidden');
   }
-  function openSettings() {
+  async function openSettings() {
+    settingsFormReady = false;
+    $('#s-close').disabled = true;
+    try { settings = await cue.settingsGet(); }
+    catch (error) {
+      scrim.classList.remove('hidden');
+      $('#s-status').textContent = error.message;
+      return;
+    }
     fillSettings();
+    settingsFormReady = true;
+    $('#s-close').disabled = false;
     scrim.classList.remove('hidden');
     refreshWhisperModels();
     refreshShortcuts();
   }
   $('#more-btn').addEventListener('click', openSettings);
+  $('#settings-reload').addEventListener('click', openSettings);
   $('#s-close').addEventListener('click', () => { void closeSettings(); });
   scrim.addEventListener('click', (e) => { if (e.target === scrim) void closeSettings(); });
 
@@ -1522,6 +1534,9 @@
   cue.on('publik:state', (state) => { publikState = state; renderPublikBlock(); maybeShowLowStarter(state); });
 
   function fillSettings() {
+    $('#settings-location').textContent = settings.settingsMeta?.file || 'Settings location unavailable';
+    const providers = settings.settingsMeta?.keyProviders || [];
+    $('#settings-keys-present').textContent = providers.length ? `Saved credentials / endpoints: ${providers.join(', ')}` : 'No saved credentials / endpoints';
     // Keys tab
     document.querySelectorAll('#provider-seg button').forEach((b) => b.classList.toggle('on', b.dataset.provider === settings.provider));
     $('#key-openai').value = settings.apiKeys.openai || '';
@@ -1821,6 +1836,8 @@
   cue.on('whisper:models-changed', () => refreshWhisperModels());
 
   async function saveSettings() {
+    // Never persist empty inputs before the asynchronous form load finishes.
+    if (!settingsFormReady) return false;
     // Keys
     settings.apiKeys.openai = $('#key-openai').value.trim();
     settings.apiKeys.anthropic = $('#key-anthropic').value.trim();

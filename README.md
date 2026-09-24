@@ -326,6 +326,33 @@ macOS quarantines unsigned downloads. Run `xattr -cr /Applications/cue.app` in T
 
 ## Privacy
 
+### Local configuration and agent access
+
+Settings → Keys shows the **active settings file** and the provider names with
+saved credentials, without displaying their values. Source and locally packaged
+builds can share an explicit directory: create an ignored `cue-local.json` in the
+repository root containing `{"userDataDirectory":"C:\\Dev\\CueData"}` after
+moving the existing user-data files there while Cue is closed. Local packages
+include this locator when present. Keep it out of generic public releases.
+
+The directory holds `cue-data.json`, sessions, downloaded speech models, and local
+backups. Without a locator, Cue keeps its normal Electron user-data location.
+`CUE_DATA_DIR` is an explicit override for isolated tests or another installation;
+a configured directory must exist, otherwise startup fails instead of silently
+opening an empty profile.
+
+Agents should use `node scripts/cue-config.js status` and compare its path with
+Settings → Keys. Do not assume a sandbox's AppData view is the app's configuration.
+To import preparation material, quit Cue and run
+`node scripts/cue-config.js import-profile <profile.json>`. Imports preserve keys,
+provider choices and models, and save a backup. Never paste the entire settings
+file into a chat or commit it to Git.
+
+Cue refreshes settings when the panel opens and rejects stale panel saves after
+external changes. **Reload saved settings** discards unsaved edits and reloads
+the active file. Writes are atomic; read/write failures are reported instead of
+silently substituting empty settings. Only one instance uses a given data directory.
+
 - No Cue accounts, hosted service, or telemetry. cue collects nothing.
 - Your API keys live in a local file (`cue-data.json`) and are sent only to the provider you chose.
 - When Custom is selected, its API key and LLM request data are sent to the Base URL you configured.

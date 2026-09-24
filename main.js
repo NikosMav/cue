@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCap
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+// Resolve before any module captures userData (settings, sessions or models).
+require('./src/config-path').configureUserData(app, __dirname);
+if (!app.requestSingleInstanceLock()) app.exit(0);
 const store = require('./src/store');
 const { captureScreenshot } = require('./src/screen');
 const { createSTT } = require('./src/stt');
@@ -36,6 +39,9 @@ const { locateWhisperRuntime } = require('./src/whisper-runtime');
 const { LocalWhisperTranscriber } = require('./src/local-whisper-transcriber');
 
 let win = null;
+app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+});
 // Which global shortcuts cue actually holds. `globalShortcut.register` returns
 // false when another application already owns the combination, and nothing used
 // to look at that — so the only symptom was a key that did nothing. Iris reads
@@ -731,7 +737,7 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
 // Redact on the way out, strip on the way in: the publik key never enters the
 // renderer, and the renderer's whole-object Save can never clobber it.
 ipcMain.handle('settings:get', () => store.redactForRenderer(store.getSettings()));
-ipcMain.handle('settings:set', (_e, patch) => { sttDisabled = false; return store.redactForRenderer(store.setSettings(store.stripRendererPatch(patch))); });
+ipcMain.handle('settings:set', (_e, patch) => { sttDisabled = false; return store.redactForRenderer(store.setRendererSettings(patch)); });
 
 // -------- publik API --------
 // Contract: ~/publik-api-research/CONTRACT.md. The key is minted only after

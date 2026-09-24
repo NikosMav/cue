@@ -13,6 +13,7 @@ process.on('uncaughtException', error => {
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-quit-smoke-'));
 app.setPath('userData', profile);
+process.env.CUE_DATA_DIR = profile;
 // Keep app-link discovery separate from any installed cue instance.
 process.env.LOCALAPPDATA = profile;
 const appLink = require('../vendor/app-link');
