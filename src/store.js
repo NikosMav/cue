@@ -69,9 +69,10 @@ const DEFAULTS = {
   answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
   includeScreen: true,  // Assist/Ask can run with conversation only.
   autoAnswer: false,
-  // Saved sessions (transcript + answers per interview). Off until the user
-  // turns it on; sessionsExportDir optionally keeps a Markdown copy of each.
-  saveSessions: false,
+  // Saved sessions (transcript + answers per interview), on by default and
+  // switched off in the Sessions panel; sessionsExportDir optionally keeps a
+  // Markdown copy of each.
+  saveSessions: true,
   sessionsExportDir: '',
   practiceVoice: true,  // Read practice questions aloud with the system voice.
   // Global shortcut overrides by action id (src/shortcuts.js); '' clears one.

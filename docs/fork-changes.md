@@ -60,7 +60,7 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   italics and labelled code blocks were added), with copy buttons for each
   code block and each answer. The renderer lives in `renderer/markdown.js`
   and is unit-tested.
-- Saved sessions (opt-in, Sessions panel): transcript turns and cue's answers
+- Saved sessions (on by default, switched off in the Sessions panel): transcript turns and cue's answers
   are saved per conversation as JSON under the user-data folder (atomic
   writes, debounced while live, flushed on clear, practice start and quit),
   with an optional Markdown copy in a chosen folder. Sessions can be searched,

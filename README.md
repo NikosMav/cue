@@ -226,7 +226,7 @@ The panel is see-through and click-through — the empty space around it never b
 
 Open **Sessions** (the archive icon next to the history button).
 
-- **Save sessions on this computer** (off by default) keeps every conversation: the interviewer's questions, your answers, and cue's suggestions. A session is saved as it goes, and closed when you **Clear History**, start practice, or quit. Audio is never saved.
+- **Save sessions on this computer** (on by default; untick it to stop) keeps every conversation: the interviewer's questions, your answers, and cue's suggestions. A session is saved as it goes, and closed when you **Clear History**, start practice, or quit. Audio is never saved.
 - **Markdown copy:** choose a folder and cue keeps a readable `.md` copy of each session there, which works with Obsidian, VS Code, Notion import, Google Docs or any synced folder. Any session can also be exported with **Export .md**.
 - **Search** across questions, answers and debriefs, and open a session to read the whole conversation.
 - **Debrief** asks your chat model for a review of a session: a summary, the questions asked and how you answered, what went well, what to improve (with stronger versions of the weakest answers, using only your real facts), follow-ups for a thank-you note, and notes to add to your prep material. It is saved with the session.
@@ -331,7 +331,7 @@ macOS quarantines unsigned downloads. Run `xattr -cr /Applications/cue.app` in T
 - When Custom is selected, its API key and LLM request data are sent to the Base URL you configured.
 - Your optional résumé and prep notes also live in `cue-data.json` and are sent with each non-coding model request to your selected AI provider. They are stored as plain text; clear them in Settings to remove them. Names and technologies extracted from them are sent to your cloud speech provider as vocabulary hints.
 - In Local transcription mode, microphone and meeting audio stay on your computer. In cloud transcription modes, audio is sent only to the selected speech provider.
-- Cue never writes captured audio to disk. The transcript stays in memory unless you turn on **Sessions → Save sessions on this computer**; then each conversation's transcript and cue's answers are saved as plain JSON under cue's user-data folder (and, if you choose a folder, as a Markdown copy there). Saving is off by default, and sessions can be deleted one by one. Downloaded local model files remain on disk until you delete them.
+- Cue never writes captured audio to disk. By default each conversation's transcript and cue's answers are saved as plain JSON under cue's user-data folder (and, if you choose a folder, as a Markdown copy there), so you can review and debrief them later. Turn this off under **Sessions → Save sessions on this computer** to keep transcripts in memory only; sessions already saved can be deleted one by one. Downloaded local model files remain on disk until you delete them.
 - A debrief sends that session's transcript and your prep notes to your selected chat provider, the same as any other request.
 - Screenshots are sent to your selected chat provider only when a feature needs the screen.
 
