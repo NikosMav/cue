@@ -13,6 +13,7 @@ const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
 const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
+const { detectConsoleSession } = require('./src/windows-session');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
@@ -77,15 +78,16 @@ const WIN_SUPPORTS_CONTENT_PROTECTION = !isWindows || WIN_BUILD >= 19041;
 // cue-windows-overlay-not-visible-for-mic-grant: PrintWindow(PW_RENDERFULLCONTENT)
 // sampled zero color variance, and a full-desktop screenshot showed the
 // always-on-top window occluding nothing, only ever reproduced with
-// protection on and never with it off). Windows sets the SESSIONNAME
-// environment variable to exactly "Console" for a locally-attached
-// interactive session; every remoted session gets a different value
-// (e.g. "RDP-Tcp#3"), and a non-interactive/service context has none at
-// all. Anything other than a confirmed local console session is treated as
-// unsafe to protect: a window the user can see (even if a screen-share
-// viewer also could) is strictly better than a window that is invisible to
-// everyone, including the user trying to grant it microphone access.
-const WIN_IS_LOCAL_CONSOLE_SESSION = !isWindows || process.env.SESSIONNAME === 'Console';
+// protection on and never with it off). Windows names the locally-attached
+// interactive session exactly "Console"; every remoted session gets a
+// different name (e.g. "RDP-Tcp#3"). The name is read from Windows for this
+// process (src/windows-session.js), not from the SESSIONNAME variable alone,
+// which launchers can drop or leave stale. Anything other than a confirmed
+// local console session is treated as unsafe to protect: a window the user
+// can see (even if a screen-share viewer also could) is strictly better than
+// a window that is invisible to everyone, including the user trying to grant
+// it microphone access. Resolved once in app.whenReady(), before any window.
+let winSession = { local: !isWindows, sessionName: '', source: isWindows ? 'unknown' : 'platform' };
 
 let permWin = null;
 // Windows never blocks startup on an unresolved permission (see app.whenReady()
@@ -304,11 +306,11 @@ function createWindow() {
 
   // Fix 2: Only call setContentProtection if the OS supports it, and only on
   // a session where it will not blank the window out for the user themself
-  // (see WIN_IS_LOCAL_CONSOLE_SESSION above — RDP/VM/Cloud-PC-style sessions
+  // (see winSession above — RDP/VM/Cloud-PC-style sessions
   // render a WDA_EXCLUDEFROMCAPTURE window fully invisible, not just hidden
   // from capture). On older builds, or a non-local-console Windows session,
   // we skip it silently and send a warning to the renderer instead.
-  const shouldProtect = !process.env.CUE_NO_PROTECT && WIN_IS_LOCAL_CONSOLE_SESSION;
+  const shouldProtect = !process.env.CUE_NO_PROTECT && winSession.local;
   if (shouldProtect) {
     if (WIN_SUPPORTS_CONTENT_PROTECTION) {
       win.setContentProtection(true);
@@ -316,8 +318,8 @@ function createWindow() {
       // Will notify the renderer after it loads
       console.log(`[cue] Windows build ${WIN_BUILD} < 19041 — setContentProtection not supported. Window may appear in screen shares.`);
     }
-  } else if (isWindows && !WIN_IS_LOCAL_CONSOLE_SESSION && !process.env.CUE_NO_PROTECT) {
-    console.log(`[cue] Windows session is not a local console session (SESSIONNAME=${process.env.SESSIONNAME}) — skipping setContentProtection so the window stays visible to you. Window may appear in screen shares.`);
+  } else if (isWindows && !winSession.local && !process.env.CUE_NO_PROTECT) {
+    console.log(`[cue] Windows session is not a local console session (session=${winSession.sessionName || 'unknown'}, from ${winSession.source}) — skipping setContentProtection so the window stays visible to you. Window may appear in screen shares.`);
   }
 
   win.setAlwaysOnTop(true, 'screen-saver', 1);
@@ -349,8 +351,8 @@ function createWindow() {
       });
     }
     // Warn when protection was skipped because this is not a local console
-    // session (RDP / Cloud PC / VM console) — see WIN_IS_LOCAL_CONSOLE_SESSION.
-    if (isWindows && !process.env.CUE_NO_PROTECT && !WIN_IS_LOCAL_CONSOLE_SESSION) {
+    // session (RDP / Cloud PC / VM console) — see winSession.
+    if (isWindows && !process.env.CUE_NO_PROTECT && !winSession.local) {
       send('status', {
         message: 'Heads up: screen-share hiding is off for this session (remote desktop / cloud PC / VM sessions can render the window invisible to you as well when it is on). The window will be visible in screen shares here.'
       });
@@ -1511,6 +1513,7 @@ app.whenReady().then(async () => {
       return;
     }
   } else if (isWindows) {
+    winSession = await detectConsoleSession();
     // Windows has no OS-level modal permission dialog to block startup on —
     // there is no askForMediaAccess() equivalent, and the only way to change
     // the mic toggle is to leave the app and use Settings — so unlike macOS
