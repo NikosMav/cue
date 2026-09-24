@@ -188,6 +188,22 @@ test('practice questions come from the target role and avoid repeats', () => {
   assert.match(request.turns[0].text, /Why do you want this role\?/);
 });
 
+test('the first practice question greets instead of thanking for an answer that was never given', () => {
+  const request = buildPromptRequest(profile, 'practiceQuestion', []);
+  assert.match(request.turns[0].text, /nothing has been said yet/);
+  assert.match(request.turns[0].text, /Do not thank them for, or refer to, any earlier answer/);
+  assert.doesNotMatch(request.system, /You may open with one short, neutral acknowledgement/);
+  assert.doesNotMatch(request.turns[0].text, /acknowledgement/);
+});
+
+test('practice may acknowledge and probe only an answer that follows the last question', () => {
+  const answered = buildPromptRequest(profile, 'practiceQuestion', [at('them', 'Why this role?', 1000), at('you', 'Because of payments.', 5000)]);
+  assert.match(answered.turns[0].text, /has answered your last question.*acknowledgement.*follow-up/s);
+  const skipped = buildPromptRequest(profile, 'practiceQuestion', [at('them', 'First?', 1000), at('you', 'An answer.', 2000), at('them', 'Why this role?', 3000)]);
+  assert.match(skipped.turns[0].text, /skipped your last question/);
+  assert.doesNotMatch(skipped.turns[0].text, /You may open/);
+});
+
 test('practice feedback rates the answer given after the latest question', () => {
   const t = [
     at('them', 'First question?', 1000), at('you', 'Old answer.', 2000),

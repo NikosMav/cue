@@ -274,18 +274,34 @@ const MODES = {
       return applyRules(buildSystem(
         'You are a realistic, friendly interviewer running a mock interview for the target role in the reference material. ' +
         BASE_RULES +
-        'Ask exactly ONE question, worded as you would say it aloud. You may open with one short, neutral acknowledgement of the previous answer. ' +
+        'Ask exactly ONE question, worded as you would say it aloud. ' +
         'No numbering, no headings, no hints, and never answer your own question. ' +
         'Across the interview, mix behavioral, motivation, experience and technical questions that fit the job description and the candidate\'s background. ' +
-        'Do not repeat a question already asked. About one time in three, ask a natural follow-up that probes the candidate\'s last answer instead of changing topic. ' +
+        'Do not repeat a question already asked. ' +
+        'Refer to or thank the candidate for an answer only when the conversation shows they gave one; the instruction after the conversation says whether they did. ' +
         'If there is no job description, interview for the role the background suggests.',
         contextBlock
       ), aiRules, 'practiceQuestion');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 30);
-      return (t ? 'Interview so far ("Them" is you, the interviewer; "You" is the candidate):\n' + t + '\n\n' : 'The interview is starting.\n\n') +
-        'Ask the next question.';
+      // Whether to acknowledge or probe depends on what was actually said: a
+      // standing "you may acknowledge the previous answer" made the model thank
+      // the candidate for an answer on the very first question, and after a
+      // skipped question.
+      const turns = ctx.transcript || [];
+      const t = formatTranscript(turns, 30);
+      if (!t) {
+        return 'The interview is starting; nothing has been said yet. Greet the candidate in a few words and ask an opening question. ' +
+          'Do not thank them for, or refer to, any earlier answer: there is none.';
+      }
+      let lastQuestion = turns.length - 1;
+      while (lastQuestion >= 0 && turns[lastQuestion].channel !== 'them') lastQuestion--;
+      const answered = turns.slice(lastQuestion + 1).some((turn) => turn.channel === 'you' && turn.text.trim());
+      return 'Interview so far ("Them" is you, the interviewer; "You" is the candidate):\n' + t + '\n\n' +
+        (answered
+          ? 'The candidate has answered your last question. You may open with one short, neutral acknowledgement. About one time in three, ask a natural follow-up that probes that answer instead of changing topic.'
+          : 'The candidate skipped your last question without answering. Do not acknowledge or follow up on an answer; move on to a different question.') +
+        '\n\nAsk the next question.';
     }
   },
 
