@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 const originalLoad = Module._load;
 let receivedSignal;
+let anthropicBody;
 const openaiChunks = [{ choices: [{ delta: { content: 'ok' } }] }];
 
 class FakeOpenAI {
@@ -18,7 +19,8 @@ Module._load = function(request, parent, isMain) {
   if (request === 'openai') return FakeOpenAI;
   if (request === '@anthropic-ai/sdk') return class {
     constructor() {
-      this.messages = { create: async (_body, options) => {
+      this.messages = { create: async (body, options) => {
+        anthropicBody = body;
         receivedSignal = options.signal;
         return [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }];
       } };
@@ -58,3 +60,24 @@ for (const provider of ['openai', 'custom', 'publik', 'groq', 'minimax', 'azure'
     }
   });
 }
+
+test('Anthropic system prompt marks the stable reference prefix for caching', () => {
+  const { anthropicSystem } = require('../src/llm');
+  const blocks = anthropicSystem('REFERENCE\n\nMode rules.', 'REFERENCE');
+  assert.deepEqual(blocks, [
+    { type: 'text', text: 'REFERENCE', cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: '\n\nMode rules.' }
+  ]);
+  assert.equal(anthropicSystem('Mode rules.', ''), 'Mode rules.');
+  assert.equal(anthropicSystem('Mode rules.', 'OTHER'), 'Mode rules.');
+});
+
+test('a per-request token budget and cache prefix reach the provider', async () => {
+  const llm = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: {} });
+  await llm.stream({ system: 'REF\n\nRules', cachePrefix: 'REF', maxTokens: 4096, turns: [{ role: 'user', text: 'q' }], onToken: () => {} });
+  assert.equal(anthropicBody.max_tokens, 4096);
+  assert.equal(anthropicBody.system[0].cache_control.type, 'ephemeral');
+  await llm.stream({ system: 'Rules', turns: [{ role: 'user', text: 'q' }], onToken: () => {} });
+  assert.equal(anthropicBody.max_tokens, 700);
+  assert.equal(anthropicBody.system, 'Rules');
+});

@@ -179,6 +179,15 @@ each non-coding request. Longer notes increase request size; keep them focused a
 mark unknown or conditional personal details clearly. Clearing the field removes
 the saved reference.
 
+Every non-coding request includes all of your prep material (résumé, job
+description, STAR stories, motivation, work style, compensation preference,
+questions to ask and the knowledge base), so the model always has the facts it
+needs. Each field is bounded generously (the résumé at 12,000 characters) and
+anything cut is marked as truncated. With Anthropic, this block is marked for
+prompt caching so repeated questions start answering faster. Names and
+technologies from the same material are passed to speech-to-text as vocabulary
+hints (Whisper prompt, Deepgram keyterms).
+
 **Settings → Style → Answer length** defaults to **Brief**: usually 2–3 sentences,
 with the answer first, one supporting detail, and no repeated conclusion. Choose
 Balanced or Detailed for a fuller explanation. Explicit requests for more detail
@@ -292,7 +301,7 @@ Run `xattr -cr /Applications/cue.app` in Terminal once (see Install → Option A
 - No Cue accounts, hosted service, or telemetry. cue collects nothing.
 - Your API keys live in a local file (`cue-data.json`) and are sent only to the provider you chose.
 - When Custom is selected, its API key and LLM request data are sent to the Base URL you configured.
-- Your optional résumé text also lives in `cue-data.json` and is sent with each model request to your selected AI provider. It is stored as plain text; clear it in Settings to remove it.
+- Your optional résumé and prep notes also live in `cue-data.json` and are sent with each non-coding model request to your selected AI provider. They are stored as plain text; clear them in Settings to remove them. Names and technologies extracted from them are sent to your cloud speech provider as vocabulary hints.
 - In Local transcription mode, microphone and meeting audio stay on your computer. In cloud transcription modes, audio is sent only to the selected speech provider.
 - Audio utterances and the current transcript stay in memory; Cue does not write captured audio to disk. Downloaded local model files remain on disk until you delete them.
 - Screenshots are sent to your selected chat provider only when a feature needs the screen.

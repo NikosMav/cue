@@ -49,3 +49,43 @@ test('Deepgram drops hallucinated finals', () => {
   d._handleMessage({ type: 'Results', is_final: true, speech_final: true, channel: { alternatives: [{ transcript: 'Thank you.' }] } });
   assert.deepEqual(finals, []);
 });
+
+test('vocabulary comes from the candidate profile, job-description terms first', () => {
+  const { extractProfileTerms } = require('../src/stt');
+  const terms = extractProfileTerms({
+    jobDescription: 'The team uses Node.js, gRPC and C++ on k8s. Experience with Stripe is a plus.',
+    resumeText: 'Jane Doe\nLed the migration to Kubernetes at PayCo. Built pipelines in Terraform.'
+  });
+  for (const term of ['Node.js', 'gRPC', 'C++', 'k8s', 'Stripe', 'Kubernetes', 'PayCo', 'Terraform']) {
+    assert.ok(terms.includes(term), term);
+  }
+  assert.ok(terms.indexOf('Stripe') < terms.indexOf('PayCo'), 'job description ranks first');
+  for (const noise of ['The', 'Experience', 'Led', 'Built']) assert.ok(!terms.includes(noise), noise);
+
+  const prompt = buildVocabPrompt({ jobDescription: 'Snowflake dbt Airflow' });
+  assert.ok(prompt.startsWith('Snowflake'), prompt);
+  assert.ok(!/CodeCommit|CodePipeline/.test(prompt), 'no hard-coded DevOps-only list');
+});
+
+test('Deepgram receives profile terms as nova-3 keyterms', () => {
+  const Module = require('node:module');
+  const originalLoad = Module._load;
+  let url;
+  Module._load = function(request, parent, isMain) {
+    if (request === 'ws') return class { constructor(u) { url = u; } on() {} };
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    const { createStreamingSTT } = require('../src/stt-streaming');
+    const noop = () => {};
+    const stt = createStreamingSTT(
+      { sttProvider: 'deepgram', apiKeys: { deepgram: 'k' }, jobDescription: 'We use Snowflake and dbt Cloud.' },
+      'them', { onTranscript: noop, onInterim: noop, onError: noop, onStatusChange: noop });
+    stt.instance.connect();
+    const params = new URL(url).searchParams;
+    assert.ok(params.getAll('keyterm').includes('Snowflake'));
+    assert.ok(params.getAll('keyterm').length <= 40);
+  } finally {
+    Module._load = originalLoad;
+  }
+});

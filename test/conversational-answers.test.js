@@ -26,13 +26,15 @@ test('current conversational questions are classified independently of an earlie
   }
 });
 
-test('selected and typed questions select their own reference context', () => {
+test('selected and typed questions choose the category; all reference material is always available', () => {
   for (const mode of ['ask', 'answerThis']) {
     const request = buildPromptRequest(settings, mode,
       [them('Tell me about a time you failed.')], 'What are your salary expectations?');
     assert.equal(request.category, 'compensation');
     assert.match(request.system, /Prefer to discuss the scope before compensation/);
-    assert.doesNotMatch(request.system, /Fixed a duplicate import/);
+    // A wrong category guess must never hide the facts an answer needs.
+    assert.match(request.system, /Fixed a duplicate import/);
+    assert.match(request.system, /Management goals are unconfirmed/);
   }
 });
 

@@ -6,6 +6,11 @@ const DEFAULT_PRE_ROLL_MS = 300;
 const DEFAULT_MIN_UTTERANCE_MS = 180;
 const DEFAULT_MAX_UTTERANCE_MS = 25000;
 const DEFAULT_OVERLAP_MS = 300;
+// Remote meeting audio gets a slightly more forgiving end-of-speech window.
+const CHANNEL_VAD_OPTIONS = Object.freeze({
+  you: Object.freeze({ onsetThreshold: 220, offsetThreshold: 130, silenceFrames: 18 }),
+  them: Object.freeze({ onsetThreshold: 200, offsetThreshold: 120, silenceFrames: 20 })
+});
 
 class UtteranceSegmenter {
   /** Segment one PCM channel into bounded utterances without writing audio to disk. */
@@ -133,5 +138,6 @@ module.exports = {
   DEFAULT_PRE_ROLL_MS,
   DEFAULT_MIN_UTTERANCE_MS,
   DEFAULT_MAX_UTTERANCE_MS,
-  DEFAULT_OVERLAP_MS
+  DEFAULT_OVERLAP_MS,
+  CHANNEL_VAD_OPTIONS
 };

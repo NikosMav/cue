@@ -9,10 +9,30 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
 - Brief spoken answers by default, with Balanced and Detailed options under
   Settings → Style. The model should answer first, give one supporting detail,
   then stop. Removed conflicting mandatory STAR expansion and generic role pitches.
-- Current-question classification replaces matching against five concatenated
-  interviewer turns. Typed and selected questions choose their own reference
-  context. Prompt construction happens before screen capture so a new transcript
-  event cannot change an already-started request.
+- The current question is the interviewer's latest turn plus the directly
+  preceding interviewer turns spoken within 20 seconds (a short acknowledgement
+  such as "mm-hm" does not split it). Speech providers end turns at short
+  pauses, so a question used to be classified and answered from its last
+  fragment. Say and Assist restate the joined question to the model. Prompt
+  construction happens before screen capture so a new transcript event cannot
+  change an already-started request.
+- All prep material is sent with every non-coding request instead of a subset
+  chosen by a keyword guess at the question type. The old selection clipped the
+  résumé to a few regex-parsed sections of at most 800 characters (a six-job
+  résumé lost half its jobs and its education on technical questions) and hid
+  stories, work style or compensation preferences whenever a question was
+  misclassified. The category now only labels the answer in the UI. The block
+  is a stable prompt prefix and is marked for Anthropic prompt caching.
+- Batch transcription (OpenAI Whisper, Groq, Gemini, Custom) sends one request
+  per utterance, cut at pauses by the voice-activity segmenter local Whisper
+  uses, instead of a fixed 900 ms slice. In an end-to-end run with a synthetic
+  3 s + 2 s speech pattern this went from 28 requests of 0.8–1.0 s audio to 8
+  requests of whole utterances, so words are no longer split across requests.
+- Speech-to-text vocabulary hints come from the job description, résumé and
+  notes (job-description terms first) instead of a fixed DevOps list, and are
+  also sent to Deepgram Nova-3 as keyterms.
+- The coding solver may use up to 4,096 output tokens; the 700-token fast-mode
+  budget for spoken answers could cut a solution off mid-code.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context

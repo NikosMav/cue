@@ -1,4 +1,4 @@
-const { UtteranceSegmenter } = require('./utterance-segmenter');
+const { UtteranceSegmenter, CHANNEL_VAD_OPTIONS } = require('./utterance-segmenter');
 const { WhisperServerSession } = require('./whisper-server-session');
 
 const CHANNELS = Object.freeze(['you', 'them']);
@@ -34,14 +34,9 @@ class LocalWhisperTranscriber {
     this.discardPendingJobs = false;
     await this.session.start();
     for (const channel of CHANNELS) {
-      const isRemoteAudio = channel === 'them';
       this.segmenters.set(channel, this.segmenterFactory({
         channel,
-        vadOptions: {
-          onsetThreshold: isRemoteAudio ? 200 : 220,
-          offsetThreshold: isRemoteAudio ? 120 : 130,
-          silenceFrames: isRemoteAudio ? 20 : 18
-        },
+        vadOptions: { ...CHANNEL_VAD_OPTIONS[channel] },
         onSpeechState: (speechChannel, speaking, durationMs) => {
           this.onSpeechState(speechChannel, speaking, durationMs);
         },

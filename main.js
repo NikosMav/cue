@@ -8,8 +8,8 @@ const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest } = require('./src/prompts');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
-const { rms16 } = require('./src/wav');
 const { createStreamingSTT } = require('./src/stt-streaming');
+const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
@@ -86,14 +86,11 @@ let appLaunched = false;
 // -------- capture / transcript state --------
 const state = { capturing: false, busy: false, transcribing: { you: false, them: false } };
 let sttDisabled = false; // set when the key can't reach any speech model (stops retry spam)
-const buffers = { you: [], them: [] };
 const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TURNS
 const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
-const FLUSH_MS = 900;
 const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
-const MIN_BYTES = Math.floor(16000 * 2 * 0.12); // ~0.12s
-const RMS_GATE = 180;
-let flushTimer = null;
+let batchTranscriber = null;
+let batchStt = { settings: null, stt: null };
 let whisperModelManager = null;
 let localWhisperTranscriber = null;
 let activeWhisperModelId = null;
@@ -319,40 +316,55 @@ function createWindow() {
   });
 }
 
-// -------- STT flushing (batch mode fallback) --------
-async function flushChannel(channel) {
-  if (state.transcribing[channel]) return;
-  const chunks = buffers[channel];
-  if (!chunks.length) return;
-  const pcm = Buffer.concat(chunks);
-  buffers[channel] = [];
-  if (pcm.length < MIN_BYTES) return;
-  if (rms16(pcm) < RMS_GATE) return; // silence gate
+// -------- batch STT (cloud providers without a streaming protocol) --------
+// Reuse one STT client per settings snapshot so its quota cooldown persists
+// between utterances, while a key changed in Settings takes effect at once
+// (store.setSettings replaces the settings object).
+function currentBatchSTT() {
+  const settings = store.getSettings();
+  if (batchStt.settings !== settings) batchStt = { settings, stt: createSTT(settings) };
+  return batchStt;
+}
 
+async function transcribeUtterance(channel, pcm) {
+  const { settings, stt } = currentBatchSTT();
+  if (!stt.available) {
+    if (!sttDisabled) { sttDisabled = true; send('status', { message: 'No transcription key set. Add an OpenAI (Whisper), Deepgram, or Gemini key in Settings to enable listening. Screen/LeetCode features work without it.' }); }
+    return '';
+  }
   state.transcribing[channel] = true;
   try {
-    const settings = store.getSettings();
-    const stt = createSTT(settings);
-    if (!stt.available) {
-      if (!sttDisabled) { sttDisabled = true; send('status', { message: 'No transcription key set. Add an OpenAI (Whisper), Deepgram, or Gemini key in Settings to enable listening. Screen/LeetCode features work without it.' }); }
-      return;
-    }
     const res = await stt.transcribe(pcm);
     if (res.error) {
       handleSttError(res.error, settings);
-      return;
+      return '';
     }
-    if (res.text && res.text.trim() && res.text.trim().length > 1 && !/^[?!.,;:\-…]+$/.test(res.text.trim())) {
-      const turn = { channel, text: res.text.trim(), ts: Date.now() };
-      pushTranscript(turn);
-      send('transcript', turn);
-    }
-  } catch (e) {
-    console.log('[stt] error', e && e.message);
-    recordEvent({ level: 'error', event: 'stt_failed', msg: e && e.message ? e.message : String(e), frame: 'flushChannel', context: { channel } });
+    const text = (res.text || '').trim();
+    return text.length > 1 && !/^[?!.,;:\-…]+$/.test(text) ? text : '';
   } finally {
     state.transcribing[channel] = false;
   }
+}
+
+function startBatchTranscription() {
+  if (batchTranscriber) return;
+  batchTranscriber = new BatchTranscriber({
+    transcribe: transcribeUtterance,
+    onTranscript: publishTranscript,
+    onSpeechState: (channel, speaking, durationMs) => send('vad:state', { channel, speaking, durationMs }),
+    onError: (e, channel) => {
+      console.log('[stt] error', e && e.message);
+      recordEvent({ level: 'error', event: 'stt_failed', msg: e && e.message ? e.message : String(e), frame: 'transcribeUtterance', context: { channel } });
+    }
+  });
+  batchTranscriber.start();
+}
+
+function stopBatchTranscription() {
+  if (!batchTranscriber) return;
+  // Speech already captured is still transcribed after listening stops.
+  batchTranscriber.stop();
+  batchTranscriber = null;
 }
 
 function handleSttError(err, settings) {
@@ -378,12 +390,6 @@ function handleSttError(err, settings) {
   }
 }
 
-function startFlushLoop() {
-  if (flushTimer) return;
-  flushTimer = setInterval(() => { flushChannel('you'); flushChannel('them'); }, FLUSH_MS);
-}
-function stopFlushLoop() { if (flushTimer) { clearInterval(flushTimer); flushTimer = null; } }
-
 // -------- streaming STT setup --------
 function initStreamingSTT() {
   const settings = store.getSettings();
@@ -406,7 +412,7 @@ function initStreamingSTT() {
         stopStreamingSTT(); // close WebSockets and clear keep-alive intervals
         if (batchFallbackAvailable) {
           send('status', { message: `Streaming transcription (${err.provider}) error: ${err.message}. Falling back to batch mode.` });
-          startFlushLoop();
+          if (state.capturing) startBatchTranscription();
         } else if (!sttDisabled) {
           sttDisabled = true;
           send('status', { message: `Transcription stopped (${err.provider}): ${err.message}. The selected provider has no batch fallback.` });
@@ -450,18 +456,14 @@ function routeAudio(channel, pcmBuffer) {
     return;
   }
 
-  // Always run through VAD for speech state detection
-  vad[channel].processChunk(buf);
-
-  // Keep pre-speech buffer
-  ringBuffers[channel].write(buf);
-
   if (streamingMode && streamingSTT[channel]) {
-    // Streaming mode: send raw PCM directly to the WebSocket
+    // Streaming mode: VAD drives the speech indicator; the provider segments.
+    vad[channel].processChunk(buf);
+    ringBuffers[channel].write(buf);
     streamingSTT[channel].sendAudio(pcmBuffer);
-  } else {
-    // Batch mode: accumulate in buffers for periodic flush
-    buffers[channel].push(buf);
+  } else if (batchTranscriber) {
+    // Batch mode: cut at pauses, then transcribe each utterance.
+    batchTranscriber.push(channel, buf);
   }
 }
 
@@ -501,7 +503,7 @@ async function setCapturing(active) {
     // Try streaming first, fall back to batch
     const streaming = initStreamingSTT();
     if (!streaming) {
-      startFlushLoop();
+      startBatchTranscription();
     }
     console.log('[cue] capture started, mode:', streaming ? 'streaming' : 'batch');
     send('capture:state', { active: true, streaming: streamingMode, mode: streaming ? 'streaming' : 'batch' });
@@ -509,9 +511,8 @@ async function setCapturing(active) {
   }
 
   state.capturing = false;
-  stopFlushLoop();
+  stopBatchTranscription();
   stopStreamingSTT();
-  buffers.you = []; buffers.them = [];
   vad.you.reset(); vad.them.reset();
   ringBuffers.you.clear(); ringBuffers.them.clear();
   const stoppingLocalTranscriber = localWhisperTranscriber;
@@ -590,6 +591,8 @@ async function runFeature(mode, userText) {
 
     await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
+      cachePrefix: request.cachePrefix,
+      ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
       turns: request.turns,
       imageDataUrl,
       onToken: t => send('llm:token', { text: t }),

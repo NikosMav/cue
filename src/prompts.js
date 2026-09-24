@@ -4,7 +4,7 @@
 // then optionally the user's AI rules appended at the end.
 
 const { appendAiRules } = require('./profile-context');
-const { buildInterviewContext, detectCategory } = require('./interview-context');
+const { buildInterviewContext, detectCategory, currentQuestionTurns } = require('./interview-context');
 
 function answerStyle(length = 'brief') {
   const sizes = {
@@ -29,6 +29,12 @@ function answerStyle(length = 'brief') {
 function formatTranscript(turns, limit) {
   const recent = limit ? turns.slice(-limit) : turns;
   return recent.map((t) => (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text).join('\n');
+}
+
+// Speech-to-text splits a question at pauses; restating the joined question
+// keeps the model from answering only its last fragment.
+function questionLine(ctx) {
+  return ctx.question ? '\n\nInterviewer\'s current question (joined from consecutive speech segments): ' + JSON.stringify(ctx.question) : '';
 }
 
 function buildSystem(base, contextBlock) {
@@ -84,7 +90,7 @@ const MODES = {
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 14);
-      return 'Recent conversation:\n' + (t || '(none)') + '\n\nRespond with exactly what I should say right now.';
+      return 'Recent conversation:\n' + (t || '(none)') + questionLine(ctx) + '\n\nRespond with exactly what I should say right now.';
     }
   },
 
@@ -113,7 +119,7 @@ const MODES = {
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 16);
-      return 'Interview conversation so far:\n' + (t || '(listening not started yet)') +
+      return 'Interview conversation so far:\n' + (t || '(listening not started yet)') + questionLine(ctx) +
         '\n\nWhat should I say next?';
     }
   },
@@ -215,6 +221,9 @@ const MODES = {
     userBubble: 'Solve what\'s on screen',
     small: false,
     resumeMode: 'leetcode',
+    // A complete solution with explanation does not fit the spoken-answer
+    // budget (700 tokens in fast mode used to cut code off mid-function).
+    maxTokens: 4096,
     buildSystem(_contextBlock, _aiRules) {
       // Context block AND aiRules intentionally ignored — code answers must
       // stay strict regardless of personal style or context.
@@ -233,13 +242,22 @@ function buildPromptRequest(settings, mode, transcript, userText = '') {
   const turns = (transcript || []).map(t => ({ ...t }));
   const target = (mode === 'ask' || mode === 'answerThis') && userText.trim()
     ? [{ channel: 'them', text: userText }] : turns;
-  const context = buildInterviewContext(settings, mode, target);
-  return {
+  const context = buildInterviewContext(settings, mode);
+  // Only worth restating when the question spans several transcript turns.
+  const questionTurns = mode === 'assist' || mode === 'say' ? currentQuestionTurns(turns) : [];
+  const question = questionTurns.length > 1 ? questionTurns.map(t => t.text.trim()).join(' ') : '';
+  const system = def.buildSystem(context, settings.aiRules || '', settings.answerLength);
+  const request = {
     category: mode === 'leetcode' ? null : detectCategory(target),
     needsScreen: def.needsScreen && (mode === 'leetcode' || settings.includeScreen !== false),
-    system: def.buildSystem(context, settings.aiRules || '', settings.answerLength),
-    turns: [{ role: 'user', text: def.build({ transcript: turns, userText }) }]
+    system,
+    // The reference block opens the system prompt and does not depend on the
+    // question, so providers with explicit prompt caching can cache it.
+    cachePrefix: context && system.startsWith(context) ? context : '',
+    turns: [{ role: 'user', text: def.build({ transcript: turns, userText, question }) }]
   };
+  if (def.maxTokens) request.maxTokens = def.maxTokens;
+  return request;
 }
 
 module.exports = { MODES, formatTranscript, buildPromptRequest };

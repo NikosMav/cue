@@ -4,9 +4,13 @@
 // This module manages a persistent WebSocket connection for real-time transcription
 // with sub-200ms latency, interim results, and automatic reconnection.
 
-const { looksLikeHallucination } = require('./stt');
+const { looksLikeHallucination, extractProfileTerms } = require('./stt');
 const { pcmToWav } = require('./wav');
 const { CURRENT_GEMINI_DEFAULT } = require('./llm');
+
+// Deepgram caps keyterm prompting at roughly 500 tokens and recommends a
+// focused list; 40 short terms stays well inside that and the URL limit.
+const DEEPGRAM_MAX_KEYTERMS = 40;
 
 // ============================================================================
 // OpenAI Realtime Transcription Session (WebSocket)
@@ -221,6 +225,9 @@ class DeepgramStreamingSTT {
   constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
     this.model = options.model || 'nova-3';
+    // Nova-3 keyterm prompting: names and technologies from the candidate's
+    // profile, so "Kubernetes" or a company name is not heard as a near miss.
+    this.keyterms = Array.isArray(options.keyterms) ? options.keyterms : [];
     this.ws = null;
     this.connected = false;
     this.onTranscript = options.onTranscript || (() => {});
@@ -252,6 +259,10 @@ class DeepgramStreamingSTT {
         endpointing: '300',
         punctuate: 'true'
       });
+
+      if (/^nova-3/.test(this.model)) {
+        for (const term of this.keyterms) params.append('keyterm', term);
+      }
 
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 
@@ -417,6 +428,7 @@ function createStreamingSTT(settings, channel, callbacks) {
   if ((selectedProvider === 'auto' || selectedProvider === 'deepgram') && keys.deepgram) {
     const stt = new DeepgramStreamingSTT(keys.deepgram, {
       model: 'nova-3',
+      keyterms: extractProfileTerms(settings, DEEPGRAM_MAX_KEYTERMS),
       onTranscript: (text) => onTranscript(channel, text),
       onInterim: (text) => onInterim(channel, text),
       onError,

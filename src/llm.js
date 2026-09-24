@@ -282,7 +282,18 @@ async function streamAzure({ apiKey, model, system, turns, imageDataUrl, maxToke
   return full;
 }
 
-async function streamAnthropic({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, signal }) {
+// Anthropic caches only on request: mark the end of the stable reference
+// prefix so repeat questions skip reprocessing the résumé and notes. Prefixes
+// below the model's minimum cacheable length are simply not cached.
+function anthropicSystem(system, cachePrefix) {
+  if (!cachePrefix || typeof system !== 'string' || !system.startsWith(cachePrefix) || system === cachePrefix) return system;
+  return [
+    { type: 'text', text: cachePrefix, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: system.slice(cachePrefix.length) }
+  ];
+}
+
+async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imageDataUrl, maxTokens, onToken, signal }) {
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey });
   const messages = turns.map((t, i) => {
@@ -296,7 +307,7 @@ async function streamAnthropic({ apiKey, model, system, turns, imageDataUrl, max
     }
     return { role: t.role, content: t.text };
   });
-  const stream = await client.messages.create({ model, max_tokens: maxTokens, system, messages, stream: true }, { signal });
+  const stream = await client.messages.create({ model, max_tokens: maxTokens, system: anthropicSystem(system, cachePrefix), messages, stream: true }, { signal });
   let full = '';
   for await (const ev of stream) {
     if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') { full += ev.delta.text; onToken(ev.delta.text); }
@@ -479,6 +490,7 @@ function createLLM(settings) {
 
 module.exports = {
   createLLM,
+  anthropicSystem,
   formatProviderErrorMessage,
   isQuotaError,
   CURRENT_GEMINI_DEFAULT,
