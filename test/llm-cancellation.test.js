@@ -81,3 +81,15 @@ test('a per-request token budget and cache prefix reach the provider', async () 
   assert.equal(anthropicBody.max_tokens, 700);
   assert.equal(anthropicBody.system, 'Rules');
 });
+
+test('several screenshots are sent in order to every image-capable adapter', async () => {
+  const shots = ['data:image/png;base64,QUFB', 'data:image/png;base64,QkJC'];
+  const anthropic = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: {} });
+  await anthropic.stream({ system: 's', turns: [{ role: 'user', text: 'solve' }], imageDataUrls: shots, onToken: () => {} });
+  const content = anthropicBody.messages[0].content;
+  assert.deepEqual(content.map(c => c.type), ['image', 'image', 'text']);
+  assert.deepEqual(content.slice(0, 2).map(c => c.source.data), ['QUFB', 'QkJC']);
+  // The single-image form still works.
+  await anthropic.stream({ system: 's', turns: [{ role: 'user', text: 'solve' }], imageDataUrl: shots[0], onToken: () => {} });
+  assert.deepEqual(anthropicBody.messages[0].content.map(c => c.type), ['image', 'text']);
+});

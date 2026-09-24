@@ -10,6 +10,8 @@ const { MODES, buildPromptRequest } = require('./src/prompts');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
+const { AutoAnswer } = require('./src/auto-answer');
+const { currentQuestion } = require('./src/interview-context');
 const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
@@ -35,7 +37,7 @@ let win = null;
 // false when another application already owns the combination, and nothing used
 // to look at that — so the only symptom was a key that did nothing. Iris reads
 // this and can say which key is taken instead of guessing from a screenshot.
-const shortcutState = { assist: false, say: false, leetcode: false, quit: false };
+const shortcutState = { assist: false, say: false, leetcode: false, screenshot: false, quit: false };
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 
@@ -90,6 +92,29 @@ const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TUR
 const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
 const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
 let batchTranscriber = null;
+// The one answer being generated. A newer request cancels it instead of
+// being dropped, so a new interview question never waits on an old answer.
+let activeRequest = null;   // { id, mode, text, auto, startedAt, controller }
+let requestSeq = 0;
+const REPEAT_GUARD_MS = 400; // a held-down shortcut or double click is one request
+let lastManualRequestAt = 0;
+// Completed answers this session, oldest first: { mode, prompt, text, ts }.
+// Lets follow-ups ("tell me more about that", "optimize it") see what cue said.
+const sessionAnswers = [];
+const MAX_SESSION_ANSWERS = 20;
+// Screenshots queued for the coding solver (a problem longer than one screen).
+let screenshotQueue = [];
+const MAX_QUEUED_SCREENSHOTS = 4;
+const autoAnswer = new AutoAnswer({
+  isEnabled: () => !!store.getSettings().autoAnswer && state.capturing,
+  getTranscript: () => transcript,
+  onFire: (question) => {
+    // The user already asked about this question by hand: leave their answer.
+    const lastThem = [...transcript].reverse().find((t) => t.channel === 'them');
+    if (lastThem && lastManualRequestAt >= lastThem.ts) return;
+    runFeature('answerThis', question, { auto: true });
+  }
+});
 let batchStt = { settings: null, stt: null };
 let whisperModelManager = null;
 let localWhisperTranscriber = null;
@@ -146,6 +171,13 @@ function publishTranscript(channel, text) {
   pushTranscript(turn);
   send('transcript', turn);
   send('stt:final', { channel, text: turn.text });
+  autoAnswer.noteFinal(channel, turn.text);
+}
+
+// Voice activity from the utterance segmenters (batch and local modes).
+function publishSpeechState(channel, speaking, durationMs) {
+  send('vad:state', { channel, speaking, durationMs });
+  autoAnswer.noteSpeech(channel, speaking);
 }
 
 async function startLocalWhisper(settings) {
@@ -174,9 +206,7 @@ async function startLocalWhisper(settings) {
         tinydiarize: model.tinydiarize
       },
       onTranscript: publishTranscript,
-      onSpeechState: (channel, speaking, durationMs) => {
-        send('vad:state', { channel, speaking, durationMs });
-      },
+      onSpeechState: publishSpeechState,
       onStatus: (status) => send('stt:status', { provider: 'local', ...status }),
       onError: (error) => {
         sttDisabled = true;
@@ -351,7 +381,7 @@ function startBatchTranscription() {
   batchTranscriber = new BatchTranscriber({
     transcribe: transcribeUtterance,
     onTranscript: publishTranscript,
-    onSpeechState: (channel, speaking, durationMs) => send('vad:state', { channel, speaking, durationMs }),
+    onSpeechState: publishSpeechState,
     onError: (e, channel) => {
       console.log('[stt] error', e && e.message);
       recordEvent({ level: 'error', event: 'stt_failed', msg: e && e.message ? e.message : String(e), frame: 'transcribeUtterance', context: { channel } });
@@ -397,14 +427,10 @@ function initStreamingSTT() {
 
   ['you', 'them'].forEach((channel) => {
     const sttInstance = createStreamingSTT(settings, channel, {
-      onTranscript: (ch, text) => {
-        const turn = { channel: ch, text, ts: Date.now() };
-        pushTranscript(turn);
-        send('transcript', turn);
-        send('stt:final', { channel: ch, text });
-      },
+      onTranscript: publishTranscript,
       onInterim: (ch, text) => {
         send('stt:interim', { channel: ch, text });
+        autoAnswer.noteInterim(ch, text);
       },
       onError: (err) => {
         console.log('[streaming-stt] error', err.provider, err.message);
@@ -511,6 +537,7 @@ async function setCapturing(active) {
   }
 
   state.capturing = false;
+  autoAnswer.reset();
   stopBatchTranscription();
   stopStreamingSTT();
   vad.you.reset(); vad.them.reset();
@@ -532,20 +559,81 @@ async function setCapturing(active) {
 }
 
 // -------- feature runner --------
-async function runFeature(mode, userText) {
-  if (state.busy) return;
-  const def = MODES[mode];
-  if (!def) return;
+function cancelActiveRequest(reason) {
+  if (!activeRequest) return false;
+  const cancelled = activeRequest;
+  activeRequest = null;
+  state.busy = false;
+  cancelled.controller.abort();
+  send('llm:cancelled', { id: cancelled.id, reason });
+  return true;
+}
+
+function rememberAnswer(mode, prompt, text) {
+  if (!text || !text.trim()) return;
+  sessionAnswers.push({ mode, prompt: prompt || '', text: text.trim(), ts: Date.now() });
+  if (sessionAnswers.length > MAX_SESSION_ANSWERS) sessionAnswers.splice(0, sessionAnswers.length - MAX_SESSION_ANSWERS);
+}
+
+function screenCaptureFailedMessage() {
+  return process.platform === 'darwin'
+    ? 'Screen capture needs permission — grant Screen Recording to cue in System Settings.'
+    : process.platform === 'win32'
+      ? 'Screen capture failed. Make sure cue is not blocked by Windows privacy or security software, then try again.'
+      : 'Screen capture failed. Check your desktop capture permissions, then try again.';
+}
+
+// Queue a screenshot for the coding solver (Ctrl/⌘+Shift+H): capture each
+// part of a long problem, then Ctrl/⌘+H solves with all of them in order.
+async function queueScreenshot() {
+  const solveKey = isMac ? '⌘H' : 'Ctrl+H';
+  if (screenshotQueue.length >= MAX_QUEUED_SCREENSHOTS) {
+    send('status', { message: `Holding ${MAX_QUEUED_SCREENSHOTS} screenshots already. Press ${solveKey} to solve with them.` });
+    return;
+  }
+  try {
+    const image = await captureScreenshot();
+    if (!image) throw new Error('No screen source was available.');
+    screenshotQueue.push(image);
+    const n = screenshotQueue.length;
+    send('status', { message: `Screenshot ${n} saved. Scroll and add more, or press ${solveKey} to solve with ${n === 1 ? 'it' : 'all ' + n} plus the current screen.` });
+  } catch (e) {
+    recordEvent({ level: 'error', event: 'screen_capture_failed', msg: e && e.message ? e.message : String(e), frame: 'queueScreenshot', context: {} });
+    send('status', { message: screenCaptureFailedMessage() });
+  }
+}
+
+function bubbleFor(mode, def, userText, queued) {
+  if (mode === 'leetcode' && queued) return `Solve what's on screen (${queued + 1} screenshots)`;
+  if (def.userBubble !== null) return def.userBubble;
+  if (mode === 'ask' || mode === 'codeFollowup') return userText;
+  if (mode === 'answerThis') return `"${(userText || '').slice(0, 60)}${userText && userText.length > 60 ? '…' : ''}"`;
+  return null;
+}
+
+async function runFeature(requestedMode, userText, { auto = false } = {}) {
+  if (!MODES[requestedMode]) return;
+  const text = userText || '';
+  if (activeRequest && activeRequest.mode === requestedMode && activeRequest.text === text &&
+      Date.now() - activeRequest.startedAt < REPEAT_GUARD_MS) return;
+  cancelActiveRequest('replaced');
+
+  const job = { id: ++requestSeq, mode: requestedMode, text, auto, startedAt: Date.now(), controller: new AbortController() };
+  activeRequest = job;
   state.busy = true;
+  if (!auto) lastManualRequestAt = job.startedAt;
+  const { signal } = job.controller;
+  // Events of a cancelled request never reach the UI after its replacement starts.
+  const emit = (channel, data) => { if (!signal.aborted) send(channel, { id: job.id, ...data }); };
+
   try {
     const settings = store.getSettings();
     const llm = createLLM(settings);
-    const userBubble = def.userBubble !== null
-      ? def.userBubble
-      : (mode === 'ask' ? userText : mode === 'answerThis' ? `"${(userText || '').slice(0, 60)}${userText && userText.length > 60 ? '…' : ''}"` : null);
-    const request = buildPromptRequest(settings, mode, transcript, userText || '');
-    const category = request.category;
-    send('llm:start', { userBubble, small: !!def.small, category });
+    const request = buildPromptRequest(settings, requestedMode, transcript, text, { answers: sessionAnswers });
+    const mode = request.mode;
+    const def = MODES[mode];
+    const queuedScreens = mode === 'leetcode' ? screenshotQueue.slice() : [];
+    emit('llm:start', { userBubble: bubbleFor(mode, def, text, queuedScreens.length), small: !!def.small, category: request.category, mode, auto });
 
     if (!llm.ready) {
       const message = llm.configurationError || ('Complete the ' + settings.provider + ' provider settings. Model: ' + (llm.model || 'unset') + '.');
@@ -556,10 +644,10 @@ async function runFeature(mode, userText) {
         const action = !settings.publik.disclosureAccepted
           ? { kind: 'disclosure' }
           : { kind: 'reconnect', label: 'Reconnect' };
-        send('llm:error', { message, action });
+        emit('llm:error', { message, action });
         return;
       }
-      send('llm:error', { message });
+      emit('llm:error', { message });
       return;
     }
     // Never a silent starter (CONTRACT §12.4): the first-run card — balance,
@@ -568,47 +656,52 @@ async function runFeature(mode, userText) {
     // right after provisioning; this gate catches a card that was never
     // acknowledged (e.g. an install provisioned by an earlier release).
     if (settings.provider === publik.PUBLIK_PROVIDER && settings.apiKeys.publik && !settings.publik.cardShown) {
-      send('llm:error', { message: 'publik API is set up. Take a look at the card, then ask again.', action: { kind: 'card' } });
+      emit('llm:error', { message: 'publik API is set up. Take a look at the card, then ask again.', action: { kind: 'card' } });
       return;
     }
 
-    let imageDataUrl = null;
+    const images = queuedScreens.slice();
     if (request.needsScreen) {
       try {
-        imageDataUrl = await captureScreenshot();
-        if (!imageDataUrl) throw new Error('No screen source was available.');
+        const current = await captureScreenshot();
+        if (!current) throw new Error('No screen source was available.');
+        images.push(current);
       }
       catch (e) {
         recordEvent({ level: 'error', event: 'screen_capture_failed', msg: e && e.message ? e.message : String(e), frame: 'captureScreenshot', context: { mode } });
-        const message = process.platform === 'darwin'
-          ? 'Screen capture needs permission — grant Screen Recording to cue in System Settings.'
-          : process.platform === 'win32'
-            ? 'Screen capture failed. Make sure cue is not blocked by Windows privacy or security software, then try again.'
-            : 'Screen capture failed. Check your desktop capture permissions, then try again.';
-        send('status', { message });
+        send('status', { message: screenCaptureFailedMessage() });
       }
     }
+    if (signal.aborted) return;
 
-    await streamWithWatchdog(params => llm.stream(params), {
+    const answer = await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
       cachePrefix: request.cachePrefix,
       ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
       turns: request.turns,
-      imageDataUrl,
-      onToken: t => send('llm:token', { text: t }),
+      imageDataUrls: images,
+      onToken: t => emit('llm:token', { text: t }),
       onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
-    }, STREAM_INACTIVITY_MS);
-    send('llm:done', {});
+    }, STREAM_INACTIVITY_MS, signal);
+    if (signal.aborted) return;
+    const prompt = mode === 'say' || mode === 'assist' ? currentQuestion(transcript) : text;
+    rememberAnswer(mode, prompt, answer);
+    if (queuedScreens.length) screenshotQueue = screenshotQueue.filter((image) => !queuedScreens.includes(image));
+    emit('llm:done', {});
     // Streams settle after their headers, so the charge is reconciled from
     // GET /wallet shortly after the answer — one request per answer, debounced.
     if (settings.provider === publik.PUBLIK_PROVIDER) publikScheduleWalletRefresh();
   } catch (e) {
-    recordEvent({ level: 'error', event: 'llm_failed', msg: e && e.message ? e.message : String(e), frame: 'runFeature', context: { mode, provider: store.getSettings().provider } });
+    if (signal.aborted || (e && e.cancelled)) return;
+    recordEvent({ level: 'error', event: 'llm_failed', msg: e && e.message ? e.message : String(e), frame: 'runFeature', context: { mode: requestedMode, provider: store.getSettings().provider } });
     const action = e && e.action ? e.action : null;
-    send('llm:error', { message: e && e.message ? e.message : String(e), action });
+    emit('llm:error', { message: e && e.message ? e.message : String(e), action });
     if (action) publikHandleErrorAction(action);
   } finally {
-    state.busy = false;
+    if (activeRequest === job) {
+      activeRequest = null;
+      state.busy = false;
+    }
   }
 }
 
@@ -844,9 +937,14 @@ ipcMain.handle('platform:info', () => ({
 }));
 ipcMain.handle('transcript:clear', () => {
   transcript.splice(0, transcript.length);
+  sessionAnswers.splice(0, sessionAnswers.length);
+  screenshotQueue = [];
+  autoAnswer.reset();
   return { ok: true };
 });
 ipcMain.on('ask', (_e, payload) => runFeature(payload.mode, payload.text));
+ipcMain.on('llm:cancel', () => { cancelActiveRequest('stopped'); });
+ipcMain.on('screenshot:queue', () => { queueScreenshot(); });
 ipcMain.on('mic:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('you', arrayBuffer); });
 ipcMain.on('system:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('them', arrayBuffer); });
 ipcMain.on('mouse:ignore', (_e, v) => { if (win) win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST === '1' ? false : !!v, { forward: true }); });
@@ -896,6 +994,7 @@ function registerShortcuts() {
   shortcutState.assist = globalShortcut.register('CommandOrControl+Return', () => runFeature('assist', ''));
   shortcutState.say = globalShortcut.register('CommandOrControl+Shift+Return', () => runFeature('say', ''));
   shortcutState.leetcode = globalShortcut.register('CommandOrControl+H', () => runFeature('leetcode', ''));
+  shortcutState.screenshot = globalShortcut.register('CommandOrControl+Shift+H', () => queueScreenshot());
   shortcutState.hide = globalShortcut.register('CommandOrControl+Shift+/', () => send('hide:toggle', {}));
   shortcutState.quit = globalShortcut.register('CommandOrControl+Shift+X', () => app.quit());
   for (const [name, wasRegistered] of Object.entries(shortcutState)) {

@@ -41,7 +41,7 @@ const RULES = 'Never use em-dashes.\nReply in 2-3 short bullet points.\nUse a ca
 
 test('every non-leetcode mode injects AI rules into its system prompt', () => {
   for (const [name, mode] of Object.entries(MODES)) {
-    if (name === 'leetcode') continue;
+    if (mode.coding) continue;
     const withRules = mode.buildSystem(null, RULES);
     assert.match(withRules, /--- USER RULES ---/, `${name}.buildSystem should append USER RULES block`);
     assert.ok(withRules.includes(RULES), `${name}.buildSystem should include the user's rules verbatim`);
@@ -50,7 +50,7 @@ test('every non-leetcode mode injects AI rules into its system prompt', () => {
 
 test('every non-leetcode mode returns the base prompt unchanged when no rules are set', () => {
   for (const [name, mode] of Object.entries(MODES)) {
-    if (name === 'leetcode') continue;
+    if (mode.coding) continue;
     const without = mode.buildSystem(null, '');
     const blank = mode.buildSystem(null, null);
     assert.ok(!without.includes('USER RULES'), `${name} should not include USER RULES when aiRules is empty`);

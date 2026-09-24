@@ -122,3 +122,55 @@ test('the coding solver gets room for a complete solution', () => {
   assert.ok(buildPromptRequest({}, 'leetcode', []).maxTokens >= 4000);
   assert.equal(buildPromptRequest({}, 'say', []).maxTokens, undefined);
 });
+
+// ── Follow-ups and session memory ────────────────────────────────────────────
+test('"Answer this" sees recent conversation so follow-up questions resolve', () => {
+  const t = [
+    at('them', 'Tell me about the payments migration.', 1000),
+    at('you', 'We moved reconciliation from a nightly batch to Kafka consumers.', 5000)
+  ];
+  const { turns } = buildPromptRequest({}, 'answerThis', t, 'Why did you choose that approach?');
+  assert.match(turns[0].text, /nightly batch to Kafka/);
+  assert.match(turns[0].text, /"Why did you choose that approach\?"/);
+});
+
+test('earlier spoken answers are offered for consistency; coding answers are not', () => {
+  const answers = [
+    { mode: 'leetcode', prompt: '', text: 'def two_sum(): pass' },
+    { mode: 'answerThis', prompt: 'Tell me about yourself.', text: 'I build payment systems in Go.' }
+  ];
+  const { turns } = buildPromptRequest({}, 'say', [at('them', 'Tell me more about that.', 1000)], '', { answers });
+  assert.match(turns[0].text, /I build payment systems in Go/);
+  assert.doesNotMatch(turns[0].text, /two_sum/);
+  assert.doesNotMatch(buildPromptRequest({}, 'say', []).turns[0].text, /suggested earlier/);
+});
+
+test('a typed question right after a coding answer continues the coding thread', () => {
+  const answers = [
+    { mode: 'answerThis', prompt: 'Why us?', text: 'Spoken answer.' },
+    { mode: 'leetcode', prompt: '', text: 'Solution A (O(n^2))' },
+    { mode: 'codeFollowup', prompt: 'Make it O(n).', text: 'Solution B (O(n))' }
+  ];
+  const request = buildPromptRequest({ knowledgeBase: 'PRIVATE', aiRules: 'Use emoji.' }, 'ask', [], 'What if the array is sorted?', { answers });
+  assert.equal(request.mode, 'codeFollowup');
+  assert.equal(request.needsScreen, true);
+  assert.ok(request.maxTokens >= 4000);
+  assert.equal(request.category, null);
+  assert.deepEqual(request.turns.map(t => t.role), ['user', 'assistant', 'user', 'assistant', 'user']);
+  assert.match(request.turns[1].text, /Solution A/);
+  assert.equal(request.turns[2].text, 'Make it O(n).');
+  assert.match(request.turns[3].text, /Solution B/);
+  assert.equal(request.turns[4].text, 'What if the array is sorted?');
+  assert.doesNotMatch(request.system + JSON.stringify(request.turns), /Spoken answer|PRIVATE|Use emoji/);
+});
+
+test('without a preceding coding answer, a typed question stays a normal question', () => {
+  const answers = [{ mode: 'leetcode', text: 'code' }, { mode: 'ask', prompt: 'x', text: 'y' }];
+  assert.equal(buildPromptRequest({}, 'ask', [], 'What is TCP?', { answers }).mode, 'ask');
+  assert.equal(buildPromptRequest({}, 'ask', [], 'What is TCP?').mode, 'ask');
+  assert.equal(buildPromptRequest({}, 'say', [], '', { answers: [{ mode: 'leetcode', text: 'c' }] }).mode, 'say');
+});
+
+test('the coding solver knows several screenshots are parts of one problem', () => {
+  assert.match(buildPromptRequest({}, 'leetcode', []).system, /several screenshots.*same problem/);
+});

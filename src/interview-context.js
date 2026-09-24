@@ -274,7 +274,7 @@ const REFERENCE_SECTIONS = [
  */
 function buildInterviewContext(settings, mode) {
   // Coding problems never need personal context
-  if (mode === 'leetcode') return null;
+  if (mode === 'leetcode' || mode === 'codeFollowup') return null;
 
   const blocks = [];
   for (const [key, label] of REFERENCE_SECTIONS) {

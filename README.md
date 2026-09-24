@@ -216,8 +216,13 @@ cue is hidden from most screen-share tools automatically — **Google Meet, Micr
 
 - **`⌘` `↵` — Assist.** The do-the-smart-thing key. On a coding problem it solves it; in a conversation it tells you what to say. Works from anywhere. Change it under **Settings → Keyboard shortcuts**.
 - **`⌘` `H` — Solve what's on screen.** Screenshots a coding problem and returns the approach, code, and time/space complexity.
+- **`⌘` `⇧` `H` — Add a screenshot.** For a problem longer than one screen: add each part while scrolling (up to 4), then press `⌘` `H` to solve with all of them plus the current screen.
+- **Coding follow-ups.** After a solution, type a follow-up ("optimize it", "what if the input is sorted?") and cue continues from its earlier solution.
 - **The `▢` button** (top bar) — start/stop **listening** to a meeting. The green dot means it's live.
+- **Auto** — while listening, answer each interviewer question as soon as they finish asking, with no key press. Off by default. If the interviewer keeps talking, the answer is replaced with one for the fuller question; if you ask by hand first, your request is kept.
 - **Type a question** in the box and press `↵` to ask about your screen or conversation.
+- **A new request replaces the answer in progress** — you never wait for an old answer to finish. Press `Esc` to stop an answer.
+- **Follow-up questions** such as "why did you choose that?" are answered with the recent conversation and cue's earlier answers in view. **Clear transcript** also clears that memory.
 - **Smart** — flip it on for a smarter, more thorough model; off for fast and cheap.
 - **Hide** collapses the panel to just the top bar. Drag cue around by the **top pill**. Quit with `⌘` `⇧` `X` on macOS or `Ctrl` `Shift` `X` on Windows.
 

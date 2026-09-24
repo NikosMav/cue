@@ -432,6 +432,8 @@ button:focus { outline: none; }
 .smart-pill:hover { background: rgba(255,255,255,0.09); }
 .smart-pill.on { border-color: rgba(60,131,245,0.5); color: #7FB0F9; background: rgba(60,131,245,0.10); }
 .smart-pill.on .ic { color: #7FB0F9; }
+/* Note under an answer that was stopped or replaced before it finished */
+.ai-note { margin-top: 6px; font-size: 11px; color: var(--tx-3, rgba(255,255,255,0.45)); font-style: italic; }
 /* History button */
 .history-btn {
   width: 28px; height: 28px; border-radius: var(--r-8);

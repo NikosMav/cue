@@ -70,6 +70,7 @@ const DEFAULTS = {
   aiRules: '',
   answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
   includeScreen: true,  // Assist/Ask can run with conversation only.
+  autoAnswer: false,    // Answer the interviewer's question as soon as they finish, without a key press.
   // Window position
   windowX: null,
   windowY: null,

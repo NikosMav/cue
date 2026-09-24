@@ -21,6 +21,7 @@
   document.querySelector('.act[data-mode="followup"] .ic').innerHTML = icon('message-circle', { size: 16 });
   document.querySelector('.act[data-mode="recap"] .ic').innerHTML = icon('refresh-cw', { size: 16 });
   $('#smart-toggle .ic').innerHTML = icon('zap', { size: 14 });
+  $('#auto-toggle .ic').innerHTML = icon('wand-sparkles', { size: 14 });
   $('#more-btn').innerHTML = icon('more-horizontal', { size: 18 });
   $('#send-btn').innerHTML = icon('play', { size: 15 });
   const clearIC = document.querySelector('#clear-transcript-btn .ic');
@@ -34,6 +35,7 @@
   let whisperOverview = null;
   let busy = false;
   let aiEl = null;       // current streaming <div class="ai-text">
+  let currentRequestId = null; // events from any other request are stale
   let caretEl = null;
   let responseCount = 0;
   const MAX_RESPONSES = 20;
@@ -99,10 +101,16 @@
     }
   }
 
-  function finalizeAi() {
+  function finalizeAi(note) {
     if (!aiEl) return;
     const raw = aiEl.dataset.raw || '';
     aiEl.innerHTML = renderMarkdown(raw);
+    if (note) {
+      const n = document.createElement('div');
+      n.className = 'ai-note';
+      n.textContent = note;
+      aiEl.appendChild(n);
+    }
     aiEl = null; caretEl = null;
   }
 
@@ -154,8 +162,9 @@
   }
 
   // ---- actions -----------------------------------------------------------
+  // A new request replaces the answer in progress (main cancels it), so a new
+  // question never waits for an old answer to finish.
   function runMode(mode, text) {
-    if (busy) return;
     setBusy(true);
     cue.ask({ mode, text: text || '' });
   }
@@ -181,41 +190,9 @@
   const MAX_QUESTION_HISTORY = 10;
 
   // ---- Question completeness detection ----
+  // Shared with the main process's auto-answer (src/question-detector.js).
   function isLikelyCompleteQuestion(text) {
-    const trimmed = (text || '').trim();
-    
-    // Must be substantial (not just filler words)
-    if (trimmed.length < 12) return false;
-    
-    // High confidence: ends with question mark
-    if (/\?$/.test(trimmed)) return true;
-    
-    // High confidence: behavioral interview patterns (these are complete even without ?)
-    const behavioralPatterns = [
-      /tell me about a time/i,
-      /give me an example/i,
-      /describe a (situation|time|project|challenge)/i,
-      /walk me through/i,
-      /can you (tell|describe|explain|share)/i,
-      /what (was|were|is|are) your/i,
-      /how (did|do|would) you/i,
-      /why (did|do|are|should)/i,
-      /what (did|do|would) you/i,
-      /tell me about yourself/i,
-      /tell me about your/i,
-      /what.{1,30}(biggest|greatest|most|hardest|proudest)/i,
-      /have you ever/i
-    ];
-    if (behavioralPatterns.some(p => p.test(trimmed))) return true;
-    
-    // Medium confidence: question starters with substantial content
-    const questionStarters = /^(what|how|why|when|where|who|which|tell|describe|explain|can|could|would|should|have|did|do|is|are|was|were)/i;
-    if (questionStarters.test(trimmed) && trimmed.length > 25) return true;
-    
-    // Medium confidence: ends with common question endings
-    if (/(about that|for us|to us|with you|for you|about it|to share|you handle|you approach|your experience|your background)\s*$/i.test(trimmed)) return true;
-    
-    return false;
+    return cue.isLikelyCompleteQuestion(text);
   }
 
   // ---- Get question confidence level ----
@@ -556,6 +533,21 @@
     settings.smart = !settings.smart;
     smartBtn.classList.toggle('on', settings.smart);
     await cue.settingsSet({ smart: settings.smart });
+  });
+
+  // Auto-answer toggle: answer the interviewer as soon as they finish asking
+  const autoBtn = $('#auto-toggle');
+  function syncAutoButton() {
+    autoBtn.classList.toggle('on', !!settings.autoAnswer);
+    autoBtn.title = settings.autoAnswer
+      ? 'Auto-answer is on: cue answers each interviewer question when they finish asking (while listening)'
+      : 'Auto-answer is off: press Enter or the shortcut to answer';
+  }
+  autoBtn.addEventListener('click', async () => {
+    settings.autoAnswer = !settings.autoAnswer;
+    syncAutoButton();
+    await cue.settingsSet({ autoAnswer: settings.autoAnswer });
+    showToast(settings.autoAnswer ? 'Auto-answer on' : 'Auto-answer off', 1500);
   });
 
   // Hide / collapse
@@ -1071,7 +1063,11 @@
   cue.on('vad:state', ({ channel, speaking }) => {
     setLiveDotState(speaking ? 'speaking' : 'idle');
   });
-  cue.on('llm:start', ({ userBubble, small, category }) => {
+  cue.on('llm:start', ({ id, userBubble, small, category, auto }) => {
+    if (aiEl) finalizeAi('Interrupted');
+    currentRequestId = id;
+    // Auto-answer took the interviewer's question from the input box.
+    if (auto && inputFromSTT) hardClearSTTFill();
     responseCount++;
     if (responseCount > MAX_RESPONSES) {
       const oldest = messages.querySelector('.response-group');
@@ -1090,10 +1086,11 @@
       b.textContent = userBubble;
       group.appendChild(b);
     }
-    if (category) {
+    if (category || auto) {
       const pill = document.createElement('div');
       pill.className = 'category-pill';
-      pill.textContent = category.charAt(0).toUpperCase() + category.slice(1);
+      const label = category ? category.charAt(0).toUpperCase() + category.slice(1) : '';
+      pill.textContent = auto ? (label ? 'Auto · ' + label : 'Auto') : label;
       group.appendChild(pill);
     }
     aiEl = document.createElement('div');
@@ -1110,9 +1107,22 @@
     });
     setBusy(true);
   });
-  cue.on('llm:token', ({ text }) => appendToken(text));
-  cue.on('llm:done', () => { finalizeAi(); setBusy(false); });
-  cue.on('llm:error', ({ message, action }) => {
+  const isStale = (id) => id !== undefined && id !== currentRequestId;
+  cue.on('llm:token', ({ id, text }) => { if (!isStale(id)) appendToken(text); });
+  cue.on('llm:done', ({ id }) => {
+    if (isStale(id)) return;
+    currentRequestId = null;
+    finalizeAi(); setBusy(false);
+  });
+  cue.on('llm:cancelled', ({ id, reason }) => {
+    if (isStale(id)) return;
+    currentRequestId = null;
+    finalizeAi(reason === 'replaced' ? 'Interrupted by a newer request' : 'Stopped');
+    setBusy(false);
+  });
+  cue.on('llm:error', ({ id, message, action }) => {
+    if (isStale(id)) return;
+    currentRequestId = null;
     if (!aiEl) startAi(true);
     aiEl.dataset.raw = message; finalizeAi(); setBusy(false);
     // publik errors carry one action: the renderer's markdown emits no anchors,
@@ -1738,6 +1748,8 @@
   // ---- global keys -------------------------------------------------------
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !scrim.classList.contains('hidden')) closeSettings();
+    // Escape with nothing else to close stops the answer being written.
+    else if (e.key === 'Escape' && busy && !(document.activeElement === input && input.value.trim())) cue.cancelAnswer();
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
   });
 
@@ -1804,6 +1816,7 @@
       ];
   const assistShortcut = isWindows ? '<span class="kbd">Ctrl</span> <span class="kbd">↵</span>' : '<span class="kbd">⌘</span> <span class="kbd">↵</span>';
   const solveShortcut = isWindows ? '<span class="kbd">Ctrl</span> <span class="kbd">H</span>' : '<span class="kbd">⌘</span> <span class="kbd">H</span>';
+  const shotShortcut = isWindows ? '<span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">H</span>' : '<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">H</span>';
   const quitShortcut = isWindows ? '<span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">X</span>' : '<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">X</span>';
   const OB_STEPS = [
     {
@@ -1831,7 +1844,7 @@
     {
       icon: '✨',
       title: 'You’re all set',
-      body: 'How to use cue:<ul><li>' + assistShortcut + ' — <strong>Assist</strong> with whatever\'s on screen or being said</li><li>' + solveShortcut + ' — solve a coding problem on screen</li><li>Click <strong>▢</strong> in the top bar to start listening to a meeting</li><li>Type a question and press <span class="kbd">↵</span></li></ul>Reopen this guide anytime by clicking the <strong>cue logo</strong>. Quit with ' + quitShortcut + '.'
+      body: 'How to use cue:<ul><li>' + assistShortcut + ' — <strong>Assist</strong> with whatever\'s on screen or being said</li><li>' + solveShortcut + ' — solve a coding problem on screen (add parts of a long problem first with ' + shotShortcut + ')</li><li>Click <strong>▢</strong> in the top bar to start listening to a meeting; turn on <strong>Auto</strong> to answer each question as soon as it is asked</li><li>Type a question and press <span class="kbd">↵</span>; press <span class="kbd">Esc</span> to stop an answer</li></ul>Reopen this guide anytime by clicking the <strong>cue logo</strong>. Quit with ' + quitShortcut + '.'
     }
   ];
   // First-run disclosure (R21 §4.3): two disclosures — cost and data path —
@@ -1980,6 +1993,7 @@
     }
 
     smartBtn.classList.toggle('on', !!settings.smart);
+    syncAutoButton();
     showExample();
     syncPlaceholder();
     updateHistoryBadge(); // FIX #3: Initialize badge on boot

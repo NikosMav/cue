@@ -33,6 +33,23 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   also sent to Deepgram Nova-3 as keyterms.
 - The coding solver may use up to 4,096 output tokens; the 700-token fast-mode
   budget for spoken answers could cut a solution off mid-code.
+- A new request cancels the answer in progress (its provider request is
+  aborted and its late tokens are dropped) instead of being silently ignored
+  while an answer streams. Events carry a request id so a cancelled answer can
+  never write into its replacement. `Esc` stops an answer.
+- Optional auto-answer (the **Auto** pill, off by default): after an interviewer
+  turn that reads as a complete question and 1.2 s without more interviewer
+  speech, "Answer this" runs on the joined question. Interviewer speech only
+  postpones it (up to 3.6 s), because meeting-audio noise can report speech
+  with no end. A substantive reply from the candidate, or a request made by
+  hand after the question, prevents it.
+- "Answer this" includes the last six transcript turns so follow-up questions
+  resolve, and spoken modes see up to three of cue's earlier answers this
+  session, for consistency and "tell me more about that".
+- Coding: up to four screenshots can be queued (`Ctrl/⌘+Shift+H`) and are sent
+  in order with the current screen. A typed question right after a coding
+  answer continues that thread: earlier solutions are sent as conversation
+  history, still without personal notes or AI rules.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context

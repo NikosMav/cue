@@ -37,6 +37,24 @@ function questionLine(ctx) {
   return ctx.question ? '\n\nInterviewer\'s current question (joined from consecutive speech segments): ' + JSON.stringify(ctx.question) : '';
 }
 
+// Earlier suggestions let the model stay consistent and resolve follow-ups
+// such as "tell me more about that". Coding answers are excluded: they have
+// their own thread (see codeFollowup) and would crowd out spoken answers.
+const MAX_EARLIER_ANSWERS = 3;
+const EARLIER_ANSWER_CHARS = 600;
+const SPOKEN_MODES = new Set(['assist', 'say', 'ask', 'answerThis']);
+
+function earlierAnswers(ctx) {
+  const answers = (ctx.answers || [])
+    .filter(a => a && SPOKEN_MODES.has(a.mode) && typeof a.text === 'string' && a.text.trim())
+    .slice(-MAX_EARLIER_ANSWERS);
+  if (!answers.length) return '';
+  const clip = text => text.length > EARLIER_ANSWER_CHARS ? text.slice(0, EARLIER_ANSWER_CHARS).trimEnd() + '…' : text;
+  return 'Answers cue suggested earlier in this session, oldest first. Use them to stay consistent and to resolve follow-ups such as "tell me more about that"; do not repeat them unless asked:\n' +
+    answers.map(a => '- ' + (a.prompt ? 'To ' + JSON.stringify(a.prompt) + ': ' : '') + JSON.stringify(clip(a.text.trim()))).join('\n') +
+    '\n\n';
+}
+
 function buildSystem(base, contextBlock) {
   return (contextBlock ? contextBlock + '\n\n' : '') + base + '\n\n' +
     'Grounding rules (take priority over generic answer templates): ' +
@@ -59,6 +77,14 @@ function applyRules(prompt, aiRules, mode) {
   if (mode === 'leetcode') return prompt;
   return appendAiRules(prompt, aiRules);
 }
+
+const CODING_SYSTEM = 'You are an expert competitive programmer. The screenshot contains a coding problem; ' +
+  'when several screenshots are supplied they are consecutive parts of the same problem, in order. ' +
+  'Respond with: (1) a one-line restatement, (2) a short approach, (3) a clean, correct, idiomatic solution in a fenced code block ' +
+  '(use the language shown on screen, else Python), (4) time and space complexity. Keep prose tight.';
+const SOLVE_PROMPT = 'Solve the coding problem shown in the screenshot.';
+// How many earlier coding exchanges a follow-up carries.
+const MAX_CODING_THREAD = 4;
 
 const BASE_RULES =
   'Always respond in clear, natural English. Never switch to Hindi or any other language unless the user explicitly asks for it. ';
@@ -90,7 +116,7 @@ const MODES = {
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 14);
-      return 'Recent conversation:\n' + (t || '(none)') + questionLine(ctx) + '\n\nRespond with exactly what I should say right now.';
+      return earlierAnswers(ctx) + 'Recent conversation:\n' + (t || '(none)') + questionLine(ctx) + '\n\nRespond with exactly what I should say right now.';
     }
   },
 
@@ -119,7 +145,7 @@ const MODES = {
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 16);
-      return 'Interview conversation so far:\n' + (t || '(listening not started yet)') + questionLine(ctx) +
+      return earlierAnswers(ctx) + 'Interview conversation so far:\n' + (t || '(listening not started yet)') + questionLine(ctx) +
         '\n\nWhat should I say next?';
     }
   },
@@ -183,7 +209,7 @@ const MODES = {
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 12);
-      return (t ? 'Recent conversation:\n' + t + '\n\n' : '') + 'Question: ' + ctx.userText;
+      return earlierAnswers(ctx) + (t ? 'Recent conversation:\n' + t + '\n\n' : '') + 'Question: ' + ctx.userText;
     }
   },
 
@@ -197,7 +223,7 @@ const MODES = {
       return applyRules(buildSystem(
         'You are cue, whispering a direct answer to the candidate for ONE specific question. ' +
         BASE_RULES +
-        'The interviewer\'s exact question is provided below. Focus ONLY on answering that question — ignore any other conversation context.\n\n' +
+        'The interviewer\'s exact question is provided below. Answer only that question; use the recent conversation and earlier answers solely to understand what it refers to (for example "that project" or "why did you choose it").\n\n' +
         'Rules:\n' +
         '• BEHAVIORAL: One documented story with the relevant action and supported outcome.\n' +
         '• MOTIVATION ("why this company/role"): Specific, genuine reasons from their stated preferences.\n' +
@@ -210,8 +236,12 @@ const MODES = {
       ), aiRules, 'answerThis');
     },
     build(ctx) {
-      // Only pass the specific question — not the full transcript history
-      return 'Answer this specific interview question:\n\n' + JSON.stringify(ctx.userText || '(no question provided)') + '\n\nGive one natural answer the candidate can say out loud.';
+      // A short window: enough for "that" or "it" in a follow-up question to
+      // resolve, not so much that earlier questions get answered again.
+      const t = formatTranscript(ctx.transcript, 6);
+      return earlierAnswers(ctx) +
+        (t ? 'Recent conversation (only to resolve references in the question):\n' + t + '\n\n' : '') +
+        'Answer this specific interview question:\n\n' + JSON.stringify(ctx.userText || '(no question provided)') + '\n\nGive one natural answer the candidate can say out loud.';
     }
   },
 
@@ -220,6 +250,7 @@ const MODES = {
     needsScreen: true,
     userBubble: 'Solve what\'s on screen',
     small: false,
+    coding: true,
     resumeMode: 'leetcode',
     // A complete solution with explanation does not fit the spoken-answer
     // budget (700 tokens in fast mode used to cut code off mid-function).
@@ -227,17 +258,56 @@ const MODES = {
     buildSystem(_contextBlock, _aiRules) {
       // Context block AND aiRules intentionally ignored — code answers must
       // stay strict regardless of personal style or context.
-      return 'You are an expert competitive programmer. The screenshot contains a coding problem. ' +
-        'Respond with: (1) a one-line restatement, (2) a short approach, (3) a clean, correct, idiomatic solution in a fenced code block ' +
-        '(use the language shown on screen, else Python), (4) time and space complexity. Keep prose tight.';
+      return CODING_SYSTEM;
     },
-    build() { return 'Solve the coding problem shown in the screenshot.'; }
+    build() { return SOLVE_PROMPT; }
+  },
+
+  // ── Coding follow-up: continue the thread of the last coding answer ──────
+  // Chosen automatically for a typed question right after a coding answer
+  // ("optimize it", "what if the input is sorted?", "explain line 4").
+  codeFollowup: {
+    needsScreen: true,
+    userBubble: null,   // the typed follow-up
+    small: false,
+    coding: true,
+    resumeMode: 'leetcode',
+    maxTokens: 4096,
+    buildSystem() {
+      return CODING_SYSTEM + ' The user is following up on your earlier answer: for example asking to optimize it, handle a new constraint, ' +
+        'explain part of it, or fix a failing case. Answer the follow-up directly. When the code changes, give the complete updated solution ' +
+        'in one fenced code block with its time and space complexity. A screenshot, if supplied, shows the current screen.';
+    },
+    build(ctx) { return ctx.userText; }
   }
 };
 
+// A question typed right after a coding answer continues that coding thread.
+function resolveMode(mode, answers) {
+  const last = (answers || [])[(answers || []).length - 1];
+  return mode === 'ask' && last && MODES[last.mode] && MODES[last.mode].coding ? 'codeFollowup' : mode;
+}
+
+// The coding exchanges since the last fresh solve, as alternating turns.
+function codingThread(answers) {
+  const list = answers || [];
+  let start = list.length;
+  while (start > 0 && MODES[list[start - 1].mode] && MODES[list[start - 1].mode].coding) start--;
+  const turns = [];
+  for (const answer of list.slice(start).slice(-MAX_CODING_THREAD)) {
+    turns.push({ role: 'user', text: answer.mode === 'leetcode' ? SOLVE_PROMPT : answer.prompt || SOLVE_PROMPT });
+    turns.push({ role: 'assistant', text: answer.text });
+  }
+  return turns;
+}
+
 // Build before asynchronous screen capture so incoming speech cannot change
 // which question, category and settings belong to an in-flight request.
-function buildPromptRequest(settings, mode, transcript, userText = '') {
+// session.answers: this session's completed answers, oldest first, as
+// { mode, prompt, text } — used for follow-ups and consistency.
+function buildPromptRequest(settings, requestedMode, transcript, userText = '', session = {}) {
+  const answers = (session.answers || []).map(a => ({ ...a }));
+  const mode = resolveMode(requestedMode, answers);
   const def = MODES[mode];
   const turns = (transcript || []).map(t => ({ ...t }));
   const target = (mode === 'ask' || mode === 'answerThis') && userText.trim()
@@ -247,17 +317,19 @@ function buildPromptRequest(settings, mode, transcript, userText = '') {
   const questionTurns = mode === 'assist' || mode === 'say' ? currentQuestionTurns(turns) : [];
   const question = questionTurns.length > 1 ? questionTurns.map(t => t.text.trim()).join(' ') : '';
   const system = def.buildSystem(context, settings.aiRules || '', settings.answerLength);
+  const userTurn = { role: 'user', text: def.build({ transcript: turns, userText, question, answers }) };
   const request = {
-    category: mode === 'leetcode' ? null : detectCategory(target),
-    needsScreen: def.needsScreen && (mode === 'leetcode' || settings.includeScreen !== false),
+    mode,
+    category: def.coding ? null : detectCategory(target),
+    needsScreen: def.needsScreen && (def.coding || settings.includeScreen !== false),
     system,
     // The reference block opens the system prompt and does not depend on the
     // question, so providers with explicit prompt caching can cache it.
     cachePrefix: context && system.startsWith(context) ? context : '',
-    turns: [{ role: 'user', text: def.build({ transcript: turns, userText, question }) }]
+    turns: mode === 'codeFollowup' ? [...codingThread(answers), userTurn] : [userTurn]
   };
   if (def.maxTokens) request.maxTokens = def.maxTokens;
   return request;
 }
 
-module.exports = { MODES, formatTranscript, buildPromptRequest };
+module.exports = { MODES, formatTranscript, buildPromptRequest, resolveMode };

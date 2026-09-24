@@ -8,7 +8,7 @@ test('full KB survives category budgets, rolling history and every interview mod
   for (const question of ['Tell me about a time you failed.', 'Why do you want this role?', 'What is TCP?', 'When can you start?', 'Tell me about yourself.', 'Imagine you joined us.', 'Hello']) {
     const transcript = [{ channel: 'them', text: question }];
     for (const [name, mode] of Object.entries(MODES)) {
-      if (name === 'leetcode') continue;
+      if (mode.coding) continue;
       const context = buildInterviewContext({ knowledgeBase }, name, transcript);
       const system = mode.buildSystem(context, 'Be concise.');
       assert.ok(system.includes(JSON.stringify(knowledgeBase)), `${name}: complete reference missing for ${question}`);
