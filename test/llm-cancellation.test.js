@@ -7,12 +7,15 @@ let anthropicBody;
 let anthropicOptions;
 let anthropicEvents = null; // override the fake stream for one test
 const openaiChunks = [{ choices: [{ delta: { content: 'ok' } }] }];
+let openaiBody;
+let openaiEvents = null; // override the fake stream for one test
 
 class FakeOpenAI {
   constructor() {
-    this.chat = { completions: { create: async (_body, options) => {
+    this.chat = { completions: { create: async (body, options) => {
+      openaiBody = body;
       receivedSignal = options.signal;
-      return openaiChunks;
+      return openaiEvents || openaiChunks;
     } } };
   }
 }
@@ -131,5 +134,44 @@ test('a refusal or an answer lost to the output limit is reported, not shown as 
     assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial');
   } finally {
     anthropicEvents = null;
+  }
+});
+
+test('OpenAI gets max_completion_tokens; reasoning models get room to reason and an effort level', async () => {
+  const ask = (settings) => createLLM({ apiKeys: { openai: 'k', custom: 'k', groq: 'k' }, baseUrl: 'http://127.0.0.1:9/v1', ...settings })
+    .stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });
+
+  await ask({ provider: 'openai', models: { openai: { fast: 'gpt-4.1-mini' } } });
+  assert.equal(openaiBody.max_completion_tokens, 700);
+  assert.equal(openaiBody.max_tokens, undefined, 'reasoning models reject max_tokens');
+  assert.equal(openaiBody.reasoning_effort, undefined);
+
+  for (const model of ['gpt-5-mini', 'o4-mini']) {
+    await ask({ provider: 'openai', models: { openai: { fast: model } } });
+    assert.equal(openaiBody.max_tokens, undefined, model);
+    assert.ok(openaiBody.max_completion_tokens > 700, `${model}: room for reasoning`);
+    assert.equal(openaiBody.reasoning_effort, 'low', model);
+  }
+  await ask({ provider: 'openai', smart: true, models: { openai: { smart: 'gpt-5' } } });
+  assert.equal(openaiBody.reasoning_effort, 'medium', 'Smart raises the effort');
+
+  // OpenAI-compatible servers keep the parameter they support.
+  for (const provider of ['custom', 'groq']) {
+    await ask({ provider, models: { [provider]: { fast: 'o3-lookalike' } } });
+    assert.equal(openaiBody.max_tokens, 700, provider);
+    assert.equal(openaiBody.max_completion_tokens, undefined, provider);
+    assert.equal(openaiBody.reasoning_effort, undefined, provider);
+  }
+});
+
+test('an OpenAI answer lost entirely to reasoning is reported, not shown as empty', async () => {
+  const llm = createLLM({ provider: 'openai', apiKeys: { openai: 'k' }, models: { openai: { fast: 'gpt-5-mini' } } });
+  try {
+    openaiEvents = [{ choices: [{ delta: {}, finish_reason: 'length' }] }];
+    await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /whole output budget/);
+    openaiEvents = [{ choices: [{ delta: { content: 'partial' } }] }, { choices: [{ delta: {}, finish_reason: 'length' }] }];
+    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial');
+  } finally {
+    openaiEvents = null;
   }
 });

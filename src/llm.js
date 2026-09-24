@@ -203,7 +203,21 @@ function stripDataUrl(dataUrl) {
   return m ? { mime: m[1], b64: m[2] } : null;
 }
 
-async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, onResponse, signal }) {
+// OpenAI's reasoning models (o-series, GPT-5 except the -chat variants)
+// reject max_tokens on Chat Completions, and their hidden reasoning tokens
+// count against the output limit. OpenAI itself gets max_completion_tokens,
+// which every current OpenAI chat model accepts; reasoning models also get
+// room to reason and an effort level. OpenAI-compatible servers (Custom,
+// Groq, publik, MiniMax) keep max_tokens, which is what they support.
+const OPENAI_REASONING_RE = /^(o\d|gpt-5)(?!.*-chat)/i;
+
+function openAIRequestShape(model, maxTokens, effort, nativeOpenAI) {
+  if (!nativeOpenAI) return { max_tokens: maxTokens };
+  if (!OPENAI_REASONING_RE.test(model || '')) return { max_completion_tokens: maxTokens };
+  return { max_completion_tokens: maxTokens + THINKING_HEADROOM_TOKENS, reasoning_effort: effort || 'medium' };
+}
+
+async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, nativeOpenAI = false, onToken, onResponse, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const OpenAI = require('openai');
   const client = new OpenAI(baseURL ? { apiKey, baseURL } : { apiKey });
@@ -221,7 +235,7 @@ async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUr
       messages.push({ role: t.role, content: t.text });
     }
   });
-  const pending = client.chat.completions.create({ model, messages, stream: true, max_tokens: maxTokens }, { signal });
+  const pending = client.chat.completions.create({ model, messages, stream: true, ...openAIRequestShape(model, maxTokens, effort, nativeOpenAI) }, { signal });
   let stream;
   if (typeof onResponse === 'function' && pending && typeof pending.withResponse === 'function') {
     // The gateway stamps x-publik-* headers at admission; hand the raw
@@ -233,10 +247,14 @@ async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUr
     stream = await pending;
   }
   let full = '';
+  let finishReason = null;
   for await (const part of stream) {
-    const d = part.choices && part.choices[0] && part.choices[0].delta && part.choices[0].delta.content;
+    const choice = part.choices && part.choices[0];
+    const d = choice && choice.delta && choice.delta.content;
     if (d) { full += d; onToken(d); }
+    if (choice && choice.finish_reason) finishReason = choice.finish_reason;
   }
+  if (finishReason === 'length' && !full.trim()) throw new Error(OUTPUT_BUDGET_EXHAUSTED);
   return full;
 }
 
@@ -313,6 +331,7 @@ function resolveEffort(effort, smart) {
 // Thinking tokens count against the output limit. Models that think get room
 // for it on top of the answer budget, so thinking cannot cut the answer off.
 const THINKING_HEADROOM_TOKENS = 8000;
+const OUTPUT_BUDGET_EXHAUSTED = 'The model used its whole output budget before answering. Try again with Smart off, or pick another model in Settings.';
 
 // Claude models that think unless told otherwise (Opus 5 and later, Sonnet 5,
 // Fable, Mythos). They take an effort level; Haiku 4.5 and older models reject
@@ -380,9 +399,7 @@ async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imag
   if (stopReason === 'refusal') {
     throw new Error('Claude declined this request (a safety filter). Try rephrasing it, or pick another model in Settings.');
   }
-  if (stopReason === 'max_tokens' && !full.trim()) {
-    throw new Error('The model used its whole output budget before answering. Try again with Smart off, or pick another model in Settings.');
-  }
+  if (stopReason === 'max_tokens' && !full.trim()) throw new Error(OUTPUT_BUDGET_EXHAUSTED);
   return full;
 }
 
@@ -542,7 +559,7 @@ function createLLM(settings) {
       if (!ready) throw new Error(configurationError || `Complete the ${provider} provider settings.`);
       const args = { apiKey, baseURL, endpoint, model, maxTokens, ...params, effort: resolveEffort(params.effort, settings.smart), turns: sanitizeTurns(params.turns) };
       try {
-        if (provider === 'openai') return await streamOpenAI(args);
+        if (provider === 'openai') return await streamOpenAI({ ...args, nativeOpenAI: true });
         if (provider === CUSTOM_PROVIDER) return await streamOpenAI(args);
         if (provider === PUBLIK_PROVIDER) return await streamOpenAI(args);
         if (provider === 'ollama') return await streamOllama(args);
@@ -566,6 +583,7 @@ module.exports = {
   createLLM,
   anthropicSystem,
   anthropicRequestShape,
+  openAIRequestShape,
   geminiOutputConfig,
   resolveEffort,
   formatProviderErrorMessage,

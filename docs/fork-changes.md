@@ -92,6 +92,12 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   as a clear error. Gemini 2.5 gets an explicit thinking budget (none for fast
   spoken answers on Flash), so thinking can no longer leave a short answer
   empty.
+- OpenAI requests send `max_completion_tokens` (OpenAI's reasoning models,
+  the o-series and GPT-5, reject `max_tokens`). Reasoning models also get
+  room for their hidden reasoning tokens and a `reasoning_effort` from the
+  effort hint; an answer lost entirely to reasoning is reported as an error.
+  OpenAI-compatible servers (Custom, Groq, publik, MiniMax) still receive
+  `max_tokens`.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context
