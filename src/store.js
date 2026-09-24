@@ -70,6 +70,7 @@ const DEFAULTS = {
   answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
   includeScreen: true,  // Assist/Ask can run with conversation only.
   autoAnswer: false,
+  warmUp: true,          // Prime the provider connection and prompt cache (main.js warmUpProvider).
   // Saved sessions (transcript + answers per interview), on by default and
   // switched off in the Sessions panel; sessionsExportDir optionally keeps a
   // Markdown copy of each.

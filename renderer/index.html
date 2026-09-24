@@ -26,7 +26,7 @@
     <!-- Main assistant panel -->
     <div id="panel-wrap">
       <span id="live-dot" class="off"></span>
-      <div id="stt-status" class="stt-status stt-disconnected" title="STT connection status">off</div>
+      <div id="stt-status" class="stt-status stt-disconnected" title="Whether cue is listening to your microphone and the call">not listening</div>
       <div id="panel" class="glass no-drag">
 
         <!-- Two-column layout: responses (left) + live transcript sidebar (right) -->
@@ -153,13 +153,11 @@
 
       <!-- Tab bar -->
       <div class="s-tabs">
-        <button class="s-tab on" data-tab="keys">🔑 Keys</button>
+        <button class="s-tab on" data-tab="keys">Keys</button>
         <button class="s-tab" data-tab="transcription">Audio</button>
-        <button class="s-tab" data-tab="profile">📄 Profile</button>
-        <button class="s-tab" data-tab="prep">🎯 Interview Prep</button>
-        <button class="s-tab" data-tab="style">✨ Style</button>
-        <button class="s-tab" data-tab="qa">💬 Q&amp;A</button>
-        <button class="s-tab" data-tab="shortcuts">⌨️ Shortcuts</button>
+        <button class="s-tab" data-tab="profile">Prep</button>
+        <button class="s-tab" data-tab="style">Style</button>
+        <button class="s-tab" data-tab="shortcuts">Shortcuts</button>
       </div>
 
       <!-- Tab: Keys -->
@@ -298,8 +296,9 @@
         <div class="s-status" id="whisper-status"></div>
       </div>
 
-      <!-- Tab: Profile -->
+      <!-- Tab: Prep — everything cue uses to answer as you, in one place -->
       <div class="s-body s-tab-pane hidden" data-pane="profile">
+        <div class="s-section">You and the role</div>
         <label class="s-label">Your resume <span class="s-hint">paste full resume, or import a PDF/DOCX</span></label>
         <div class="s-field s-upload"><span class="s-filename" id="resume-filename"></span><button class="s-upload-btn" id="upload-resume-btn">Import PDF/DOCX</button></div>
         <textarea id="resume-text" rows="7" spellcheck="false" placeholder="Paste your full resume here. cue will extract Name, Summary, Experience, Skills, Projects, and Education automatically."></textarea>
@@ -310,11 +309,9 @@
 
         <label class="s-label" for="knowledge-base">Interview knowledge base <span class="s-hint">full prep pack and reference notes</span></label>
         <textarea id="knowledge-base" rows="10" spellcheck="false" placeholder="Paste your interview prep pack here. Keep unknown details clearly marked; cue will not fill them in."></textarea>
-        <div class="s-hint-block">Saved locally. The complete text is sent to your selected AI provider with each interview answer, follow-up or recap. It remains available across restarts. Coding-only solves exclude it. Longer notes use more tokens and may slow responses.</div>
-      </div>
+        <div class="s-hint-block">Saved locally. Everything on this tab is sent to your selected AI provider with each interview answer, follow-up or recap. Coding-only solves exclude it. Longer notes use more tokens and may slow responses.</div>
 
-      <!-- Tab: Interview Prep -->
-      <div class="s-body s-tab-pane hidden" data-pane="prep">
+        <div class="s-section">Prepared answers</div>
         <label class="s-label">Your STAR stories <span class="s-hint">write 3–5 real behavioral stories — used for "tell me about a time…" questions</span></label>
         <textarea id="star-stories" rows="8" spellcheck="false" placeholder="Story 1: At [Company], we faced [situation]. I was responsible for [task]. I did [specific actions]. The result was [outcome with metrics if possible].&#10;&#10;Story 2: ..."></textarea>
 
@@ -326,14 +323,12 @@
 
         <label class="s-label">Work style &amp; values <span class="s-hint">used for culture fit and situational questions</span></label>
         <textarea id="work-style" rows="3" spellcheck="false" placeholder="e.g. I prefer data-driven decisions, work well with autonomy, value direct feedback, thrive in fast-paced environments..."></textarea>
-      </div>
 
-      <!-- Tab: Q&A -->
-      <div class="s-body s-tab-pane hidden" data-pane="qa">
-        <label class="s-label">Salary target <span class="s-hint">used when asked about compensation</span></label>
-        <input id="salary-target" type="text" placeholder="e.g. $150k–$180k base + equity, open to discuss total comp" autocomplete="off" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.25);color:#fff;font-size:13px;font-family:inherit;outline:none;" />
+        <div class="s-section">Closing the interview</div>
+        <label class="s-label">Salary and start date <span class="s-hint">used when asked about compensation or availability</span></label>
+        <input id="salary-target" class="s-input" type="text" placeholder="e.g. Prefer to discuss the package later; notice period 1 month" autocomplete="off" />
 
-        <label class="s-label" style="margin-top:14px;">Questions to ask the interviewer <span class="s-hint">cue will suggest these at the end</span></label>
+        <label class="s-label">Questions to ask the interviewer <span class="s-hint">cue will suggest these at the end</span></label>
         <textarea id="questions-to-ask" rows="6" spellcheck="false" placeholder="e.g.&#10;- What does success look like in the first 90 days?&#10;- How does the team handle technical debt?&#10;- What's the biggest challenge the team is facing right now?&#10;- How does feedback and mentorship work here?"></textarea>
       </div>
 
@@ -360,6 +355,12 @@
           <option value="no">Conversation only — skip screen capture</option>
         </select>
         <div class="s-hint-block">Conversation only avoids capturing and sending a screenshot. Solve what's on screen always uses the screen.</div>
+        <label class="s-label" for="warm-up">Fast first answer</label>
+        <select id="warm-up" class="s-select">
+          <option value="on">On — warm up the AI when cue starts and when listening starts</option>
+          <option value="off">Off</option>
+        </select>
+        <div class="s-hint-block">Sends one tiny request with your prep notes so the first real answer starts in about a second instead of several. It costs a fraction of a cent, runs at most every 4 minutes, and is never sent on publik API.</div>
         <label class="s-label">AI rules <span class="s-hint">how the AI should write its responses</span></label>
         <textarea id="ai-rules" rows="10" spellcheck="false" maxlength="2000" placeholder="e.g.
 - Never use em-dashes.

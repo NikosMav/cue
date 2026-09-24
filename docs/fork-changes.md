@@ -110,6 +110,28 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
 - Source startup clears `ELECTRON_RUN_AS_NODE` in its child environment. Installation
   no longer automatically renames Electron or claims Microsoft identity.
 - Fixed the ignore pattern for `cue-data.json` and contradictory macOS audio docs.
+- Screen-share hiding decides from the Windows session of the cue process
+  (`tasklist`), not only the inherited `SESSIONNAME`, which launchers can drop or
+  leave stale after a Remote Desktop reconnect.
+- The panel always fits its fixed-size window: the answer list is the only part
+  that shrinks when practice controls or status messages need room, and a new
+  answer scrolls only the answer list (`scrollIntoView` also scrolled the page,
+  pushing the toolbar out of the window). The answer being written stays in view
+  until the user scrolls, and scrolled edges fade instead of cutting text.
+- No sample answer on launch: an empty state says what to do next, or offers
+  Open Settings when no provider key is set. The listening label reads
+  "listening" / "not listening" instead of transport names.
+- Settings: Profile, Interview Prep and Q&A merged into one Prep tab (5 tabs,
+  one row); slim dark scrollbars everywhere; provider buttons wrap; muted text
+  raised to at least 4.5:1 contrast; styled import buttons; prep indicators open
+  the Prep tab. Settings saves are queued: overlapping saves from quick tab
+  switches were rejected as "changed outside this window".
+- Plain-language provider errors for rejected keys, keys without model access,
+  exhausted credit, prep notes over the context window, network failures and
+  provider outages, with an Open Settings button when the fix is there.
+- Optional warm-up (on by default, never on publik): a tiny request after launch
+  and when listening starts primes the connection and prompt cache. With OpenAI
+  gpt-4.1-mini the first answer's first token went from 4.7–5.7 s to 1.3–1.7 s.
 
 ## Validation and limits
 

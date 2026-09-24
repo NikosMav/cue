@@ -164,9 +164,15 @@ Local mode is independent from the chat provider, so you can use local speech-to
 
 ### Optional — tailor answers to your background
 
-In **Settings**, paste your résumé or professional background into **Résumé / professional background**. cue uses it as the factual reference for career-related answers and says when the résumé does not provide a detail. You can clear it anytime.
+All prep material lives on one tab, **Settings → Prep**, in three sections: you and
+the role (résumé, job description, knowledge base), prepared answers (STAR stories,
+why this company, why leaving, work style) and closing the interview (salary and
+start date, questions to ask). The Resume / JD / Stories / Salary / KB indicators
+under the input box show what is loaded; click them to open the tab. cue uses the
+résumé as the factual reference for career-related answers and says when it does
+not provide a detail. You can clear any field anytime.
 
-**Settings → Profile → Interview knowledge base** accepts longer reference notes.
+The **Interview knowledge base** field accepts longer reference notes.
 The complete notes are stored locally and sent to the selected chat provider with
 each non-coding request. Longer notes increase request size; keep them focused and
 mark unknown or conditional personal details clearly. Clearing the field removes
@@ -190,6 +196,19 @@ output cuts. Existing custom AI rules can override the default style.
 For conversation help without an image, set **Settings → Style → Screen context
 for Assist and Ask → Conversation only**. This skips screenshot capture and upload.
 The dedicated coding solver still uses the screen.
+
+**Settings → Style → Fast first answer** (on by default) sends one tiny request
+shortly after launch and when listening starts, beginning with the same prep block
+as every answer. That opens the connection and primes the provider's prompt cache,
+so the first answer of a session starts in about a second instead of about five
+(measured with OpenAI gpt-4.1-mini: 4.7–5.7 s cold, 1.3–1.7 s after a warm-up). It
+costs a fraction of a cent, runs at most every 4 minutes, never interrupts a
+request, and is never sent on publik API.
+
+When a request fails, cue says what happened in plain words — a rejected key, a
+key without access to the model, no credit left, a rate limit, a retired model,
+prep notes too long for the model, no connection, or a provider outage — and
+offers **Open Settings** when the fix is there.
 
 ### Step 3 — The Zoom setting (only needed for Zoom)
 

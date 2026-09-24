@@ -14,6 +14,7 @@ const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompt
 const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
+const { createWarmUp } = require('./src/warmup');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
@@ -521,10 +522,21 @@ function routeAudio(channel, pcmBuffer) {
 // Mic + system audio are both captured in the RENDERER (getUserMedia for the mic,
 // getDisplayMedia loopback for system audio) so they run inside cue's own process
 // and use cue's own Screen-Recording grant — no separate helper binary to authorize.
+// Primes the provider so the first answer of a session is fast (src/warmup.js).
+const warmUpProvider = createWarmUp({
+  getSettings: () => store.getSettings(),
+  createLLM,
+  buildPromptRequest,
+  isBusy: () => !!activeRequest,
+  log: (message) => console.log(message),
+  skipProviders: [publik.PUBLIK_PROVIDER]
+});
+
 async function setCapturing(active) {
   if (active === state.capturing) return state.capturing;
 
   if (active) {
+    warmUpProvider('listening');
     sttDisabled = false; // reset on re-enable
     const settings = store.getSettings();
     if ((settings.sttProvider || 'auto') === 'local') {
@@ -661,7 +673,9 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
     emit('llm:start', { userBubble: bubbleFor(mode, def, text, queuedScreens.length), small: !!def.small, category: request.category, mode, auto });
 
     if (!llm.ready) {
-      const message = llm.configurationError || ('Complete the ' + settings.provider + ' provider settings. Model: ' + (llm.model || 'unset') + '.');
+      const message = llm.configurationError ||
+        (llm.model ? 'Add your ' + settings.provider + ' key in Settings → Keys to get answers.'
+          : 'Choose a model for ' + settings.provider + ' in Settings → Keys to get answers.');
       if (settings.provider === publik.PUBLIK_PROVIDER) {
         // No key yet: either the disclosure was never accepted (open it — the
         // mint happens only on "Continue"), or the install was revoked or the
@@ -672,7 +686,7 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
         emit('llm:error', { message, action });
         return;
       }
-      emit('llm:error', { message });
+      emit('llm:error', { message, action: { kind: 'settings' } });
       return;
     }
     // Never a silent starter (CONTRACT §12.4): the first-run card — balance,
@@ -1495,6 +1509,8 @@ function launchApp() {
 
   createWindow();
   registerShortcuts();
+  // After the window is up, so startup is never slowed by the network.
+  setTimeout(() => warmUpProvider('launch'), 3000);
 }
 
 // -------- lifecycle --------

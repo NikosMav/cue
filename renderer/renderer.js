@@ -42,6 +42,19 @@
 
   const messages = $('#messages');
 
+  // Fade whichever edge of the answer list has text scrolled out of view.
+  function updateMessageFades() {
+    const hidden = messages.scrollHeight - messages.clientHeight;
+    messages.classList.toggle('fade-top', messages.scrollTop > 2);
+    messages.classList.toggle('fade-bottom', hidden - messages.scrollTop > 2);
+  }
+  messages.addEventListener('scroll', updateMessageFades, { passive: true });
+  new MutationObserver(updateMessageFades).observe(messages, { childList: true, subtree: true, characterData: true });
+  // A resize (sidebar opened, practice row shown) re-wraps the text; keep the
+  // pinned answer in place too. pinnedGroup/keepPinnedInView are defined below
+  // and only read when the observer fires.
+  new ResizeObserver(() => { keepPinnedInView(); updateMessageFades(); }).observe(messages);
+
   function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   const renderMarkdown = window.CueMarkdown.renderMarkdown; // renderer/markdown.js
@@ -70,7 +83,25 @@
     messages.appendChild(b);
   }
 
+  // The answer being written stays in view: its first line is kept at the top
+  // of the list while it grows, until the user scrolls by hand. Scrolling once
+  // at the start was not enough, because an empty answer cannot be scrolled
+  // to the top yet, and the text then streamed in below the visible area.
+  // The question bubble above it stays one short scroll away.
+  let pinnedGroup = null;
+  const PIN_MARGIN = 26; // clears the top fade so the first line is not dimmed
+  function keepPinnedInView() {
+    if (!pinnedGroup || !pinnedGroup.isConnected) return;
+    const offset = pinnedGroup.getBoundingClientRect().top - messages.getBoundingClientRect().top - PIN_MARGIN;
+    if (Math.abs(offset) > 1) messages.scrollTop += offset;
+  }
+  const releasePin = () => { pinnedGroup = null; };
+  messages.addEventListener('wheel', releasePin, { passive: true });
+  messages.addEventListener('pointerdown', (e) => { if (e.offsetX > messages.clientWidth) releasePin(); }); // scrollbar drag
+  messages.addEventListener('keydown', releasePin);
+
   function startAi(small) {
+    clearEmptyState();
     aiEl = document.createElement('div');
     aiEl.className = 'ai-text' + (small ? ' small' : '');
     aiEl.dataset.raw = '';
@@ -93,6 +124,7 @@
     const host = last && last.matches('p, ul, ol') ? (last.matches('ul, ol') ? last.lastElementChild || last : last)
       : last && last.matches('.code-block') ? last.querySelector('code') : aiEl;
     host.appendChild(caretEl);
+    keepPinnedInView();
   }
 
   function appendToken(t) {
@@ -122,6 +154,7 @@
       group.appendChild(copy);
     }
     aiEl = null; caretEl = null;
+    keepPinnedInView();
   }
 
   let busyFailsafe = null;
@@ -570,6 +603,7 @@
   cue.on('hide:toggle', toggleHide);
   // Global scroll shortcuts: the panel never takes focus, so keys cannot scroll it.
   cue.on('answers:scroll', ({ direction }) => {
+    releasePin();
     messages.scrollBy({ top: direction * Math.max(60, messages.clientHeight * 0.8), behavior: 'smooth' });
   });
   // Main changed a setting (e.g. the auto-answer shortcut): keep this copy in
@@ -612,7 +646,8 @@
   // Empties the answers, transcript sidebar and input box (main has already
   // reset its own copy of the conversation).
   function clearConversationUI() {
-    clearMessages();
+    showEmptyState(); // clears the answers and says what to do next
+    pinnedGroup = null;
     // Also clear the floating interim bar
     if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
     const list = document.getElementById('ts-list');
@@ -814,15 +849,24 @@
 
   let sttState = 'disconnected';
 
+  // The label shows what the user needs to know (is cue hearing the call?),
+  // not transport names such as "streaming" or "batch".
+  const STT_LABELS = {
+    disconnected: 'not listening', off: 'not listening', connecting: 'connecting…', batch: 'listening',
+    streaming: 'listening', local: 'listening · local', 'loading local': 'loading speech model',
+    stopping: 'stopping', error: 'listening error'
+  };
+  const sttLabelText = (state) => STT_LABELS[state] || state;
+
   function updateSttStatus({ active, streaming } = {}) {
     const label = document.getElementById('stt-status');
     if (!label) return;
     if (active === false) {
       sttState = 'disconnected';
-      label.textContent = 'off';
+      label.textContent = sttLabelText('off');
     } else if (active === true) {
       sttState = streaming ? 'connecting' : 'batch';
-      label.textContent = sttState;
+      label.textContent = sttLabelText(sttState);
     }
     label.className = 'stt-status stt-' + sttState;
   }
@@ -990,7 +1034,7 @@
     if (active && mode === 'local') {
       sttState = 'local';
       const label = document.getElementById('stt-status');
-      if (label) { label.textContent = 'local'; label.className = 'stt-status stt-local'; }
+      if (label) { label.textContent = sttLabelText('local'); label.className = 'stt-status stt-local'; }
     } else {
       updateSttStatus({ active, streaming });
     }
@@ -1069,7 +1113,7 @@
       };
       sttState = status === 'ready' || status === 'transcribing' ? 'local' : status;
       if (label) {
-        label.textContent = localLabels[status] || status;
+        label.textContent = sttLabelText(localLabels[status] || status);
         label.className = 'stt-status stt-' + sttState;
       }
       if (status === 'loading') $('#stop-btn').classList.add('active');
@@ -1082,7 +1126,7 @@
     if (status === 'connected') {
       sttState = 'streaming';
       const label = document.getElementById('stt-status');
-      if (label) { label.textContent = sttState; label.className = 'stt-status stt-streaming'; }
+      if (label) { label.textContent = sttLabelText(sttState); label.className = 'stt-status stt-streaming'; }
     }
   });
   cue.on('vad:state', ({ channel, speaking }) => {
@@ -1126,11 +1170,13 @@
     caretEl.className = 'ai-caret';
     aiEl.appendChild(caretEl);
     group.appendChild(aiEl);
+    clearEmptyState();
     messages.appendChild(group);
-    // Use requestAnimationFrame so the DOM is fully updated before scrolling
-    requestAnimationFrame(() => {
-      if (sep && sep.isConnected) sep.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
+    // Scroll only the message list (never scrollIntoView: it also scrolls the
+    // page itself, which pushed the toolbar and the panel top out of the
+    // window), and keep this answer in view while it streams.
+    pinnedGroup = aiEl;
+    requestAnimationFrame(keepPinnedInView);
     setBusy(true);
   });
   const isStale = (id) => id !== undefined && id !== currentRequestId;
@@ -1150,7 +1196,16 @@
     if (isStale(id)) return;
     currentRequestId = null;
     if (!aiEl) startAi(true);
+    const errorEl = aiEl;
     aiEl.dataset.raw = message; finalizeAi(); setBusy(false);
+    // A missing key is fixed in Settings: offer that right under the message
+    // instead of repeating the message in a status bar.
+    if (action && action.kind === 'settings') {
+      const open = publikActionButton(action);
+      open.className = 'answer-action';
+      errorEl.appendChild(open);
+      return;
+    }
     // publik errors carry one action: the renderer's markdown emits no anchors,
     // so a link needs a real button (same pattern as the mic banner).
     if (action && action.kind === 'card') { showPublikCard(); return; }
@@ -1201,7 +1256,7 @@
       if (lower.includes('error') || lower.includes(' off')) {
         sttState = 'error';
         const label = document.getElementById('stt-status');
-        if (label) { label.textContent = sttState; label.className = 'stt-status stt-error'; }
+        if (label) { label.textContent = sttLabelText(sttState); label.className = 'stt-status stt-error'; }
       }
     }
   });
@@ -1236,10 +1291,16 @@
       el.classList.toggle('loaded', loaded);
       el.classList.toggle('missing', !loaded);
       el.title = loaded
-        ? el.textContent.trim() + ' loaded'
-        : el.textContent.trim() + ' not set — add in Settings';
+        ? el.textContent.trim() + ' loaded — click to edit'
+        : el.textContent.trim() + ' not set — click to add';
     });
   }
+  // The indicators open the tab where that material is edited.
+  $('#prep-status').addEventListener('click', async () => {
+    await openSettings();
+    const tab = document.querySelector('.s-tab[data-tab="profile"]');
+    if (tab) tab.click();
+  });
 
   function updateSmartTooltip() {
     if (!settings) return;
@@ -1459,6 +1520,9 @@
     } else if (action.kind === 'card') {
       btn.textContent = 'Show the publik API card';
       btn.addEventListener('click', () => showPublikCard());
+    } else if (action.kind === 'settings') {
+      btn.textContent = 'Open Settings';
+      btn.addEventListener('click', () => openSettings());
     } else {
       return null;
     }
@@ -1585,6 +1649,7 @@
     $('#ai-rules').value = settings.aiRules || '';
     $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
     $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
+    $('#warm-up').value = settings.warmUp === false ? 'off' : 'on';
     updateAiRulesCounter();
     // Q&A tab
     $('#salary-target').value = settings.salaryTarget || '';
@@ -1835,7 +1900,19 @@
   });
   cue.on('whisper:models-changed', () => refreshWhisperModels());
 
-  async function saveSettings() {
+  // Saves run one at a time. Tab switches and Done each save the form; two
+  // overlapping saves carried the same settings revision, so the second was
+  // rejected as "changed outside this window" and its tab switch was lost.
+  // Queued, each save starts after the previous one and sends the revision
+  // that save returned.
+  let saveQueue = Promise.resolve();
+  function saveSettings() {
+    const run = saveQueue.then(saveSettingsNow, saveSettingsNow);
+    saveQueue = run.catch(() => {});
+    return run;
+  }
+
+  async function saveSettingsNow() {
     // Never persist empty inputs before the asynchronous form load finishes.
     if (!settingsFormReady) return false;
     // Keys
@@ -1882,11 +1959,13 @@
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
     settings.includeScreen = $('#include-screen').value !== 'no';
+    settings.warmUp = $('#warm-up').value !== 'off';
     // Q&A
     settings.salaryTarget = $('#salary-target').value.trim();
     settings.questionsToAsk = $('#questions-to-ask').value.trim();
     try {
       settings = await cue.settingsSet(settings);
+      if (messages.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed
       $('#s-status').textContent = statusText();
       updatePrepStatus();
       updateSmartTooltip();
@@ -1899,14 +1978,37 @@
     }
   }
 
-  // ---- example conversation (matches the reference screenshot) ------------
-  function showExample() {
+  // ---- empty state: what to do next, never a sample answer ----------------
+  // A made-up answer on launch is indistinguishable from a real one at a
+  // glance, which is exactly how the panel is read during an interview.
+  function providerReady(s) {
+    const p = s.provider;
+    if (p === 'publik') return !!(s.publik && s.publik.connected);
+    if (p === 'ollama') return true;
+    if (p === 'custom') return !!s.baseUrl;
+    return !!(s.apiKeys && s.apiKeys[p]);
+  }
+  function showEmptyState() {
     clearMessages();
-    addUserBubble('What should I say?');
-    const ai = document.createElement('div');
-    ai.className = 'ai-text';
-    ai.textContent = '“A discounted cash flow model values a company by projecting future free cash flows and discounting them to present value using the weighted average cost of capital.”';
-    messages.appendChild(ai);
+    const box = document.createElement('div');
+    box.className = 'empty-state';
+    if (!providerReady(settings)) {
+      box.innerHTML = '<strong>Add an AI key to get started.</strong><br>cue needs a provider key before it can answer.';
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.textContent = 'Open Settings';
+      open.addEventListener('click', () => openSettings());
+      box.appendChild(document.createElement('br'));
+      box.appendChild(open);
+    } else {
+      box.innerHTML = '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> ' +
+        'when the interviewer asks a question. You can also type a question below.';
+    }
+    messages.appendChild(box);
+  }
+  function clearEmptyState() {
+    const box = messages.querySelector('.empty-state');
+    if (box) box.remove();
   }
 
   // ---- saved sessions ------------------------------------------------------
@@ -2358,7 +2460,7 @@
 
     smartBtn.classList.toggle('on', !!settings.smart);
     syncAutoButton();
-    showExample();
+    showEmptyState();
     syncPlaceholder();
     updateHistoryBadge(); // Initialize badge on boot
     updateSendButtonState(); // Initialize send button state

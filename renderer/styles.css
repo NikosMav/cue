@@ -7,7 +7,7 @@
 
   --tx-1: rgba(255,255,255,0.95);
   --tx-2: rgba(255,255,255,0.90);
-  --tx-mut: rgba(255,255,255,0.40);
+  --tx-mut: rgba(255,255,255,0.56);     /* ≥4.5:1 on the panel for small text */
   --ic: rgba(255,255,255,0.85);
 
   --bd-hair: rgba(255,255,255,0.12);
@@ -26,6 +26,14 @@
 }
 
 * { box-sizing: border-box; }
+
+/* One slim, dark scrollbar everywhere (settings, sessions, textareas, answers)
+   instead of Chromium's bright default with arrow buttons. */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; }
 
 html, body {
   margin: 0;
@@ -50,6 +58,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   padding-top: 14px;
+  padding-bottom: 20px;                  /* room for the panel's shadow inside the window */
   pointer-events: none;                  /* only the actual UI blocks; gaps pass through */
 }
 #toolbar, #panel-wrap, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim { pointer-events: auto; }
@@ -147,7 +156,11 @@ html, body {
 .mic-perm-actions button.dismiss:hover { background: rgba(255,255,255,0.10); color: var(--tx-2); }
 
 /* ============================ Panel ============================ */
-#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); }
+/* The window has a fixed size, so the panel must fit inside it: #panel-wrap,
+   #panel, #panel-columns and #panel-main form one flex column down to
+   #messages, which is the only part that shrinks when extra rows (practice
+   controls, status messages) need room. */
+#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
 button:focus { outline: none; }
 #live-dot {
   position: absolute; top: -3px; left: -5px; z-index: 4;
@@ -166,11 +179,26 @@ button:focus { outline: none; }
   border-radius: var(--r-panel);
   box-shadow: 0 16px 48px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.10);
 }
-#panel { padding: 20px 22px; animation: overlayIn 260ms cubic-bezier(0.22,1,0.36,1); }
+/* 30px top padding keeps the absolutely placed #stt-status label off the text. */
+#panel { padding: 30px 22px 20px; display: flex; flex-direction: column; min-height: 0; animation: overlayIn 260ms cubic-bezier(0.22,1,0.36,1); }
 #panel.collapsed { display: none; }
+/* Hidden panel: no orphaned status label or dot floating on the desktop.
+   The toolbar's stop button still shows whether cue is listening. */
+#panel-wrap:has(#panel.collapsed) #stt-status,
+#panel-wrap:has(#panel.collapsed) #live-dot { display: none; }
 
 /* ============================ Messages ============================ */
-#messages { display: flex; flex-direction: column; overflow-y: auto; max-height: 50vh; }
+#messages { display: flex; flex-direction: column; overflow-y: auto; max-height: 50vh; flex: 0 1 auto; min-height: 96px; }
+/* Shown until the first answer: what to do next, never a fake answer. */
+.empty-state { color: var(--tx-mut); font-size: 14px; line-height: 1.6; padding: 4px 2px 8px; }
+.empty-state strong { color: var(--tx-2); font-weight: 600; }
+.empty-state .keycap { margin: 0 1px; }
+.empty-state button { margin-top: 10px; padding: 7px 14px; border-radius: var(--r-8); border: 1px solid rgba(60,131,245,0.45); background: rgba(60,131,245,0.16); color: #cfe0ff; font: 600 13px var(--font); cursor: pointer; }
+.empty-state button:hover { background: rgba(60,131,245,0.26); }
+/* Fade the edge where more text is scrolled out of view, instead of a hard cut. */
+#messages.fade-top { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
+#messages.fade-bottom { -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22px); }
+#messages.fade-top.fade-bottom { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); }
 .user-bubble {
   align-self: flex-end;
   max-width: 75%;
@@ -215,7 +243,8 @@ button:focus { outline: none; }
   background: rgba(255,255,255,0.05); color: var(--tx-mut); font: 500 11px var(--font); cursor: pointer;
 }
 .copy-code:hover, .copy-answer:hover { color: #fff; background: rgba(255,255,255,0.10); }
-.copy-answer { display: block; margin: 6px 0 0 auto; opacity: 0.6; }
+.copy-answer { display: block; margin: 6px 0 0 auto; opacity: 0.6; min-height: 24px; }
+.copy-code { min-height: 24px; }
 .response-group:hover .copy-answer { opacity: 1; }
 .ai-text p code { background: rgba(255,255,255,0.10); padding: 1px 5px; border-radius: 5px; }
 .ai-caret { display:inline-block; width:7px; height:1.05em; vertical-align:-2px; background: var(--accent); border-radius:1px; animation: blink 1s step-end infinite; margin-left: 2px; }
@@ -248,9 +277,16 @@ button:focus { outline: none; }
 
 /* ============================ Action row ============================ */
 #action-row {
-  display: flex; align-items: center; flex-wrap: nowrap; gap: 4px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
   margin-top: 6px; white-space: nowrap;
 }
+/* Gaps separate the actions; the "•" separators made the row a few pixels
+   too wide for the panel. The narrow panel next to the history sidebar has
+   no room for key hints either. */
+#action-row .sep { display: none; }
+#panel-wrap.sidebar-open .shortcut-hint { display: none; }
+.answer-action { margin-top: 10px; padding: 6px 14px; border-radius: var(--r-8); border: 1px solid rgba(60,131,245,0.45); background: rgba(60,131,245,0.16); color: #cfe0ff; font: 600 13px var(--font); cursor: pointer; }
+.answer-action:hover { background: rgba(60,131,245,0.26); }
 .act {
   display: inline-flex; align-items: center; gap: 6px;
   border: none; background: transparent; cursor: pointer;
@@ -492,9 +528,10 @@ button:focus { outline: none; }
 .s-close { border: none; background: var(--accent); color: #fff; font-weight: 600; font-size: 13px; padding: 6px 14px; border-radius: var(--r-pill); cursor: pointer; }
 
 /* Tab bar */
-.s-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-shrink: 0; overflow-x: auto; }
+/* Wraps to a second row instead of scrolling sideways behind a scrollbar. */
+.s-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; flex-shrink: 0; }
 .s-tab {
-  flex: 1; min-width: 72px; padding: 7px 4px; border-radius: var(--r-8);
+  flex: 1 1 auto; min-width: 72px; padding: 7px 10px; border-radius: var(--r-8);
   border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03);
   color: var(--tx-mut); font-size: 12px; font-weight: 500; font-family: var(--font);
   cursor: pointer; transition: all 140ms ease; white-space: nowrap;
@@ -505,11 +542,24 @@ button:focus { outline: none; }
 /* Tab panes */
 .s-tab-pane { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 0; }
 .s-tab-pane.hidden { display: none; }
+/* A long pane (Prep) scrolls; its fields keep their height instead of being squeezed. */
+.s-tab-pane > * { flex-shrink: 0; }
 
 .s-body { display: flex; flex-direction: column; gap: 8px; }
 .s-label { color: var(--tx-2); font-size: 13px; font-weight: 600; margin-top: 6px; flex-shrink: 0; }
 .s-hint { color: var(--tx-mut); font-weight: 400; font-size: 11px; margin-left: 6px; }
 .s-seg { display: flex; gap: 6px; }
+/* Section headings inside the merged Prep tab. */
+.s-section { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--bd-hair); color: var(--tx-1); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; flex-shrink: 0; }
+.s-section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.s-input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25); color: #fff; font-size: 13px; font-family: inherit; outline: none; }
+#prep-status { cursor: pointer; }
+#provider-seg { flex-wrap: wrap; }
+#provider-seg button { min-width: 88px; }
+.s-upload { justify-content: flex-end; }
+.s-upload .s-filename { width: auto; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-upload-btn { padding: 5px 12px; border-radius: var(--r-8); border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.05); color: var(--tx-2); font: 500 12px var(--font); cursor: pointer; }
+.s-upload-btn:hover { background: rgba(255,255,255,0.10); }
 .s-seg-wrap { flex-wrap: wrap; }
 .s-seg-wrap button { min-width: 76px; }
 .s-seg button { flex: 1; padding: 8px; border-radius: var(--r-8); border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04); color: var(--tx-2); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 140ms ease; }
@@ -689,12 +739,19 @@ button:focus { outline: none; }
 #panel-columns {
   display: flex;
   gap: 0;
-  align-items: flex-start;
+  align-items: stretch; /* so #panel-main is bounded by the panel's height */
+  flex: 0 1 auto;
+  min-height: 0;
 }
 #panel-main {
   flex: 1;
   min-width: 0; /* allow shrink */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
+#panel-main > * { flex-shrink: 0; }
+#panel-main > #messages { flex-shrink: 1; }
 
 /* Transcript history sidebar — floats OUTSIDE the main panel */
 .transcript-sidebar {
