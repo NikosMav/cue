@@ -201,7 +201,7 @@ test('formatProviderErrorMessage: maps a Gemini 429 to a free-tier quota message
     body: { error: { message: 'You exceeded your current quota', code: 429, status: 'RESOURCE_EXHAUSTED' } }
   });
   const message = formatProviderErrorMessage(error, 'gemini', 'gemini-2.5-flash');
-  assert.match(message, /Gemini free-tier quota exhausted \(429/);
+  assert.match(message, /Your Gemini account is out of quota or credit \(429/);
   assert.match(message, /billing/);
   assert.doesNotMatch(message, /RESOURCE_EXHAUSTED/);
 });
@@ -233,12 +233,51 @@ test('formatProviderErrorMessage: an OpenAI-style quota 429 (no numeric status) 
   // Matches the literal text one of the bug reports pasted in.
   const error = new Error('429 You exceeded your current quota, please check your plan and billing details.');
   const message = formatProviderErrorMessage(error, 'openai');
-  assert.match(message, /OpenAI free-tier quota exhausted/);
+  assert.match(message, /Your OpenAI account is out of quota or credit/);
 });
 
 test('formatProviderErrorMessage: an unrecognized error passes its raw message through unchanged', () => {
-  const error = new Error('socket hang up');
-  assert.equal(formatProviderErrorMessage(error, 'anthropic'), 'socket hang up');
+  const error = new Error('Unexpected end of JSON input');
+  assert.equal(formatProviderErrorMessage(error, 'anthropic'), 'Unexpected end of JSON input');
+});
+
+test('formatProviderErrorMessage: a rejected key says so and points to Settings → Keys', () => {
+  const error = new Error('401 Incorrect API key provided: sk-abc***');
+  error.status = 401;
+  const message = formatProviderErrorMessage(error, 'openai');
+  assert.match(message, /OpenAI rejected your API key \(401\)/);
+  assert.match(message, /Settings → Keys/);
+  assert.doesNotMatch(message, /sk-abc/);
+});
+
+test('formatProviderErrorMessage: a key without access to the model is a 403, not a bad key', () => {
+  const error = new Error('403 Project does not have access to model gpt-4.1');
+  error.status = 403;
+  assert.match(formatProviderErrorMessage(error, 'openai', 'gpt-4.1'), /not allowed to use "gpt-4\.1" \(403\)/);
+});
+
+test('formatProviderErrorMessage: network failures ask about the connection, local servers about the server', () => {
+  const offline = Object.assign(new Error('getaddrinfo ENOTFOUND api.openai.com'), { name: 'APIConnectionError' });
+  assert.match(formatProviderErrorMessage(offline, 'openai'), /Can't reach OpenAI\. Check your internet connection/);
+  assert.match(formatProviderErrorMessage(new Error('connect ECONNREFUSED 127.0.0.1:11434'), 'ollama'), /server is running/);
+  assert.match(formatProviderErrorMessage(new Error('socket hang up'), 'anthropic'), /Can't reach Anthropic/);
+});
+
+test('formatProviderErrorMessage: a user cancellation is not reported as a network failure', () => {
+  const aborted = Object.assign(new Error('Request was aborted.'), { name: 'AbortError' });
+  assert.equal(formatProviderErrorMessage(aborted, 'openai'), 'Request was aborted.');
+});
+
+test('formatProviderErrorMessage: provider outages and overload say it is on their side', () => {
+  const overloaded = Object.assign(new Error('529 Overloaded'), { status: 529 });
+  assert.match(formatProviderErrorMessage(overloaded, 'anthropic'), /Anthropic is having problems right now/);
+  const down = Object.assign(new Error('503 Service Unavailable'), { status: 503 });
+  assert.match(formatProviderErrorMessage(down, 'gemini'), /Gemini is having problems right now/);
+});
+
+test('formatProviderErrorMessage: prep notes that exceed the context window point to the Prep tab', () => {
+  const error = Object.assign(new Error("This model's maximum context length is 128000 tokens."), { status: 400, code: 'context_length_exceeded' });
+  assert.match(formatProviderErrorMessage(error, 'openai', 'gpt-4.1-mini'), /too long for gpt-4\.1-mini\. Shorten the knowledge base on the Prep tab/);
 });
 
 test('isQuotaError: agrees with formatProviderErrorMessage on what counts as quota', () => {
@@ -292,13 +331,13 @@ test('isQuotaError: an OpenAI rate_limit_exceeded burst (not insufficient_quota)
 
 test('formatProviderErrorMessage: an Anthropic rate_limit_error gets its own message, never "quota exhausted"', () => {
   const message = formatProviderErrorMessage(anthropicRateLimitError(), 'anthropic', 'claude-3-5-haiku-latest');
-  assert.doesNotMatch(message, /free-tier quota exhausted/i);
+  assert.doesNotMatch(message, /out of quota or credit/i);
   assert.match(message, /rate-limiting/i);
 });
 
 test('formatProviderErrorMessage: an OpenAI rate_limit_exceeded burst gets its own message, never "quota exhausted"', () => {
   const message = formatProviderErrorMessage(openaiRateLimitExceededError(), 'openai', 'gpt-4o-mini');
-  assert.doesNotMatch(message, /free-tier quota exhausted/i);
+  assert.doesNotMatch(message, /out of quota or credit/i);
   assert.match(message, /rate-limiting/i);
 });
 
@@ -309,7 +348,7 @@ test('formatProviderErrorMessage: a genuine OpenAI insufficient_quota error stil
   e.code = 'insufficient_quota';
   e.error = body;
   const message = formatProviderErrorMessage(e, 'openai', 'gpt-4o-mini');
-  assert.match(message, /OpenAI free-tier quota exhausted/);
+  assert.match(message, /Your OpenAI account is out of quota or credit/);
 });
 
 // ---- Gemini model selection / self-healing migration -----------------------
@@ -472,6 +511,26 @@ test('llm.stream on publik rethrows the structured error with its action', async
   });
 });
 
+test('a rejected key reaches the caller as a plain message with an Open Settings action', async () => {
+  fakeCreateError = sdkError(401, { type: 'invalid_request_error', code: 'invalid_api_key', message: 'Incorrect API key provided' });
+  const llm = createLLM(createCustomSettings());
+  await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'hi' }], onToken: () => {} }), (e) => {
+    assert.match(e.message, /rejected your API key \(401\)/);
+    assert.deepEqual(e.action, { kind: 'settings' });
+    return true;
+  });
+});
+
+test('an outage carries no Settings action: there is nothing to change on the user side', async () => {
+  fakeCreateError = sdkError(503, { type: 'server_error', message: 'Service Unavailable' });
+  const llm = createLLM(createCustomSettings());
+  await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'hi' }], onToken: () => {} }), (e) => {
+    assert.match(e.message, /having problems right now/);
+    assert.equal(e.action, undefined);
+    return true;
+  });
+});
+
 test('publik never touches the Custom provider path', async () => {
   const llm = createLLM(createCustomSettings());
   await llm.stream({ system: 's', turns: [{ role: 'user', text: 'hi' }], onToken: () => {} });
@@ -483,7 +542,7 @@ test('publik never touches the Custom provider path', async () => {
 // (REGION.json's minimal_repro for cue-quota-exhausted-429-false-positive).
 test('formatProviderErrorMessage: a bare 429 with no upstream body is a rate limit, not quota exhaustion', () => {
   const message = formatProviderErrorMessage({ status: 429 }, 'anthropic', 'claude-3-5-haiku-latest');
-  assert.doesNotMatch(message, /free-tier quota exhausted/i);
+  assert.doesNotMatch(message, /out of quota or credit/i);
   assert.match(message, /rate-limiting/i);
   assert.equal(isQuotaError({ status: 429 }), false);
 });
@@ -496,7 +555,7 @@ test('formatProviderErrorMessage: an Anthropic 429 with a non-rate-limit body is
   e.status = 429;
   e.error = body;
   const message = formatProviderErrorMessage(e, 'anthropic');
-  assert.doesNotMatch(message, /free-tier quota exhausted/i);
+  assert.doesNotMatch(message, /out of quota or credit/i);
   assert.match(message, /rate-limiting/i);
 });
 

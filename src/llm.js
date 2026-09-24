@@ -96,6 +96,43 @@ function isRateLimitError(error) {
     /\b429\b|too many requests|rate limit/i.test(text);
 }
 
+// 401: the key itself is wrong or revoked. 403: the key is valid but may not
+// use this model or API (e.g. an OpenAI project key limited to other models).
+function authStatus(error) {
+  const { status, code, upstreamType, text } = errorSignals(error);
+  if (status === 401 || code === 'invalid_api_key' || upstreamType === 'authentication_error' ||
+      /incorrect api key|invalid api key|api key not valid|invalid x-api-key|unauthori[sz]ed/i.test(text)) return 401;
+  if (status === 403 || upstreamType === 'permission_error' || /permission denied|does not have access|forbidden/i.test(text)) return 403;
+  return 0;
+}
+
+// The request (mostly the prep notes) does not fit the model's context window.
+function isContextLengthError(error) {
+  const { code, text } = errorSignals(error);
+  return code === 'context_length_exceeded' ||
+    /context[_ ]length|maximum context|prompt is too long|too many tokens|input is too long|exceeds the (?:maximum|context)/i.test(text);
+}
+
+// The provider is down or overloaded: nothing on the user's side to fix.
+function isOutageError(error) {
+  const { status, upstreamType, text } = errorSignals(error);
+  return (Number(status) >= 500 && Number(status) <= 599) || upstreamType === 'overloaded_error' ||
+    /overloaded|service unavailable|bad gateway|internal server error|\b50[0234]\b|\b529\b/i.test(text);
+}
+
+// User cancellations also abort the request; those are not network failures.
+function isNetworkError(error) {
+  if (!error || error.name === 'AbortError' || error.cancelled) return false;
+  const text = (error.message || String(error)) || '';
+  return error.name === 'APIConnectionError' || error.name === 'APIConnectionTimeoutError' ||
+    /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|socket hang up|getaddrinfo|network error|connection error|request timed out/i.test(text);
+}
+
+// Errors the user fixes in Settings get an "Open Settings" button in the UI.
+function isSettingsFixable(error) {
+  return isQuotaError(error) || isNotFoundError(error) || authStatus(error) > 0 || isContextLengthError(error);
+}
+
 function isNotFoundError(error) {
   const status = error && (error.status || error.statusCode || error.response?.status);
   const code = error && (error.code || error.error?.code);
@@ -162,7 +199,7 @@ function formatProviderErrorMessage(error, provider, model) {
   if (isQuotaError(error)) {
     const retrySeconds = extractRetryDelaySeconds(rawMessage);
     const waitHint = retrySeconds ? ` Wait about ${formatRetryWait(retrySeconds)}` : ' Wait a moment';
-    return `${label} free-tier quota exhausted (429 Too Many Requests).${waitHint} and try again, or add billing to your ${label} account. You can also switch providers or models in Settings.`;
+    return `Your ${label} account is out of quota or credit (429).${waitHint} and try again, or add billing to your ${label} account. You can also switch providers or models in Settings.`;
   }
 
   if (isRateLimitError(error)) {
@@ -171,9 +208,33 @@ function formatProviderErrorMessage(error, provider, model) {
     return `${label} is rate-limiting requests right now (429 Too Many Requests).${waitHint} and try again — this is a temporary per-minute/request limit, not your account running out of credit.`;
   }
 
+  const auth = authStatus(error);
+  if (auth === 401) {
+    return `${label} rejected your API key (401). It may be mistyped, revoked or for another provider. Check or replace it in Settings → Keys.`;
+  }
+  if (auth === 403) {
+    const modelHint = model ? ` "${model}"` : ' this model';
+    return `Your ${label} key is not allowed to use${modelHint} (403). Enable the model for this key in your ${label} account, or pick another model in Settings → Keys.`;
+  }
+
   if (isNotFoundError(error)) {
     const modelHint = model ? ` "${model}"` : '';
     return `${label} model${modelHint} is unavailable (404) — it may have been renamed, retired by the provider, or misspelled. Open Settings and pick a current model for ${label} (or clear the field to use cue's default), then try again.`;
+  }
+
+  if (isContextLengthError(error)) {
+    return `Your prep notes are too long for ${model || `this ${label} model`}. Shorten the knowledge base on the Prep tab, or pick a model with a larger context window in Settings → Keys.`;
+  }
+
+  if (isNetworkError(error)) {
+    const local = provider === 'ollama' || provider === CUSTOM_PROVIDER;
+    return local
+      ? `Can't reach ${label} at its URL. Check that the server is running and the URL in Settings → Keys is right.`
+      : `Can't reach ${label}. Check your internet connection (and any VPN or proxy), then try again.`;
+  }
+
+  if (isOutageError(error)) {
+    return `${label} is having problems right now. Try again in a moment, or switch to another provider in Settings.`;
   }
 
   return rawMessage || 'Unknown LLM error.';
@@ -573,7 +634,11 @@ function createLLM(settings) {
         // publik branches return an Error carrying `.action`; the string
         // branches keep working unchanged.
         const wrapped = formatProviderErrorMessage(error, provider, model);
-        throw wrapped instanceof Error ? wrapped : new Error(wrapped);
+        if (wrapped instanceof Error) throw wrapped;
+        const friendly = new Error(wrapped);
+        if (isSettingsFixable(error)) friendly.action = { kind: 'settings' };
+        if (error && error.cancelled) friendly.cancelled = true; // keep cancellation visible to the caller
+        throw friendly;
       }
     }
   };
