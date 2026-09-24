@@ -13,14 +13,14 @@ const PUBLIK_PROVIDER = publik.PUBLIK_PROVIDER;
 // available, so it is the single default used everywhere in this file.
 const CURRENT_GEMINI_DEFAULT = 'gemini-2.5-flash';
 // claude-3-5-haiku-latest / claude-3-5-sonnet-latest were retired by Anthropic
-// (confirmed absent from GET https://api.anthropic.com/v1/models as of Sep 19
-// 2026 — every claude-2.x and claude-3.x id 404s with not_found_error).
-// claude-haiku-4-5-20251001 / claude-sonnet-4-5-20250929 are current and were
-// live-verified with a real request before shipping this default.
-const CURRENT_ANTHROPIC_DEFAULT_FAST = 'claude-haiku-4-5-20251001';
-const CURRENT_ANTHROPIC_DEFAULT_SMART = 'claude-sonnet-4-5-20250929';
+// (every claude-2.x and claude-3.x id 404s with not_found_error). Fast is the
+// current Haiku, which answers without thinking; Smart is the current Opus,
+// which thinks by default (see anthropicRequestShape for how that is kept
+// fast and untruncated).
+const CURRENT_ANTHROPIC_DEFAULT_FAST = 'claude-haiku-4-5';
+const CURRENT_ANTHROPIC_DEFAULT_SMART = 'claude-opus-5';
 const DEFAULT_MODELS = {
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-4.1-mini',
   anthropic: CURRENT_ANTHROPIC_DEFAULT_FAST,
   gemini: CURRENT_GEMINI_DEFAULT,
   ollama: 'llama3.2',
@@ -302,7 +302,55 @@ function anthropicSystem(system, cachePrefix) {
   ];
 }
 
-async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, signal }) {
+// Reasoning effort per request: 'low' for spoken answers (latency matters),
+// 'medium' for coding and debriefs. Smart raises it one level.
+const EFFORT_LEVELS = ['low', 'medium', 'high'];
+function resolveEffort(effort, smart) {
+  const index = Math.max(0, EFFORT_LEVELS.indexOf(effort || 'medium'));
+  return EFFORT_LEVELS[Math.min(EFFORT_LEVELS.length - 1, index + (smart ? 1 : 0))];
+}
+
+// Thinking tokens count against the output limit. Models that think get room
+// for it on top of the answer budget, so thinking cannot cut the answer off.
+const THINKING_HEADROOM_TOKENS = 8000;
+
+// Claude models that think unless told otherwise (Opus 5 and later, Sonnet 5,
+// Fable, Mythos). They take an effort level; Haiku 4.5 and older models reject
+// it. Opus 5 and Fable also get server-side refusal fallbacks: when a safety
+// classifier declines a request, Anthropic re-runs it on its recommended
+// fallback model inside the same call.
+const ANTHROPIC_THINKS_BY_DEFAULT_RE = /^claude-(opus-5|sonnet-5|fable-5|mythos-5)/;
+const ANTHROPIC_FALLBACKS_RE = /^claude-(opus-5|fable-5)/;
+const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
+function anthropicRequestShape(model, maxTokens, effort) {
+  if (!ANTHROPIC_THINKS_BY_DEFAULT_RE.test(model || '')) return { body: { max_tokens: maxTokens }, headers: {} };
+  const body = { max_tokens: maxTokens + THINKING_HEADROOM_TOKENS, output_config: { effort } };
+  const headers = {};
+  if (ANTHROPIC_FALLBACKS_RE.test(model)) {
+    body.fallbacks = 'default';
+    headers['anthropic-beta'] = ANTHROPIC_FALLBACK_BETA;
+  }
+  return { body, headers };
+}
+
+// Gemini 2.5 models think by default and count it against maxOutputTokens,
+// which could leave a short spoken answer empty. Low effort turns thinking off
+// on Flash (Pro cannot turn it off; 128 is its minimum). Other Gemini models
+// keep their own thinking defaults and just get room for it.
+const GEMINI_THINKING_BUDGET = { low: 0, medium: 1024, high: 4096 };
+function geminiOutputConfig(model, maxTokens, effort) {
+  const id = model || '';
+  if (/^gemini-2\.5-(flash|pro)/.test(id)) {
+    const minimum = /^gemini-2\.5-pro/.test(id) ? 128 : 0;
+    const budget = Math.max(minimum, GEMINI_THINKING_BUDGET[effort] ?? GEMINI_THINKING_BUDGET.medium);
+    return { maxOutputTokens: maxTokens + budget, thinkingConfig: { thinkingBudget: budget } };
+  }
+  if (/^gemini-/.test(id)) return { maxOutputTokens: maxTokens + THINKING_HEADROOM_TOKENS };
+  return { maxOutputTokens: maxTokens };
+}
+
+async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey });
@@ -318,15 +366,27 @@ async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imag
     }
     return { role: t.role, content: t.text };
   });
-  const stream = await client.messages.create({ model, max_tokens: maxTokens, system: anthropicSystem(system, cachePrefix), messages, stream: true }, { signal });
+  const shape = anthropicRequestShape(model, maxTokens, effort);
+  const stream = await client.messages.create(
+    { model, ...shape.body, system: anthropicSystem(system, cachePrefix), messages, stream: true },
+    { signal, headers: shape.headers }
+  );
   let full = '';
+  let stopReason = null;
   for await (const ev of stream) {
     if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') { full += ev.delta.text; onToken(ev.delta.text); }
+    else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+  }
+  if (stopReason === 'refusal') {
+    throw new Error('Claude declined this request (a safety filter). Try rephrasing it, or pick another model in Settings.');
+  }
+  if (stopReason === 'max_tokens' && !full.trim()) {
+    throw new Error('The model used its whole output budget before answering. Try again with Smart off, or pick another model in Settings.');
   }
   return full;
 }
 
-async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, signal }) {
+async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey });
@@ -341,7 +401,7 @@ async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageD
     return { role: t.role === 'assistant' ? 'model' : 'user', parts };
   });
   const stream = await ai.models.generateContentStream({
-    model, contents, config: { systemInstruction: system, maxOutputTokens: maxTokens, abortSignal: signal }
+    model, contents, config: { systemInstruction: system, ...geminiOutputConfig(model, maxTokens, effort), abortSignal: signal }
   });
   let full = '';
   for await (const chunk of stream) {
@@ -480,7 +540,7 @@ function createLLM(settings) {
     configurationError,
     async stream(params) {
       if (!ready) throw new Error(configurationError || `Complete the ${provider} provider settings.`);
-      const args = { apiKey, baseURL, endpoint, model, maxTokens, ...params, turns: sanitizeTurns(params.turns) };
+      const args = { apiKey, baseURL, endpoint, model, maxTokens, ...params, effort: resolveEffort(params.effort, settings.smart), turns: sanitizeTurns(params.turns) };
       try {
         if (provider === 'openai') return await streamOpenAI(args);
         if (provider === CUSTOM_PROVIDER) return await streamOpenAI(args);
@@ -505,6 +565,9 @@ function createLLM(settings) {
 module.exports = {
   createLLM,
   anthropicSystem,
+  anthropicRequestShape,
+  geminiOutputConfig,
+  resolveEffort,
   formatProviderErrorMessage,
   isQuotaError,
   CURRENT_GEMINI_DEFAULT,

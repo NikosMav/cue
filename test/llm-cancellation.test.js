@@ -4,6 +4,8 @@ const Module = require('node:module');
 const originalLoad = Module._load;
 let receivedSignal;
 let anthropicBody;
+let anthropicOptions;
+let anthropicEvents = null; // override the fake stream for one test
 const openaiChunks = [{ choices: [{ delta: { content: 'ok' } }] }];
 
 class FakeOpenAI {
@@ -21,8 +23,9 @@ Module._load = function(request, parent, isMain) {
     constructor() {
       this.messages = { create: async (body, options) => {
         anthropicBody = body;
+        anthropicOptions = options;
         receivedSignal = options.signal;
-        return [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }];
+        return anthropicEvents || [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }];
       } };
     }
   };
@@ -92,4 +95,41 @@ test('several screenshots are sent in order to every image-capable adapter', asy
   // The single-image form still works.
   await anthropic.stream({ system: 's', turns: [{ role: 'user', text: 'solve' }], imageDataUrl: shots[0], onToken: () => {} });
   assert.deepEqual(anthropicBody.messages[0].content.map(c => c.type), ['image', 'text']);
+});
+
+test('Claude models that think by default get an effort level, thinking room and refusal fallbacks', async () => {
+  const opus = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: { anthropic: { fast: 'claude-opus-5' } } });
+  await opus.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });
+  assert.equal(anthropicBody.output_config.effort, 'low');
+  assert.ok(anthropicBody.max_tokens > 700, 'room for thinking on top of the answer budget');
+  assert.equal(anthropicBody.fallbacks, 'default');
+  assert.equal(anthropicOptions.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  assert.equal(anthropicBody.thinking, undefined, 'thinking stays on (adaptive by default)');
+
+  const haiku = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: {} });
+  await haiku.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });
+  assert.equal(anthropicBody.model, 'claude-haiku-4-5');
+  assert.equal(anthropicBody.output_config, undefined, 'Haiku 4.5 rejects effort');
+  assert.equal(anthropicBody.fallbacks, undefined);
+  assert.equal(anthropicBody.max_tokens, 700);
+});
+
+test('Smart raises the effort one level', async () => {
+  const opus = createLLM({ provider: 'anthropic', smart: true, apiKeys: { anthropic: 'k' }, models: { anthropic: { smart: 'claude-opus-5' } } });
+  await opus.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });
+  assert.equal(anthropicBody.output_config.effort, 'medium');
+});
+
+test('a refusal or an answer lost to the output limit is reported, not shown as an empty answer', async () => {
+  const llm = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: { anthropic: { fast: 'claude-opus-5' } } });
+  try {
+    anthropicEvents = [{ type: 'message_delta', delta: { stop_reason: 'refusal' } }];
+    await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /declined this request/);
+    anthropicEvents = [{ type: 'message_delta', delta: { stop_reason: 'max_tokens' } }];
+    await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /whole output budget/);
+    anthropicEvents = [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } }, { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }];
+    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial');
+  } finally {
+    anthropicEvents = null;
+  }
 });

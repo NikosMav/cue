@@ -75,6 +75,23 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   via the Web Speech API), then rates the spoken answer. Meeting audio is
   ignored and the mic is muted while the question is spoken, so cue does not
   hear itself.
+- Cleanup: removed modules and scripts nothing used (`context.js`, `meetings.js`,
+  `notes.js`, `resume-context.js` with its regex résumé parser, the unused
+  résumé helper in `profile-context.js`, `rms16`, unused batch helpers in
+  `stt-streaming.js`, the never-read pre-speech ring buffers in `main.js`, and
+  the root `verify.js` / `probe-anthropic*.cjs` probes); duplicate `app:quit`,
+  `will-quit` and `window-all-closed` handlers; "FIX #n" comment prefixes; and
+  duplicated or garbled README sections.
+- Default models for new installs: OpenAI `gpt-4.1-mini` / `gpt-4.1`,
+  Anthropic `claude-haiku-4-5` / `claude-opus-5`, Gemini `gemini-2.5-flash`
+  for both tiers. Existing settings keep the models already saved. Requests
+  carry an effort hint (low for spoken answers, medium for coding and
+  debriefs, one level higher with Smart). Claude models that think by default
+  get that effort level, room in `max_tokens` for thinking, and server-side
+  refusal fallbacks; a refusal or an answer lost to the output limit is shown
+  as a clear error. Gemini 2.5 gets an explicit thinking budget (none for fast
+  spoken answers on Flash), so thinking can no longer leave a short answer
+  empty.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context

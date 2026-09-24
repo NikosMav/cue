@@ -384,6 +384,8 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
     turns: mode === 'codeFollowup' ? [...codingThread(answers), userTurn] : [userTurn]
   };
   if (def.maxTokens) request.maxTokens = def.maxTokens;
+  // Spoken answers favour speed; code benefits from more reasoning.
+  request.effort = def.coding ? 'medium' : 'low';
   return request;
 }
 
@@ -435,6 +437,7 @@ function buildDebriefRequest(settings, session) {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',
     maxTokens: 2500,
+    effort: 'medium',
     turns: [{ role: 'user', text: 'Interview transcript:\n' + (sessionTranscriptText(session) || '(empty)') + '\n\nWrite the debrief.' }]
   };
 }

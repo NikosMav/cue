@@ -5,8 +5,6 @@
 // with sub-200ms latency, interim results, and automatic reconnection.
 
 const { looksLikeHallucination, extractProfileTerms } = require('./stt');
-const { pcmToWav } = require('./wav');
-const { CURRENT_GEMINI_DEFAULT } = require('./llm');
 
 // Deepgram caps keyterm prompting at roughly 500 tokens and recommends a
 // focused list; 40 short terms stays well inside that and the URL limit.
@@ -378,38 +376,6 @@ class DeepgramStreamingSTT {
 }
 
 // ============================================================================
-// Batch STT (enhanced version of the original — used as fallback)
-// Supports Whisper and Gemini with better error handling
-// ============================================================================
-
-async function transcribeBatchOpenAI(apiKey, wav, model) {
-  const OpenAI = require('openai');
-  const toFile = OpenAI.toFile || require('openai/uploads').toFile;
-  const client = new OpenAI({ apiKey });
-  const file = await toFile(wav, 'audio.wav', { type: 'audio/wav' });
-  const res = await client.audio.transcriptions.create({
-    file,
-    model: model || 'whisper-1',
-    response_format: 'text',
-    language: 'en'
-  });
-  return (typeof res === 'string' ? res : res.text || '').trim();
-}
-
-async function transcribeBatchGemini(apiKey, wav) {
-  const { GoogleGenAI } = require('@google/genai');
-  const ai = new GoogleGenAI({ apiKey });
-  const res = await ai.models.generateContent({
-    model: CURRENT_GEMINI_DEFAULT,
-    contents: [{ role: 'user', parts: [
-      { text: 'Transcribe this audio verbatim. Return only the spoken words with no commentary. If there is no clear speech, return an empty response.' },
-      { inlineData: { mimeType: 'audio/wav', data: wav.toString('base64') } }
-    ] }]
-  });
-  return ((res && res.text) || '').trim();
-}
-
-// ============================================================================
 // Unified Streaming STT Factory
 // Creates the best available streaming STT based on the user's API keys.
 // Priority: Deepgram (lowest latency) > OpenAI Realtime > Batch fallback
@@ -463,7 +429,5 @@ function createStreamingSTT(settings, channel, callbacks) {
 module.exports = {
   OpenAIRealtimeSTT,
   DeepgramStreamingSTT,
-  createStreamingSTT,
-  transcribeBatchOpenAI,
-  transcribeBatchGemini
+  createStreamingSTT
 };

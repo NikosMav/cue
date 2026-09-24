@@ -168,68 +168,6 @@ function detectCategory(transcript) {
   return classify(turns.map(t => t.text).join(' '));
 }
 
-// ── Resume parser (carried over from resume-context.js) ───────────────────────
-const SECTION_PATTERNS = [
-  { key: 'name',       re: null, label: null },
-  { key: 'summary',    re: /(?:summary|objective|profile|about)[^\n]*\n([\s\S]{20,400}?)(?=\n[A-Z]|\n\n[A-Z]|$)/i,      label: 'Summary' },
-  { key: 'experience', re: /(?:experience|work history|employment)[^\n]*\n([\s\S]{20,1800}?)(?=\n(?:education|skills|projects|certif|awards|$))/i, label: 'Experience' },
-  { key: 'skills',     re: /(?:skills?|technical skills?|competencies|tech stack)[^\n]*\n([\s\S]{10,600}?)(?=\n(?:experience|education|projects|certif|awards|work|$))/i, label: 'Skills' },
-  { key: 'education',  re: /(?:education|academic)[^\n]*\n([\s\S]{10,400}?)(?=\n(?:experience|skills|projects|certif|awards|work|$))/i, label: 'Education' },
-  { key: 'projects',   re: /(?:projects?|portfolio)[^\n]*\n([\s\S]{10,800}?)(?=\n(?:experience|education|skills|certif|awards|work|$))/i, label: 'Projects' },
-];
-
-function parseResume(text) {
-  if (!text || !text.trim()) return null;
-  const clean = text.trim();
-  const sections = {};
-  const firstLine = clean.split('\n').find(l => l.trim().length > 1 && l.trim().length < 80);
-  if (firstLine) sections.name = firstLine.trim();
-  for (const { key, re } of SECTION_PATTERNS) {
-    if (!re) continue;
-    const m = re.exec(clean);
-    if (m && m[1]) sections[key] = m[1].trim().replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
-  }
-  return { sections, raw: clean, parsed: Object.keys(sections).length > 1 };
-}
-
-function clip(text, limit) {
-  if (!text) return '';
-  if (text.length <= limit) return text;
-  return text.slice(0, limit).trimEnd() + '…';
-}
-
-// ── Context builders by category ──────────────────────────────────────────────
-
-function buildResumeBlock(resumeText, limit = 2400) {
-  if (!resumeText || !resumeText.trim()) return '';
-  const parsed = parseResume(resumeText);
-  if (!parsed) return '';
-  if (parsed.parsed) {
-    const parts = [];
-    let rem = limit;
-    const order = ['name', 'summary', 'experience', 'skills', 'projects', 'education'];
-    for (const key of order) {
-      if (rem <= 0) break;
-      const val = parsed.sections[key];
-      if (!val) continue;
-      const sp = SECTION_PATTERNS.find(s => s.key === key);
-      const label = sp && sp.label;
-      const chunk = label ? `${label}:\n${clip(val, Math.min(rem - label.length - 2, 800))}` : clip(val, 80);
-      parts.push(chunk);
-      rem -= chunk.length;
-    }
-    return parts.join('\n\n');
-  }
-  return clip(parsed.raw, limit);
-}
-
-function buildJDBlock(jd, limit = 600) {
-  if (!jd || !jd.trim()) return '';
-  return 'Target Role / Job Description:\n' + clip(jd.trim().replace(/\s+/g, ' '), limit);
-}
-
-// ── Main export ───────────────────────────────────────────────────────────────
-
 // Generous per-field bounds. Prep material is a few thousand tokens at most;
 // these only stop a pasted book from silently blowing a provider's context
 // window. Anything cut is marked so the model knows the field continues.
@@ -299,23 +237,4 @@ function buildInterviewContext(settings, mode) {
     blocks.join('\n\n') + tailorNote;
 }
 
-// ── Legacy compat ─────────────────────────────────────────────────────────────
-function buildResumeContext(resumeText, jobDescription, mode) {
-  if (!resumeText || !String(resumeText).trim()) return null;
-  if (typeof jobDescription === 'number') {
-    const cleaned = String(resumeText).trim().replace(/\s+/g, ' ');
-    const limit = jobDescription || 1200;
-    const clipped = cleaned.length > limit ? cleaned.slice(0, limit).trimEnd() + '…' : cleaned;
-    return ['Candidate resume context:', clipped, 'Use this resume information when answering questions about the candidate.'].join('\n');
-  }
-  // Lightweight: no transcript available, just wrap resume+JD
-  const rb = buildResumeBlock(resumeText, 1800);
-  const jb = buildJDBlock(jobDescription || '', 600);
-  const parts = [];
-  if (rb) parts.push('=== Your Background ===\n' + rb);
-  if (jb) parts.push(jb);
-  if (!parts.length) return null;
-  return parts.join('\n\n');
-}
-
-module.exports = { buildInterviewContext, buildResumeContext, detectCategory, parseResume, currentQuestion, currentQuestionTurns, QUESTION_MERGE_GAP_MS };
+module.exports = { buildInterviewContext, detectCategory, currentQuestion, currentQuestionTurns, QUESTION_MERGE_GAP_MS };

@@ -6,9 +6,7 @@ const { normalizeBaseUrl } = require('./openai-compatible');
 
 const FILE = path.join(app.getPath('userData'), 'cue-data.json');
 
-// Cap on the user's custom response rules. Generous but bounded: anything longer
-// should live in a real prompt file, not in a settings field.
-const MAX_AI_RULES_CHARS = 2000;
+const { MAX_AI_RULES_CHARS } = require('./profile-context');
 
 const DEFAULTS = {
   provider: 'openai',
@@ -83,7 +81,7 @@ const DEFAULTS = {
   windowX: null,
   windowY: null,
   models: {
-    openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
+    openai: { fast: 'gpt-4.1-mini', smart: 'gpt-4.1' },
     // Kept in sync with CURRENT_ANTHROPIC_DEFAULT_FAST/_SMART in src/llm.js —
     // claude-3-5-haiku-latest/claude-3-5-sonnet-latest (the previous defaults
     // here) were retired by Anthropic and 404 on every request. This is the
@@ -91,10 +89,11 @@ const DEFAULTS = {
     // not src/llm.js's DEFAULT_MODELS, which only backstops a missing entry) —
     // llm.js's DEAD_ANTHROPIC_MODEL_RE self-heal additionally migrates any
     // settings file already saved with the old dead ids.
-    anthropic: { fast: 'claude-haiku-4-5-20251001', smart: 'claude-sonnet-4-5-20250929' },
+    anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-opus-5' },
     // Kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js — gemini-2.0-flash
     // (the previous default here) was retired by Google on 2026-03-03 and 404s
     // on every request. gemini-2.5-flash is current and free-tier available.
+    // Same model for both tiers: Smart gives it a thinking budget (src/llm.js).
     gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash' },
     custom: { fast: '', smart: '' },
     ollama: { fast: 'llama3.2', smart: 'llama3.3' },

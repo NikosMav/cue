@@ -15,7 +15,7 @@ const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
 const { currentQuestion } = require('./src/interview-context');
 const { ACTIONS: SHORTCUT_ACTIONS, resolveShortcuts, findConflicts, isValid: isValidAccelerator } = require('./src/shortcuts');
-const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
+const { AdaptiveVAD } = require('./src/vad');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
@@ -154,11 +154,6 @@ const vad = {
     onSpeechStart: () => send('vad:state', { channel: 'them', speaking: true }),
     onSpeechEnd: (dur) => send('vad:state', { channel: 'them', speaking: false, durationMs: dur })
   })
-};
-// Pre-speech ring buffers (300ms) so we never clip the start of a word
-const ringBuffers = {
-  you: new AudioRingBuffer(300, 16000),
-  them: new AudioRingBuffer(300, 16000)
 };
 
 function pushTranscript(turn) {
@@ -507,7 +502,6 @@ function routeAudio(channel, pcmBuffer) {
   if (streamingMode && streamingSTT[channel]) {
     // Streaming mode: VAD drives the speech indicator; the provider segments.
     vad[channel].processChunk(buf);
-    ringBuffers[channel].write(buf);
     streamingSTT[channel].sendAudio(pcmBuffer);
   } else if (batchTranscriber) {
     // Batch mode: cut at pauses, then transcribe each utterance.
@@ -563,7 +557,6 @@ async function setCapturing(active) {
   stopBatchTranscription();
   stopStreamingSTT();
   vad.you.reset(); vad.them.reset();
-  ringBuffers.you.clear(); ringBuffers.them.clear();
   const stoppingLocalTranscriber = localWhisperTranscriber;
   localWhisperTranscriber = null;
   send('capture:state', { active: false, streaming: false, mode: stoppingLocalTranscriber ? 'local' : 'off' });
@@ -702,6 +695,7 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
       system: request.system,
       cachePrefix: request.cachePrefix,
       ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
+      effort: request.effort,
       turns: request.turns,
       imageDataUrls: images,
       onToken: t => emit('llm:token', { text: t }),
@@ -1128,6 +1122,7 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
       system: request.system,
       cachePrefix: request.cachePrefix,
       maxTokens: request.maxTokens,
+      effort: request.effort,
       turns: request.turns,
       onToken: t => send('sessions:debrief-token', { id, text: t })
     }, STREAM_INACTIVITY_MS, controller.signal);
@@ -1171,7 +1166,6 @@ ipcMain.handle('profile:pickDocument', async () => {
     return { canceled: false, error: (e && e.message) || String(e) };
   }
 });
-ipcMain.on('app:quit', () => app.quit());
 ipcMain.handle('applink:state', () => appLinkConsentState());
 ipcMain.handle('applink:revoke', (_e, callerId) => revokeAppLinkCaller(callerId));
 
@@ -1543,10 +1537,3 @@ app.on('will-quit', () => {
   if (localWhisperTranscriber) localWhisperTranscriber.forceStop().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());
-
-app.on('will-quit', () => { globalShortcut.unregisterAll(); });
-app.on('window-all-closed', (e) => {
-  // Don't quit while the permissions window is open — the user may be in System Settings
-  if (permWin) { e.preventDefault(); return; }
-  app.quit();
-});

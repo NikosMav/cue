@@ -140,7 +140,7 @@
   // The main sidebar uses appendTranscriptHistoryTurn() instead.
   let transcriptInterimEl = null;
 
-  // FIX #1: Updated to use ts-list instead of non-existent transcript-list
+  // Updated to use ts-list instead of non-existent transcript-list
 
   function clearTranscriptInterim() {
     if (transcriptInterimEl) {
@@ -150,7 +150,7 @@
   }
 
   // ---- toast helper ------------------------------------------------------
-  // FIX #7: Toast queue system — ensures latest toast wins cleanly without stacking
+  // Toast queue system — ensures latest toast wins cleanly without stacking
   let toastTimer = null;
   let toastFadeTimer = null;
   function showToast(message, ms) {
@@ -216,7 +216,7 @@
   }
 
   // ---- Update visual state based on question readiness ----
-  // FIX #8: Batch class updates to avoid flicker
+  // Batch class updates to avoid flicker
   function updateQuestionReadyState() {
     const text = input.value;
     const confidence = getQuestionConfidence(text);
@@ -238,10 +238,10 @@
       }
     }
     
-    updateSendButtonState(); // FIX #9: Keep send button in sync
+    updateSendButtonState(); // Keep send button in sync
   }
   
-  // FIX #9: Send button visual "ready" state
+  // Send button visual "ready" state
   function updateSendButtonState() {
     const sendBtn = document.getElementById('send-btn');
     if (!sendBtn) return;
@@ -271,10 +271,10 @@
       questionHistory.shift();
     }
     
-    updateHistoryBadge(); // FIX #14: Update badge when history changes
+    updateHistoryBadge(); // Update badge when history changes
   }
   
-  // FIX #14: History button badge showing count
+  // History button badge showing count
   function updateHistoryBadge() {
     const historyBtn = document.getElementById('history-btn');
     if (!historyBtn) return;
@@ -302,7 +302,7 @@
     if (last) {
       input.value = last.text;
       inputFromSTT = true;
-      lastSTTValue = last.text; // FIX #8: Track restored value for edit detection
+      lastSTTValue = last.text; // Track restored value for edit detection
       composer.classList.add('stt-filling');
       updateQuestionReadyState();
       syncPlaceholder();
@@ -327,20 +327,20 @@
     const newText = current ? current + ' ' + text : text;
     input.value = newText;
     inputFromSTT = true;
-    lastSTTValue = newText; // FIX #6: Track the STT value for edit detection
+    lastSTTValue = newText; // Track the STT value for edit detection
     syncPlaceholder();
 
     // Show filling state
     composer.classList.add('stt-filling');
     updateQuestionReadyState();
-    updateSendButtonState(); // FIX #9: Update send button state
+    updateSendButtonState(); // Update send button state
 
     // Reset the idle timer — after 2s of silence, check if question is complete
     clearTimeout(questionFinalizeTimer);
     questionFinalizeTimer = setTimeout(() => {
       if (isLikelyCompleteQuestion(input.value)) {
         composer.classList.add('stt-ready');
-        updateSendButtonState(); // FIX #9: Update send button when ready
+        updateSendButtonState(); // Update send button when ready
         // Subtle notification that question is ready
         showToast('Press Enter to answer', 2500);
       }
@@ -353,7 +353,7 @@
       composer.classList.remove('stt-filling');
       // Keep stt-ready if applicable
       updateQuestionReadyState();
-      updateSendButtonState(); // FIX #9
+      updateSendButtonState();
     }, 8000);
   }
 
@@ -363,7 +363,7 @@
     // Instead, dim the input and wait — they might just be acknowledging
     if (!inputFromSTT) return;
     
-    // FIX #3: Reset userSpeechStart at the beginning before setting new timestamp
+    // Reset userSpeechStart at the beginning before setting new timestamp
     // This ensures we always track from fresh when a new soft-clear cycle begins
     const now = Date.now();
     if (!userSpeechStart) {
@@ -390,31 +390,31 @@
         inputFromSTT = false;
         composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
         syncPlaceholder();
-        updateSendButtonState(); // FIX #9: Update send button state
+        updateSendButtonState(); // Update send button state
         userSpeechStart = null;
       }
     }, 800);
   }
 
   // ---- Hard clear (called when user explicitly clears or types) ----
-  // FIX #10: Add option to show toast when clearing
+  // Add option to show toast when clearing
   function hardClearSTTFill(showUndoHint = false) {
     const hadContent = input.value.trim().length > 0;
     saveToQuestionHistory(input.value);
     input.value = '';
     inputFromSTT = false;
-    lastSTTValue = ''; // FIX #6: Clear the tracked STT value
+    lastSTTValue = ''; // Clear the tracked STT value
     userSpeechStart = null;
     composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
     clearTimeout(softClearTimer);
     clearTimeout(questionFinalizeTimer);
     clearTimeout(sttFillTimer);
-    clearInputInterim(); // FIX #5: Clear interim when clearing input
+    clearInputInterim(); // Clear interim when clearing input
     syncPlaceholder();
-    updateSendButtonState(); // FIX #9
-    updateHistoryBadge(); // FIX #14
+    updateSendButtonState();
+    updateHistoryBadge();
     
-    // FIX #10: Show undo hint when explicitly cleared
+    // Show undo hint when explicitly cleared
     if (showUndoHint && hadContent) {
       const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
       showToast(`Cleared · ${undoHint}`, 2000);
@@ -422,7 +422,7 @@
   }
 
   // ---- Reset soft-clear state (interviewer spoke again) ----
-  // FIX #16: Reset userSpeechStart properly when cancelSoftClear is called
+  // Reset userSpeechStart properly when cancelSoftClear is called
   function cancelSoftClear() {
     userSpeechStart = null; // Reset timestamp so next soft-clear starts fresh
     clearTimeout(softClearTimer);
@@ -435,16 +435,16 @@
     input.style.height = Math.min(input.scrollHeight, 140) + 'px';
   }
   
-  // FIX #6: Track last STT value to detect substantial edits vs minor corrections
+  // Track last STT value to detect substantial edits vs minor corrections
   let lastSTTValue = '';
   
   input.addEventListener('input', () => {
     const currentValue = input.value;
     
-    // FIX #5: Clear interim text when user starts typing
+    // Clear interim text when user starts typing
     clearInputInterim();
     
-    // FIX #6: Only detach from STT mode if edit is substantial
+    // Only detach from STT mode if edit is substantial
     // Minor corrections (typo fixes, small additions) should keep STT mode
     if (inputFromSTT && lastSTTValue) {
       const lengthDiff = Math.abs(currentValue.length - lastSTTValue.length);
@@ -467,7 +467,7 @@
     }
     
     syncPlaceholder();
-    updateSendButtonState(); // FIX #9: Update send button on input change
+    updateSendButtonState(); // Update send button on input change
   });
   input.addEventListener('focus', () => { composer.classList.add('focused'); placeholder.classList.add('hidden'); });
   input.addEventListener('blur', () => { composer.classList.remove('focused'); syncPlaceholder(); });
@@ -483,14 +483,14 @@
     
     input.value = '';
     inputFromSTT = false;
-    lastSTTValue = ''; // FIX #6: Clear tracked STT value
+    lastSTTValue = ''; // Clear tracked STT value
     userSpeechStart = null;
     composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
     clearTimeout(softClearTimer);
     clearTimeout(questionFinalizeTimer);
     clearTimeout(sttFillTimer);
     syncPlaceholder();
-    updateSendButtonState(); // FIX #9
+    updateSendButtonState();
     
     // If text came from STT (interviewer question), use answerThis mode
     // Otherwise use ask mode (user typed their own question)
@@ -507,14 +507,14 @@
     // Escape: clear the input (with undo hint)
     if (e.key === 'Escape' && input.value.trim()) {
       e.preventDefault();
-      hardClearSTTFill(true); // FIX #10: Show undo hint
+      hardClearSTTFill(true); // Show undo hint
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); send(); }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runMode('assist', ''); }
   });
   
-  // FIX #13: Global keyboard shortcut for force-answer (Ctrl+Shift+A / Cmd+Shift+A)
+  // Global keyboard shortcut for force-answer (Ctrl+Shift+A / Cmd+Shift+A)
   document.addEventListener('keydown', (e) => {
     // Ctrl+Shift+A / Cmd+Shift+A: Force answer current question immediately
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
@@ -530,7 +530,7 @@
     }
   });
   
-  // FIX #4: Add tooltip with keyboard shortcuts to send button
+  // Add tooltip with keyboard shortcuts to send button
   const sendBtn = document.getElementById('send-btn');
   if (sendBtn) {
     const forceKey = isWindows ? 'Ctrl+Shift+A' : '⌘⇧A';
@@ -860,7 +860,7 @@
       hideSidebar();
     } else {
       showSidebar();
-      // FIX #7: Scroll to bottom when opening sidebar
+      // Scroll to bottom when opening sidebar
       const list = document.getElementById('ts-list');
       if (list) {
         requestAnimationFrame(() => {
@@ -963,7 +963,7 @@
   cue.on('capture:state', ({ active, streaming, mode }) => {
     setLiveDotState(active ? 'idle' : 'off');
     $('#stop-btn').classList.toggle('active', active);
-    // FIX #4: Add .listening class to composer when capture is active
+    // Add .listening class to composer when capture is active
     composer.classList.toggle('listening', active);
     // Update history button to show active state when listening
     const historyBtn = document.getElementById('history-btn');
@@ -979,7 +979,7 @@
     } else {
       stopMic();
       stopSystemAudio();
-      // FIX #2: Clear interim element when capture stops
+      // Clear interim element when capture stops
       if (interimEl) {
         interimEl.textContent = '';
         interimEl.classList.remove('show');
@@ -1015,13 +1015,13 @@
     }
     return interimEl;
   }
-  // FIX #12: Show interim text in input box (grayed/italic) before final arrives
+  // Show interim text in input box (grayed/italic) before final arrives
   let inputInterimEl = null;
   function showInterimInInput(text) {
     if (!inputInterimEl) {
       inputInterimEl = document.createElement('span');
       inputInterimEl.className = 'input-interim';
-      // FIX #2: Insert into composer (not input-area) for correct positioning
+      // Insert into composer (not input-area) for correct positioning
       composer.appendChild(inputInterimEl);
     }
     inputInterimEl.textContent = text;
@@ -1042,7 +1042,7 @@
     el.classList.add('show');
     appendTranscriptHistoryTurn(channel, text, true); // update sidebar interim
     
-    // FIX #12: Show interviewer's interim speech in input area
+    // Show interviewer's interim speech in input area
     if (channel === 'them' && !input.value.trim()) {
       showInterimInInput(text);
     }
@@ -1052,7 +1052,7 @@
     // Clear interim when we get a final
     if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
     clearTranscriptInterim();
-    clearInputInterim(); // FIX #12: Clear interim text from input area
+    clearInputInterim(); // Clear interim text from input area
     // sidebar: the final turn is added via the 'transcript' event below
   });
   cue.on('stt:status', ({ channel, status, provider }) => {
@@ -2343,7 +2343,7 @@
     syncAutoButton();
     showExample();
     syncPlaceholder();
-    updateHistoryBadge(); // FIX #3: Initialize badge on boot
+    updateHistoryBadge(); // Initialize badge on boot
     updateSendButtonState(); // Initialize send button state
 
     // Placeholder and tooltips show the configured shortcuts for this platform.

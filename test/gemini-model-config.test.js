@@ -42,3 +42,20 @@ test('store.js default Gemini models match the shared current default', () => {
   assert.equal(match[1], CURRENT_GEMINI_DEFAULT);
   assert.equal(match[2], CURRENT_GEMINI_DEFAULT);
 });
+
+test('Gemini 2.5 thinking is budgeted so it cannot swallow a short answer', () => {
+  const { geminiOutputConfig, resolveEffort } = require('../src/llm');
+  assert.deepEqual(geminiOutputConfig('gemini-2.5-flash', 700, 'low'), { maxOutputTokens: 700, thinkingConfig: { thinkingBudget: 0 } });
+  assert.deepEqual(geminiOutputConfig('gemini-2.5-flash', 700, 'medium'), { maxOutputTokens: 1724, thinkingConfig: { thinkingBudget: 1024 } });
+  assert.equal(geminiOutputConfig('gemini-2.5-pro', 700, 'low').thinkingConfig.thinkingBudget, 128, 'Pro cannot turn thinking off');
+  assert.equal(geminiOutputConfig('gemini-2.5-flash-lite', 700, 'low').thinkingConfig.thinkingBudget, 0);
+  const newer = geminiOutputConfig('gemini-3-flash', 700, 'low');
+  assert.equal(newer.thinkingConfig, undefined, 'unknown models keep their own thinking settings');
+  assert.ok(newer.maxOutputTokens > 700);
+  assert.deepEqual(geminiOutputConfig('gemma-3', 700, 'low'), { maxOutputTokens: 700 });
+  assert.equal(resolveEffort('low', false), 'low');
+  assert.equal(resolveEffort('low', true), 'medium');
+  assert.equal(resolveEffort('medium', true), 'high');
+  assert.equal(resolveEffort('high', true), 'high');
+  assert.equal(resolveEffort(undefined, false), 'medium');
+});

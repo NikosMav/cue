@@ -84,14 +84,9 @@ npm run pack        # unpacked app in dist/ (either OS)
 npm run pack:win    # unpacked Windows app -> dist/win-unpacked/cue.exe
 npm run dist:mac    # macOS zip            -> dist/
 npm run dist:win    # Windows installer    -> dist/cue-win-x64.exe
+npm run dist:linux  # Linux x64 AppImage   -> dist/
 ```
 > **macOS note:** the packaged app is **ad-hoc signed** unless a Developer ID certificate is configured. macOS ties permission grants to the exact build, so **rebuilding resets the mic/screen permissions** — you'll grant them again. For everyday use, build once and keep it. Windows has no equivalent problem.
-To build a packaged app:
-```bash
-npm run dist:mac    # macOS build
-npm run dist:win    # Windows build
-npm run dist:linux  # Linux x64 AppImage
-```
 
 Packaged builds include a pinned `whisper.cpp` runtime. When running from source, prepare the matching runtime once:
 
@@ -100,8 +95,6 @@ npm run prepare:whisper
 ```
 
 Windows x64 and Linux x64/arm64 use checksum-verified binaries from the pinned upstream release. macOS x64/arm64 builds `whisper-server` from the same pinned source tag and requires CMake plus Xcode command-line tools.
-
-> Note: permission grants can reset after a rebuild, so you may need to re-enable microphone/screen access after packaging a fresh build.
 
 ---
 
@@ -282,8 +275,10 @@ It's the same mechanism DRM apps and Zoom's own toolbar use. It is **not** a GPU
 ```
 main process ──┬─ overlay window (frameless, transparent, always-on-top, content-protected)
                ├─ screenshot capture (desktopCapturer)
-               ├─ speech-to-text (Whisper / Gemini)      ── "You" + "Them" channels
-               └─ LLM streaming (OpenAI / Anthropic / Gemini / Custom)
+               ├─ speech-to-text (local whisper.cpp / Deepgram / OpenAI / Groq / Gemini / Custom)
+               │                                          ── "You" + "Them" channels
+               ├─ LLM streaming (OpenAI / Anthropic / Gemini / Azure / Groq / Ollama / Custom …)
+               └─ saved sessions (opt-in JSON + Markdown copy)
 renderer ──────┴─ the glass UI + mic capture + system-audio loopback
 ```
 
@@ -291,7 +286,6 @@ renderer ──────┴─ the glass UI + mic capture + system-audio loop
 
 ## Troubleshooting
 
-**"It says give access, but I already gave access." (macOS)**
 **Local transcription says the runtime is not prepared.**
 Packaged releases include the runtime. If you are running from source, run `npm run prepare:whisper` once and restart Cue. On macOS, install CMake and Xcode command-line tools first.
 
@@ -301,7 +295,7 @@ Open **Settings → Audio**, select the model, and choose **Download**. A cancel
 **A large local model is slow or runs out of memory.**
 Try `base.en`, `tiny.en`, or a quantized `q5`/`q8` model. Model size in Settings is the download size, not a guarantee of runtime RAM use; larger models require substantially more memory and CPU/GPU time.
 
-**"It says give access, but I already gave access."**
+**"It says give access, but I already gave access." (macOS)**
 You probably granted an older build. Because the app is ad-hoc signed, a rebuild changes its identity and macOS stops honoring the old grant (the checkmark can linger). Toggle cue **off and on** in System Settings → Screen Recording, or remove and re-add it.
 
 **"What should I say?", "Follow-up questions", or "Recap" never hear the other person (macOS).**
@@ -326,7 +320,7 @@ Confirm the Base URL includes the endpoint's `/v1` path when required, the selec
 Set Zoom's **Screen capture mode** to *"Advanced capture with window filtering"* (see Step 3). And remember: on macOS 15.4+ this can still fail — it's best-effort.
 
 **"cue is damaged and can't be opened."**
-Run `xattr -cr /Applications/cue.app` in Terminal once (see Install → Option A).
+macOS quarantines unsigned downloads. Run `xattr -cr /Applications/cue.app` in Terminal once, then open cue again.
 
 ---
 
@@ -343,7 +337,12 @@ Run `xattr -cr /Applications/cue.app` in Terminal once (see Install → Option A
 
 ## Contributing
 
-Issues and PRs welcome. cue is intentionally small and readable — `main.js` (app + capture + AI), `renderer/` (the UI), `src/` (providers). No build step for the source (plain HTML/CSS/JS).
+Issues and PRs welcome. cue is intentionally small and readable, with no build step (plain HTML/CSS/JS):
+
+- `main.js` — app lifecycle, capture routing, requests, shortcuts, sessions and practice wiring.
+- `renderer/` — the UI (`renderer.js`), answer formatting (`markdown.js`), and audio worklets.
+- `src/` — providers (`llm.js`, `stt*.js`, local Whisper), prompts (`prompts.js`, `interview-context.js`), and the testable pieces behind each feature (`auto-answer.js`, `batch-transcriber.js`, `sessions.js`, `shortcuts.js`, …).
+- `test/` — `npm test` runs the offline suite; no API keys or network needed.
 
 ## Credits & license
 
