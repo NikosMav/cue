@@ -12,6 +12,7 @@ const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
 const { currentQuestion } = require('./src/interview-context');
+const { ACTIONS: SHORTCUT_ACTIONS, resolveShortcuts, findConflicts, isValid: isValidAccelerator } = require('./src/shortcuts');
 const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
@@ -37,7 +38,10 @@ let win = null;
 // false when another application already owns the combination, and nothing used
 // to look at that — so the only symptom was a key that did nothing. Iris reads
 // this and can say which key is taken instead of guessing from a screenshot.
-const shortcutState = { assist: false, say: false, leetcode: false, screenshot: false, quit: false };
+let shortcutState = {};   // action id → registered
+// action id → { accelerator, status: 'ok' | 'taken' | 'conflict' | 'invalid' | 'unset' }
+let shortcutStatus = {};
+let shortcutsSuspended = false; // while Settings records a new key combination
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 
@@ -990,19 +994,127 @@ ipcMain.on('permissions:continue', async () => {
 });
 
 // -------- shortcuts --------
+// Start/stop listening needs the renderer's own button: loopback capture
+// (getDisplayMedia) requires a user gesture, which executeJavaScript can grant.
+function toggleListeningFromShortcut() {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.executeJavaScript("document.getElementById('stop-btn').click()", true).catch(() => {});
+}
+
+function toggleAutoAnswer() {
+  const autoAnswerOn = !store.getSettings().autoAnswer;
+  store.setSettings({ autoAnswer: autoAnswerOn });
+  if (!autoAnswerOn) autoAnswer.reset();
+  send('settings:changed', { autoAnswer: autoAnswerOn });
+  send('status', { message: autoAnswerOn ? 'Auto-answer on.' : 'Auto-answer off.' });
+}
+
+const MOVE_STEP_PX = 80;
+// Keep at least this much of the panel on screen, like the saved position.
+const MIN_VISIBLE_PX = 100;
+function moveWindow(dx, dy) {
+  if (!win || win.isDestroyed()) return;
+  const bounds = win.getBounds();
+  const { workArea } = screen.getDisplayMatching(bounds);
+  const x = Math.max(workArea.x - bounds.width + MIN_VISIBLE_PX, Math.min(bounds.x + dx * MOVE_STEP_PX, workArea.x + workArea.width - MIN_VISIBLE_PX));
+  const y = Math.max(workArea.y, Math.min(bounds.y + dy * MOVE_STEP_PX, workArea.y + workArea.height - 40));
+  win.setPosition(Math.round(x), Math.round(y));
+}
+
+const SHORTCUT_HANDLERS = {
+  assist: () => runFeature('assist', ''),
+  say: () => runFeature('say', ''),
+  leetcode: () => runFeature('leetcode', ''),
+  screenshot: () => queueScreenshot(),
+  listen: toggleListeningFromShortcut,
+  autoAnswer: toggleAutoAnswer,
+  stop: () => cancelActiveRequest('stopped'),
+  scrollUp: () => send('answers:scroll', { direction: -1 }),
+  scrollDown: () => send('answers:scroll', { direction: 1 }),
+  moveLeft: () => moveWindow(-1, 0),
+  moveRight: () => moveWindow(1, 0),
+  moveUp: () => moveWindow(0, -1),
+  moveDown: () => moveWindow(0, 1),
+  hide: () => send('hide:toggle', {}),
+  quit: () => app.quit()
+};
+
+function shortcutsView() {
+  return {
+    platform: process.platform,
+    suspended: shortcutsSuspended,
+    actions: SHORTCUT_ACTIONS.map(({ id, label, defaultAccelerator }) => ({
+      id, label, defaultAccelerator, ...(shortcutStatus[id] || { accelerator: defaultAccelerator, status: 'unset' })
+    }))
+  };
+}
+
 function registerShortcuts() {
-  shortcutState.assist = globalShortcut.register('CommandOrControl+Return', () => runFeature('assist', ''));
-  shortcutState.say = globalShortcut.register('CommandOrControl+Shift+Return', () => runFeature('say', ''));
-  shortcutState.leetcode = globalShortcut.register('CommandOrControl+H', () => runFeature('leetcode', ''));
-  shortcutState.screenshot = globalShortcut.register('CommandOrControl+Shift+H', () => queueScreenshot());
-  shortcutState.hide = globalShortcut.register('CommandOrControl+Shift+/', () => send('hide:toggle', {}));
-  shortcutState.quit = globalShortcut.register('CommandOrControl+Shift+X', () => app.quit());
-  for (const [name, wasRegistered] of Object.entries(shortcutState)) {
-    if (!wasRegistered) {
-      recordEvent({ level: 'warn', event: 'shortcut_unavailable', msg: 'another application holds the ' + name + ' shortcut', frame: 'registerShortcuts', context: { shortcut: name } });
+  globalShortcut.unregisterAll();
+  shortcutState = {};
+  shortcutStatus = {};
+  const map = resolveShortcuts(store.getSettings().shortcuts);
+  // The later of two actions sharing a combination is the one reported.
+  const conflicted = new Set(findConflicts(map).map(([, later]) => later));
+  for (const { id } of SHORTCUT_ACTIONS) {
+    const accelerator = map[id];
+    let status;
+    if (!accelerator) status = 'unset';
+    else if (!isValidAccelerator(accelerator)) status = 'invalid';
+    else if (conflicted.has(id)) status = 'conflict';
+    else if (shortcutsSuspended) status = 'ok';
+    else {
+      let registered = false;
+      // register() throws on a string Electron cannot parse.
+      try { registered = globalShortcut.register(accelerator, SHORTCUT_HANDLERS[id]); } catch { status = 'invalid'; }
+      if (!status) status = registered ? 'ok' : 'taken';
+    }
+    shortcutState[id] = status === 'ok' && !shortcutsSuspended;
+    shortcutStatus[id] = { accelerator, status };
+    if (status === 'taken') {
+      recordEvent({ level: 'warn', event: 'shortcut_unavailable', msg: 'another application holds the ' + id + ' shortcut', frame: 'registerShortcuts', context: { shortcut: id, accelerator } });
     }
   }
+  send('shortcuts:state', shortcutsView());
 }
+
+ipcMain.handle('shortcuts:get', () => shortcutsView());
+// accelerator: a string ('' clears the action) or null to restore the default.
+ipcMain.handle('shortcuts:set', (_e, { id, accelerator }) => {
+  if (!SHORTCUT_ACTIONS.some((a) => a.id === id)) throw new Error('Unknown shortcut action: ' + id);
+  const overrides = { ...(store.getSettings().shortcuts || {}) };
+  if (accelerator === null || accelerator === undefined) delete overrides[id];
+  else overrides[id] = String(accelerator).trim();
+  store.setShortcutOverrides(overrides);
+  registerShortcuts();
+  return shortcutsView();
+});
+ipcMain.handle('shortcuts:reset', () => {
+  store.setShortcutOverrides({});
+  registerShortcuts();
+  return shortcutsView();
+});
+// Recording a new combination in Settings: release every global shortcut so
+// the keys reach the recorder instead of triggering cue's own actions.
+// A recorder that never resumes (window closed mid-recording) must not leave
+// cue without shortcuts, so suspension also ends on its own.
+const SHORTCUT_SUSPEND_MAX_MS = 30000;
+let shortcutResumeTimer = null;
+function resumeShortcuts() {
+  clearTimeout(shortcutResumeTimer);
+  shortcutResumeTimer = null;
+  if (!shortcutsSuspended) return;
+  shortcutsSuspended = false;
+  registerShortcuts();
+}
+ipcMain.handle('shortcuts:suspend', () => {
+  shortcutsSuspended = true;
+  globalShortcut.unregisterAll();
+  clearTimeout(shortcutResumeTimer);
+  shortcutResumeTimer = setTimeout(resumeShortcuts, SHORTCUT_SUSPEND_MAX_MS);
+  return true;
+});
+ipcMain.handle('shortcuts:resume', () => { resumeShortcuts(); return shortcutsView(); });
 
 // -------- permissions --------
 // systemPreferences.getMediaAccessStatus('screen') is unreliable: it can return

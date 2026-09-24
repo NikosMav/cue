@@ -50,6 +50,16 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   in order with the current screen. A typed question right after a coding
   answer continues that thread: earlier solutions are sent as conversation
   history, still without personal notes or AI rules.
+- Global shortcuts are configurable in Settings → Shortcuts (they were
+  hard-coded although the README said otherwise). New actions: start/stop
+  listening, auto-answer toggle, stop the answer, scroll answers, and move the
+  panel, so nothing requires clicking the overlay mid-interview. Each shortcut
+  reports whether another app holds it or it is assigned twice, and global
+  shortcuts are released while a new combination is recorded.
+- Answers render as markdown while they stream (numbered lists, headings,
+  italics and labelled code blocks were added), with copy buttons for each
+  code block and each answer. The renderer lives in `renderer/markdown.js`
+  and is unit-tested.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context

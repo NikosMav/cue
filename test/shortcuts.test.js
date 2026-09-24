@@ -32,3 +32,23 @@ test('isValid accepts good accelerators and rejects junk', () => {
   assert.strictEqual(isValid('++'), false);
   assert.strictEqual(isValid(null), false);
 });
+test('an empty override clears an action; unknown actions are ignored', () => {
+  const map = resolveShortcuts({ scrollUp: '', bogus: 'Ctrl+B' });
+  assert.strictEqual(map.scrollUp, '');
+  assert.strictEqual(map.bogus, undefined);
+  assert.strictEqual(map.scrollDown, DEFAULTS.scrollDown);
+});
+
+test('conflicts are found regardless of alias spelling or modifier order', () => {
+  const conflicts = findConflicts(resolveShortcuts({ say: 'Shift+CmdOrCtrl+H' }));
+  assert.ok(conflicts.some(([a, b]) => a === 'say' && b === 'screenshot' || a === 'screenshot' && b === 'say'));
+});
+
+test('every action has a label and every default is valid', () => {
+  const { ACTIONS } = require('../src/shortcuts');
+  for (const action of ACTIONS) {
+    assert.ok(action.label, action.id);
+    if (action.defaultAccelerator) assert.ok(isValid(action.defaultAccelerator), action.id);
+  }
+  assert.ok(['listen', 'stop', 'scrollUp', 'moveLeft', 'autoAnswer'].every((id) => id in DEFAULTS));
+});

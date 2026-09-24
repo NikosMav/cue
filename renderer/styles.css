@@ -203,6 +203,20 @@ button:focus { outline: none; }
   margin: 12px 0;
 }
 .ai-text code { font-family: var(--mono); font-size: 0.92em; }
+.ai-text ol { margin: 8px 0; padding-left: 22px; }
+.ai-text .md-h { margin: 10px 0 4px; font-weight: 650; color: var(--tx-1, #fff); }
+.ai-text em { font-style: italic; }
+.code-block { margin: 8px 0; }
+.code-block pre { margin: 0 !important; }
+.code-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 4px; }
+.code-lang { font: 500 11px var(--mono); color: var(--tx-mut); text-transform: lowercase; }
+.copy-code, .copy-answer {
+  padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05); color: var(--tx-mut); font: 500 11px var(--font); cursor: pointer;
+}
+.copy-code:hover, .copy-answer:hover { color: #fff; background: rgba(255,255,255,0.10); }
+.copy-answer { display: block; margin: 6px 0 0 auto; opacity: 0.6; }
+.response-group:hover .copy-answer { opacity: 1; }
 .ai-text p code { background: rgba(255,255,255,0.10); padding: 1px 5px; border-radius: 5px; }
 .ai-caret { display:inline-block; width:7px; height:1.05em; vertical-align:-2px; background: var(--accent); border-radius:1px; animation: blink 1s step-end infinite; margin-left: 2px; }
 .status-line { color: var(--tx-mut); font-size: 13px; margin: 10px 0 2px; }
@@ -593,6 +607,23 @@ button:focus { outline: none; }
 }
 .s-hint-block em { color: var(--tx-2); font-style: normal; font-weight: 600; }
 
+
+/* Shortcuts tab */
+.shortcut-list { display: flex; flex-direction: column; gap: 4px; }
+.shortcut-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 4px 0; }
+.shortcut-name { color: var(--tx-2); font-size: 12.5px; }
+.shortcut-status { display: block; font-size: 11px; color: var(--tx-mut); }
+.shortcut-status.warn { color: #F5B547; }
+.shortcut-keys {
+  min-width: 132px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  padding: 3px 8px; border-radius: var(--r-8); border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.25); color: var(--tx-2); font: 500 12px var(--font); cursor: pointer;
+}
+.shortcut-keys:hover { border-color: rgba(255,255,255,0.28); }
+.shortcut-keys.recording { border-color: var(--accent); color: #7FB0F9; }
+.shortcut-keys .none { color: var(--tx-mut); }
+.shortcut-more { display: inline-flex; gap: 4px; }
+.shortcut-more .s-action { padding: 4px 8px; font-size: 11px; }
 
 /* ============================ Onboarding / tutorial ============================ */
 #onboard-scrim { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0,0,0,0.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }

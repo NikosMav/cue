@@ -214,7 +214,7 @@ cue is hidden from most screen-share tools automatically — **Google Meet, Micr
 
 > On Windows, press **`Ctrl`** wherever **`⌘`** appears below. cue's own UI relabels the keys to match your OS.
 
-- **`⌘` `↵` — Assist.** The do-the-smart-thing key. On a coding problem it solves it; in a conversation it tells you what to say. Works from anywhere. Change it under **Settings → Keyboard shortcuts**.
+- **`⌘` `↵` — Assist.** The do-the-smart-thing key. On a coding problem it solves it; in a conversation it tells you what to say. Works from anywhere. Every shortcut can be changed or cleared under **Settings → ⌨️ Shortcuts**.
 - **`⌘` `H` — Solve what's on screen.** Screenshots a coding problem and returns the approach, code, and time/space complexity.
 - **`⌘` `⇧` `H` — Add a screenshot.** For a problem longer than one screen: add each part while scrolling (up to 4), then press `⌘` `H` to solve with all of them plus the current screen.
 - **Coding follow-ups.** After a solution, type a follow-up ("optimize it", "what if the input is sorted?") and cue continues from its earlier solution.
@@ -224,9 +224,28 @@ cue is hidden from most screen-share tools automatically — **Google Meet, Micr
 - **A new request replaces the answer in progress** — you never wait for an old answer to finish. Press `Esc` to stop an answer.
 - **Follow-up questions** such as "why did you choose that?" are answered with the recent conversation and cue's earlier answers in view. **Clear transcript** also clears that memory.
 - **Smart** — flip it on for a smarter, more thorough model; off for fast and cheap.
+- **Answers are formatted as they stream** (lists, headings, code blocks with a language label). **Copy** buttons copy a code block or a whole answer.
 - **Hide** collapses the panel to just the top bar. Drag cue around by the **top pill**. Quit with `⌘` `⇧` `X` on macOS or `Ctrl` `Shift` `X` on Windows.
 
 The panel is see-through and click-through — the empty space around it never blocks the app behind it.
+
+### Keyboard shortcuts
+
+These work while another app (your meeting or editor) has focus. A global shortcut takes its key combination away from every other app, so change or clear any that clash with your editor under **Settings → ⌨️ Shortcuts**: click a shortcut and press the new keys. A combination another app already holds, or one assigned twice, is flagged there. On Windows, read `⌘` as `Ctrl` and `⌥` as `Alt`.
+
+| Action | Default |
+|---|---|
+| Assist | `⌘` `↵` |
+| What should I say? | `⌘` `⇧` `↵` |
+| Solve what's on screen | `⌘` `H` |
+| Add a screenshot for the solver | `⌘` `⇧` `H` |
+| Start / stop listening | `⌘` `⇧` `L` |
+| Auto-answer on / off | not set |
+| Stop the current answer | `⌘` `⇧` `⌫` (or `Esc` in the panel) |
+| Scroll answers up / down | `⌘` `⌥` `↑` / `⌘` `⌥` `↓` |
+| Move the panel | `⌘` `⌥` `⇧` + arrow keys |
+| Collapse / expand the panel | `⌘` `⇧` `/` |
+| Quit | `⌘` `⇧` `X` |
 
 ---
 

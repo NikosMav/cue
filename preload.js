@@ -1,5 +1,6 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, clipboard } = require('electron');
 const { isLikelyCompleteQuestion } = require('./src/question-detector');
+const { acceleratorFromEvent, acceleratorParts, formatAccelerator } = require('./src/accelerator');
 const platform = process.platform;
 
 contextBridge.exposeInMainWorld('cue', {
@@ -17,6 +18,16 @@ contextBridge.exposeInMainWorld('cue', {
   queueScreenshot: () => ipcRenderer.send('screenshot:queue'),
   // Same completeness test the main process uses for auto-answer.
   isLikelyCompleteQuestion: (text) => isLikelyCompleteQuestion(text),
+  copyText: (text) => clipboard.writeText(String(text || '')),
+  shortcutsGet: () => ipcRenderer.invoke('shortcuts:get'),
+  shortcutsSet: (id, accelerator) => ipcRenderer.invoke('shortcuts:set', { id, accelerator }),
+  shortcutsReset: () => ipcRenderer.invoke('shortcuts:reset'),
+  shortcutsSuspend: () => ipcRenderer.invoke('shortcuts:suspend'),
+  shortcutsResume: () => ipcRenderer.invoke('shortcuts:resume'),
+  // Plain-data copies only: a KeyboardEvent cannot cross the context bridge.
+  acceleratorFromEvent: (e) => acceleratorFromEvent({ code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey }, platform),
+  acceleratorParts: (accel) => acceleratorParts(accel, platform),
+  formatAccelerator: (accel) => formatAccelerator(accel, platform),
   captureToggle: () => ipcRenderer.invoke('capture:toggle').catch((err) => {
     console.error('[cue] captureToggle error', err);
     return false;
@@ -44,7 +55,7 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }

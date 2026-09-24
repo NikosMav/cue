@@ -113,6 +113,7 @@
         <button class="s-tab" data-tab="prep">🎯 Interview Prep</button>
         <button class="s-tab" data-tab="style">✨ Style</button>
         <button class="s-tab" data-tab="qa">💬 Q&amp;A</button>
+        <button class="s-tab" data-tab="shortcuts">⌨️ Shortcuts</button>
       </div>
 
       <!-- Tab: Keys -->
@@ -286,6 +287,14 @@
         <textarea id="questions-to-ask" rows="6" spellcheck="false" placeholder="e.g.&#10;- What does success look like in the first 90 days?&#10;- How does the team handle technical debt?&#10;- What's the biggest challenge the team is facing right now?&#10;- How does feedback and mentorship work here?"></textarea>
       </div>
 
+      <!-- Tab: Shortcuts -->
+      <div class="s-body s-tab-pane hidden" data-pane="shortcuts">
+        <label class="s-label">Keyboard shortcuts <span class="s-hint">work while another app has focus</span></label>
+        <div class="s-hint-block">Click a shortcut, then press the new combination (Esc cancels). A global shortcut takes that combination away from every other app, including your editor, so clear any you do not use.</div>
+        <div id="shortcut-list" class="shortcut-list"></div>
+        <div class="whisper-actions"><button id="shortcuts-reset" class="s-action">Reset all to defaults</button></div>
+      </div>
+
       <!-- Tab: Style -->
       <div class="s-body s-tab-pane hidden" data-pane="style">
         <label class="s-label" for="answer-length">Answer length</label>
@@ -351,6 +360,7 @@
   </div>
 
   <script src="icons.js"></script>
+  <script src="markdown.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -44,29 +44,22 @@
 
   function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-  // minimal, safe markdown: fenced code, bullets, inline code, bold, paragraphs
-  function renderMarkdown(text) {
-    const lines = text.split('\n');
-    let html = '', inCode = false, inList = false, buf = [];
-    const flushP = () => { if (buf.length) { html += '<p>' + inline(buf.join(' ')) + '</p>'; buf = []; } };
-    const inline = (s) => esc(s)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    for (const raw of lines) {
-      const line = raw;
-      if (/^```/.test(line.trim())) {
-        if (!inCode) { flushP(); if (inList) { html += '</ul>'; inList = false; } html += '<pre><code>'; inCode = true; }
-        else { html += '</code></pre>'; inCode = false; }
-        continue;
-      }
-      if (inCode) { html += esc(line) + '\n'; continue; }
-      if (/^\s*[-*]\s+/.test(line)) { flushP(); if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>'; continue; }
-      if (line.trim() === '') { flushP(); if (inList) { html += '</ul>'; inList = false; } continue; }
-      buf.push(line.trim());
-    }
-    flushP(); if (inList) html += '</ul>'; if (inCode) html += '</code></pre>';
-    return html;
-  }
+  const renderMarkdown = window.CueMarkdown.renderMarkdown; // renderer/markdown.js
+
+  // Copy buttons: one per code block, one per finished answer.
+  messages.addEventListener('click', (e) => {
+    const codeBtn = e.target.closest && e.target.closest('.copy-code');
+    const answerBtn = e.target.closest && e.target.closest('.copy-answer');
+    const btn = codeBtn || answerBtn;
+    if (!btn) return;
+    const text = codeBtn
+      ? (codeBtn.closest('.code-block').querySelector('code') || {}).textContent || ''
+      : (btn.closest('.response-group').querySelector('.ai-text') || { dataset: {} }).dataset.raw || '';
+    cue.copyText(text.replace(/\n$/, ''));
+    const label = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = label; }, 1200);
+  });
 
   function clearMessages() { messages.innerHTML = ''; aiEl = null; caretEl = null; }
 
@@ -87,22 +80,30 @@
     messages.appendChild(aiEl);
   }
 
+  // Streaming renders the partial answer as markdown on each animation frame,
+  // so lists and code look right while they arrive, not only at the end.
+  let renderFrame = null;
+  function renderStreaming() {
+    renderFrame = null;
+    if (!aiEl) return;
+    aiEl.innerHTML = renderMarkdown(aiEl.dataset.raw || '');
+    caretEl = document.createElement('span');
+    caretEl.className = 'ai-caret';
+    const last = aiEl.lastElementChild;
+    const host = last && last.matches('p, ul, ol') ? (last.matches('ul, ol') ? last.lastElementChild || last : last)
+      : last && last.matches('.code-block') ? last.querySelector('code') : aiEl;
+    host.appendChild(caretEl);
+  }
+
   function appendToken(t) {
     if (!aiEl) startAi(false);
     aiEl.dataset.raw += t;
-    const span = document.createElement('span');
-    span.className = 'w';
-    span.textContent = t;
-    // Guard: caretEl must be a child of aiEl
-    if (caretEl && caretEl.parentNode === aiEl) {
-      aiEl.insertBefore(span, caretEl);
-    } else {
-      aiEl.appendChild(span);
-    }
+    if (!renderFrame) renderFrame = requestAnimationFrame(renderStreaming);
   }
 
   function finalizeAi(note) {
     if (!aiEl) return;
+    if (renderFrame) { cancelAnimationFrame(renderFrame); renderFrame = null; }
     const raw = aiEl.dataset.raw || '';
     aiEl.innerHTML = renderMarkdown(raw);
     if (note) {
@@ -110,6 +111,15 @@
       n.className = 'ai-note';
       n.textContent = note;
       aiEl.appendChild(n);
+    }
+    const group = aiEl.closest('.response-group');
+    if (group && raw.trim() && !group.querySelector('.copy-answer')) {
+      const copy = document.createElement('button');
+      copy.className = 'copy-answer';
+      copy.type = 'button';
+      copy.textContent = 'Copy';
+      copy.title = 'Copy this answer';
+      group.appendChild(copy);
     }
     aiEl = null; caretEl = null;
   }
@@ -558,6 +568,17 @@
   }
   $('#hide-btn').addEventListener('click', toggleHide);
   cue.on('hide:toggle', toggleHide);
+  // Global scroll shortcuts: the panel never takes focus, so keys cannot scroll it.
+  cue.on('answers:scroll', ({ direction }) => {
+    messages.scrollBy({ top: direction * Math.max(60, messages.clientHeight * 0.8), behavior: 'smooth' });
+  });
+  // Main changed a setting (e.g. the auto-answer shortcut): keep this copy in
+  // step so the next Save does not write the old value back.
+  cue.on('settings:changed', (patch) => {
+    if (!settings) return;
+    Object.assign(settings, patch);
+    if ('autoAnswer' in patch) syncAutoButton();
+  });
 
   // Stop = start/stop listening. Kick off system-audio capture straight from the click so
   // the user-gesture is fresh for getDisplayMedia (loopback capture needs it).
@@ -1254,21 +1275,140 @@
   // ---- settings ----------------------------------------------------------
   const scrim = $('#settings-scrim');
   async function closeSettings() {
+    await stopRecording();
     if (await saveSettings()) scrim.classList.add('hidden');
   }
   function openSettings() {
     fillSettings();
     scrim.classList.remove('hidden');
     refreshWhisperModels();
+    refreshShortcuts();
   }
   $('#more-btn').addEventListener('click', openSettings);
   $('#s-close').addEventListener('click', () => { void closeSettings(); });
   scrim.addEventListener('click', (e) => { if (e.target === scrim) void closeSettings(); });
 
+  // ---- keyboard shortcuts tab ----------------------------------------------
+  let shortcutView = null;
+  let recordingId = null;
+  const SHORTCUT_STATUS_TEXT = {
+    taken: 'Another app already uses this combination. Pick a different one.',
+    conflict: 'Also assigned to another action above. Pick a different one.',
+    invalid: 'This combination cannot be used as a shortcut.'
+  };
+
+  function keycaps(accelerator) {
+    const parts = cue.acceleratorParts(accelerator);
+    if (!parts.length) return '<span class="none">Not set</span>';
+    return parts.map((p) => '<span class="keycap">' + esc(p) + '</span>').join('');
+  }
+
+  function renderShortcuts() {
+    const host = $('#shortcut-list');
+    if (!host || !shortcutView) return;
+    host.innerHTML = '';
+    for (const action of shortcutView.actions) {
+      const row = document.createElement('div');
+      row.className = 'shortcut-row';
+      const name = document.createElement('div');
+      name.className = 'shortcut-name';
+      name.textContent = action.label;
+      const statusText = SHORTCUT_STATUS_TEXT[action.status];
+      if (statusText) {
+        const st = document.createElement('span');
+        st.className = 'shortcut-status warn';
+        st.textContent = statusText;
+        name.appendChild(st);
+      }
+      const keys = document.createElement('button');
+      keys.className = 'shortcut-keys' + (recordingId === action.id ? ' recording' : '');
+      keys.innerHTML = recordingId === action.id ? 'Press keys…' : keycaps(action.accelerator);
+      keys.title = 'Click, then press the new combination';
+      keys.addEventListener('click', () => startRecording(action.id));
+      const more = document.createElement('div');
+      more.className = 'shortcut-more';
+      const reset = document.createElement('button');
+      reset.className = 's-action';
+      reset.textContent = 'Default';
+      reset.disabled = action.accelerator === action.defaultAccelerator;
+      reset.title = action.defaultAccelerator ? 'Default: ' + cue.formatAccelerator(action.defaultAccelerator) : 'No default shortcut';
+      reset.addEventListener('click', async () => { shortcutView = await cue.shortcutsSet(action.id, null); renderShortcuts(); });
+      const clear = document.createElement('button');
+      clear.className = 's-action';
+      clear.textContent = 'Clear';
+      clear.disabled = !action.accelerator;
+      clear.addEventListener('click', async () => { shortcutView = await cue.shortcutsSet(action.id, ''); renderShortcuts(); });
+      more.append(reset, clear);
+      row.append(name, keys, more);
+      host.appendChild(row);
+    }
+  }
+
+  async function refreshShortcuts() {
+    shortcutView = await cue.shortcutsGet();
+    renderShortcuts();
+    updateShortcutHints();
+  }
+
+  // Global shortcuts would swallow the combination being recorded, so they
+  // are released while recording and restored afterwards (main also restores
+  // them on its own after 30 s).
+  async function startRecording(id) {
+    if (recordingId && recordingId !== id) await stopRecording();
+    recordingId = id;
+    await cue.shortcutsSuspend();
+    renderShortcuts();
+  }
+  async function stopRecording() {
+    if (!recordingId) return;
+    recordingId = null;
+    shortcutView = await cue.shortcutsResume();
+    renderShortcuts();
+    updateShortcutHints();
+  }
+  document.addEventListener('keydown', async (e) => {
+    if (!recordingId) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) { await stopRecording(); return; }
+    const { accelerator, error } = cue.acceleratorFromEvent({ code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey });
+    if (error) { showToast(error, 3000); return; }
+    if (!accelerator) return; // a lone modifier: keep listening
+    const id = recordingId;
+    recordingId = null;
+    await cue.shortcutsSet(id, accelerator);
+    shortcutView = await cue.shortcutsResume();
+    renderShortcuts();
+    updateShortcutHints();
+  }, true);
+  $('#shortcuts-reset').addEventListener('click', async () => {
+    recordingId = null;
+    shortcutView = await cue.shortcutsReset();
+    renderShortcuts();
+    updateShortcutHints();
+  });
+  cue.on('shortcuts:state', (view) => { shortcutView = view; renderShortcuts(); updateShortcutHints(); });
+
+  // Hints elsewhere in the UI show the configured keys, not the defaults.
+  function shortcutFor(id) {
+    const action = shortcutView && shortcutView.actions.find((a) => a.id === id);
+    return action && action.status === 'ok' ? action.accelerator : '';
+  }
+  function updateShortcutHints() {
+    const assist = shortcutFor('assist');
+    placeholder.innerHTML = 'Ask about your screen or conversation' +
+      (assist ? ', or ' + keycaps(assist) + ' for Assist' : '');
+    const sendBtn = document.getElementById('send-btn');
+    const stop = shortcutFor('stop');
+    const force = isWindows ? 'Ctrl+Shift+A' : '⌘⇧A';
+    if (sendBtn) sendBtn.title = 'Send · ' + force + ' forces an answer · Esc' + (stop ? ' or ' + cue.formatAccelerator(stop) : '') + ' stops one';
+  }
+
   // Tab switching
   document.querySelectorAll('.s-tab').forEach((tab) => {
     tab.addEventListener('click', async () => {
       if (tab.classList.contains('on')) return;
+      await stopRecording();
       if (!(await saveSettings())) return;
       document.querySelectorAll('.s-tab').forEach(t => t.classList.remove('on'));
       document.querySelectorAll('.s-tab-pane').forEach(p => p.classList.add('hidden'));
@@ -1999,10 +2139,8 @@
     updateHistoryBadge(); // FIX #3: Initialize badge on boot
     updateSendButtonState(); // Initialize send button state
 
-    // Fix placeholder shortcut hint to match platform
-    if (isWindows) {
-      placeholder.innerHTML = 'Ask about your screen or conversation, or <span class="keycap">Ctrl</span><span class="keycap">⏎</span> for Assist';
-    }
+    // Placeholder and tooltips show the configured shortcuts for this platform.
+    refreshShortcuts().catch(() => {});
 
     const st = await cue.captureState();
     $('#live-dot').classList.toggle('off', !st.active);

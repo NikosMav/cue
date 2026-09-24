@@ -70,7 +70,10 @@ const DEFAULTS = {
   aiRules: '',
   answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
   includeScreen: true,  // Assist/Ask can run with conversation only.
-  autoAnswer: false,    // Answer the interviewer's question as soon as they finish, without a key press.
+  autoAnswer: false,
+  // Global shortcut overrides by action id (src/shortcuts.js); '' clears one.
+  // Written only through setShortcutOverrides so a reset can remove a key.
+  shortcuts: {},    // Answer the interviewer's question as soon as they finish, without a key press.
   // Window position
   windowX: null,
   windowY: null,
@@ -100,7 +103,7 @@ const DEFAULTS = {
 
 // Fields the renderer may never write. settings:set passes patches through
 // stripRendererPatch; settings:get hands out redactForRenderer's view.
-const RENDERER_READ_ONLY = ['publik'];
+const RENDERER_READ_ONLY = ['publik', 'shortcuts'];
 
 let data = null;
 
@@ -178,6 +181,14 @@ module.exports = {
     const { apiKey, ...rest } = patch || {};
     if (typeof apiKey === 'string') data.apiKeys = { ...data.apiKeys, publik: apiKey };
     data.publik = { ...data.publik, ...rest };
+    save();
+    return data;
+  },
+  // Replaces (not merges) the overrides, so resetting an action to its
+  // default removes its key instead of pinning today's default.
+  setShortcutOverrides(overrides) {
+    load();
+    data = { ...data, shortcuts: { ...(overrides || {}) } };
     save();
     return data;
   },
