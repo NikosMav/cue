@@ -1,12 +1,14 @@
 const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const store = require('./src/store');
 const { captureScreenshot } = require('./src/screen');
 const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
-const { MODES, buildPromptRequest } = require('./src/prompts');
+const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
+const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
@@ -109,8 +111,16 @@ const MAX_SESSION_ANSWERS = 20;
 // Screenshots queued for the coding solver (a problem longer than one screen).
 let screenshotQueue = [];
 const MAX_QUEUED_SCREENSHOTS = 4;
+// Saved sessions (created at launch, once the user-data path is known).
+let sessionStore = null;
+let sessionRecorder = null;
+// Practice mode: cue asks the questions and the mic carries the answers.
+const practice = { active: false, speaking: false, quietUntil: 0 };
+// The mic can pick up cue's spoken question from the speakers; ignore it
+// while the voice plays and briefly after.
+const PRACTICE_ECHO_GUARD_MS = 600;
 const autoAnswer = new AutoAnswer({
-  isEnabled: () => !!store.getSettings().autoAnswer && state.capturing,
+  isEnabled: () => !!store.getSettings().autoAnswer && state.capturing && !practice.active,
   getTranscript: () => transcript,
   onFire: (question) => {
     // The user already asked about this question by hand: leave their answer.
@@ -154,6 +164,7 @@ const ringBuffers = {
 function pushTranscript(turn) {
   transcript.push(turn);
   if (transcript.length > MAX_TRANSCRIPT_TURNS) transcript.splice(0, transcript.length - MAX_TRANSCRIPT_TURNS);
+  if (sessionRecorder) sessionRecorder.addTurn(turn);
 }
 
 function send(channel, data) { if (win && !win.isDestroyed()) win.webContents.send(channel, data); }
@@ -481,6 +492,13 @@ function stopStreamingSTT() {
 function routeAudio(channel, pcmBuffer) {
   const buf = Buffer.from(pcmBuffer);
 
+  if (practice.active) {
+    // In practice cue is the interviewer: meeting audio would only echo its
+    // own voice, and the mic is muted while that voice plays.
+    if (channel === 'them') return;
+    if (practice.speaking || Date.now() < practice.quietUntil) return;
+  }
+
   if (localWhisperTranscriber) {
     localWhisperTranscriber.push(channel, buf);
     return;
@@ -575,7 +593,9 @@ function cancelActiveRequest(reason) {
 
 function rememberAnswer(mode, prompt, text) {
   if (!text || !text.trim()) return;
-  sessionAnswers.push({ mode, prompt: prompt || '', text: text.trim(), ts: Date.now() });
+  const entry = { mode, prompt: prompt || '', text: text.trim(), ts: Date.now() };
+  sessionAnswers.push(entry);
+  if (sessionRecorder) sessionRecorder.addAnswer(entry);
   if (sessionAnswers.length > MAX_SESSION_ANSWERS) sessionAnswers.splice(0, sessionAnswers.length - MAX_SESSION_ANSWERS);
 }
 
@@ -688,8 +708,12 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
       onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
     }, STREAM_INACTIVITY_MS, signal);
     if (signal.aborted) return;
-    const prompt = mode === 'say' || mode === 'assist' ? currentQuestion(transcript) : text;
-    rememberAnswer(mode, prompt, answer);
+    if (mode === 'practiceQuestion') {
+      publishPracticeQuestion(answer);
+    } else {
+      const prompt = mode === 'say' || mode === 'assist' ? currentQuestion(transcript) : text;
+      rememberAnswer(mode, prompt, answer);
+    }
     if (queuedScreens.length) screenshotQueue = screenshotQueue.filter((image) => !queuedScreens.includes(image));
     emit('llm:done', {});
     // Streams settle after their headers, so the charge is reconciled from
@@ -939,12 +963,181 @@ ipcMain.handle('platform:info', () => ({
   winBuild: WIN_BUILD,
   winSupportsContentProtection: WIN_SUPPORTS_CONTENT_PROTECTION
 }));
-ipcMain.handle('transcript:clear', () => {
+// Clearing starts a new conversation: the current one is saved as a session
+// (when saving is on) and forgotten here.
+function resetConversation() {
   transcript.splice(0, transcript.length);
   sessionAnswers.splice(0, sessionAnswers.length);
   screenshotQueue = [];
   autoAnswer.reset();
-  return { ok: true };
+  return sessionRecorder ? sessionRecorder.end() : null;
+}
+ipcMain.handle('transcript:clear', () => {
+  const savedId = resetConversation();
+  return { ok: true, savedId };
+});
+
+// -------- practice interviews --------
+function practiceState() {
+  return { active: practice.active };
+}
+
+function publishPracticeQuestion(text) {
+  const question = String(text || '').trim();
+  if (!question) return;
+  const turn = { channel: 'them', text: question, ts: Date.now(), source: 'practice' };
+  pushTranscript(turn);
+  send('transcript', turn);
+  send('practice:question', { text: question });
+}
+
+ipcMain.handle('practice:start', () => {
+  if (practice.active) return practiceState();
+  cancelActiveRequest('stopped');
+  const savedId = resetConversation();
+  if (sessionRecorder) sessionRecorder.setKind('practice');
+  practice.active = true;
+  practice.speaking = false;
+  send('practice:state', practiceState());
+  return { ...practiceState(), savedId };
+});
+ipcMain.handle('practice:end', () => {
+  if (!practice.active) return practiceState();
+  cancelActiveRequest('stopped');
+  practice.active = false;
+  practice.speaking = false;
+  const savedId = sessionRecorder ? sessionRecorder.end() : null;
+  if (sessionRecorder) sessionRecorder.setKind('interview');
+  transcript.splice(0, transcript.length);
+  sessionAnswers.splice(0, sessionAnswers.length);
+  send('practice:state', practiceState());
+  return { ...practiceState(), savedId };
+});
+ipcMain.on('practice:speaking', (_e, speaking) => {
+  practice.speaking = !!speaking;
+  if (!speaking) practice.quietUntil = Date.now() + PRACTICE_ECHO_GUARD_MS;
+});
+
+// -------- saved sessions --------
+function sessionsDir() {
+  return path.join(app.getPath('userData'), 'sessions');
+}
+
+function sessionsState(query = '') {
+  const settings = store.getSettings();
+  const current = sessionRecorder && sessionRecorder.current();
+  return {
+    enabled: !!settings.saveSessions,
+    exportDir: settings.sessionsExportDir || '',
+    currentId: current ? current.id : null,
+    sessions: sessionStore ? sessionStore.list(query) : []
+  };
+}
+
+// The in-memory copy of the live session is newer than its file.
+function loadSession(id) {
+  const current = sessionRecorder && sessionRecorder.current();
+  if (current && current.id === id) return current;
+  return sessionStore.get(id);
+}
+
+function saveSessionCopy(session) {
+  const current = sessionRecorder && sessionRecorder.current();
+  if (current && current.id === session.id) { sessionRecorder.flush(); return; }
+  sessionStore.save(session);
+  const dir = store.getSettings().sessionsExportDir;
+  if (dir) {
+    try { writeFileAtomic(path.join(dir, exportFileName(session)), sessionToMarkdown(session)); }
+    catch (e) { send('status', { message: 'Could not write the Markdown copy: ' + e.message }); }
+  }
+}
+
+ipcMain.handle('sessions:list', (_e, query) => sessionsState(query));
+ipcMain.handle('sessions:get', (_e, id) => {
+  if (!isValidId(id)) throw new Error('Invalid session id.');
+  const session = loadSession(id);
+  return session ? { ...session, summary: summarize(session), markdown: sessionToMarkdown(session) } : null;
+});
+ipcMain.handle('sessions:set-enabled', (_e, enabled) => {
+  store.setSettings({ saveSessions: !!enabled });
+  send('settings:changed', { saveSessions: !!enabled });
+  if (enabled && sessionRecorder && !sessionRecorder.current()) {
+    // Keep the conversation so far, not only what follows.
+    for (const turn of transcript) sessionRecorder.addTurn(turn);
+    for (const answer of sessionAnswers) sessionRecorder.addAnswer(answer);
+  } else if (!enabled && sessionRecorder) {
+    sessionRecorder.end();
+  }
+  return sessionsState();
+});
+ipcMain.handle('sessions:delete', (_e, id) => {
+  if (!isValidId(id)) throw new Error('Invalid session id.');
+  const current = sessionRecorder && sessionRecorder.current();
+  if (current && current.id === id) sessionRecorder.discard();
+  sessionStore.remove(id);
+  return sessionsState();
+});
+ipcMain.handle('sessions:export', async (_e, id) => {
+  const session = isValidId(id) && loadSession(id);
+  if (!session) throw new Error('That session no longer exists.');
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Export session as Markdown',
+    defaultPath: path.join(app.getPath('documents'), exportFileName(session)),
+    filters: [{ name: 'Markdown', extensions: ['md'] }]
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  writeFileAtomic(result.filePath, sessionToMarkdown(session));
+  return { canceled: false, filePath: result.filePath };
+});
+ipcMain.handle('sessions:open-folder', async () => {
+  fs.mkdirSync(sessionsDir(), { recursive: true });
+  const error = await shell.openPath(sessionsDir());
+  return { ok: !error, error };
+});
+ipcMain.handle('sessions:choose-export-dir', async () => {
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Keep a Markdown copy of each session in…',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths[0]) return sessionsState();
+  store.setSettings({ sessionsExportDir: result.filePaths[0] });
+  send('settings:changed', { sessionsExportDir: result.filePaths[0] });
+  if (sessionRecorder) sessionRecorder.flush();
+  return sessionsState();
+});
+ipcMain.handle('sessions:clear-export-dir', () => {
+  store.setSettings({ sessionsExportDir: '' });
+  send('settings:changed', { sessionsExportDir: '' });
+  return sessionsState();
+});
+
+// Debriefs stream into the Sessions viewer and are saved with the session.
+let debriefInFlight = null;
+ipcMain.handle('sessions:debrief', async (_e, id) => {
+  const session = isValidId(id) && loadSession(id);
+  if (!session) throw new Error('That session no longer exists.');
+  const settings = store.getSettings();
+  const llm = createLLM(settings);
+  if (!llm.ready) throw new Error(llm.configurationError || 'Set up an AI provider in Settings first.');
+  if (debriefInFlight) debriefInFlight.abort();
+  const controller = new AbortController();
+  debriefInFlight = controller;
+  const request = buildDebriefRequest(settings, session);
+  try {
+    const text = await streamWithWatchdog(params => llm.stream(params), {
+      system: request.system,
+      cachePrefix: request.cachePrefix,
+      maxTokens: request.maxTokens,
+      turns: request.turns,
+      onToken: t => send('sessions:debrief-token', { id, text: t })
+    }, STREAM_INACTIVITY_MS, controller.signal);
+    session.debrief = String(text || '').trim();
+    session.debriefAt = Date.now();
+    saveSessionCopy(session);
+    return { id, debrief: session.debrief };
+  } finally {
+    if (debriefInFlight === controller) debriefInFlight = null;
+  }
 });
 ipcMain.on('ask', (_e, payload) => runFeature(payload.mode, payload.text));
 ipcMain.on('llm:cancel', () => { cancelActiveRequest('stopped'); });
@@ -1231,6 +1424,17 @@ function launchApp() {
   }
 
   whisperModelManager = new WhisperModelManager({ userDataPath: app.getPath('userData') });
+  sessionStore = new SessionStore({ dir: sessionsDir() });
+  sessionRecorder = new SessionRecorder({
+    store: sessionStore,
+    isEnabled: () => !!store.getSettings().saveSessions,
+    exportDir: () => store.getSettings().sessionsExportDir || '',
+    onSaved: (summary) => send('sessions:saved', summary),
+    onError: (error) => {
+      recordEvent({ level: 'error', event: 'session_save_failed', msg: error.message, frame: 'SessionRecorder', context: {} });
+      send('status', { message: 'Could not save this session: ' + error.message });
+    }
+  });
 
   const allowMedia = (permission) => permission === 'media' || permission === 'microphone' || permission === 'audioCapture' || permission === 'display-capture' || permission === 'screen';
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowMedia(permission)));
@@ -1326,6 +1530,8 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  // Synchronous write: the session in progress is saved before exit.
+  if (sessionRecorder) sessionRecorder.end();
   // Best effort, deliberately not blocking the quit: the library also removes
   // the instance file from a `process.on('exit')` handler, and a file left
   // behind is harmless anyway because readers check whether the PID is alive.

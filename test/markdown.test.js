@@ -34,3 +34,7 @@ test('a partial answer renders cleanly while it streams', () => {
   assert.equal((html.match(/<div class="code-block">/g) || []).length, 1);
   assert.match(renderMarkdown('1. first\n2. sec'), /<\/ol>$/);
 });
+
+test('quoted lines form one block per paragraph', () => {
+  assert.equal(renderMarkdown('> a\n> *b*\n\n> c'), '<blockquote>a<br><em>b</em></blockquote><blockquote>c</blockquote>');
+});

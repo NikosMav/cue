@@ -53,6 +53,13 @@
               <span class="sep">•</span>
               <button class="act" data-mode="recap"><span class="ic"></span><span>Recap</span></button>
             </div>
+            <div id="practice-row" class="hidden">
+              <span class="practice-badge">Practice</span>
+              <button class="act act-primary" id="practice-next" title="Cue asks the next interview question">Next question</button>
+              <button class="act act-secondary" id="practice-rate" title="Feedback on what you just said">Rate my answer</button>
+              <button class="act" id="practice-voice" title="Read questions aloud with your system voice">Voice: on</button>
+              <button class="act act-clear" id="practice-end" title="End practice and save it">End</button>
+            </div>
 
             <div id="composer">
               <div id="input-area">
@@ -63,6 +70,7 @@
                 <button id="smart-toggle" class="smart-pill"><span class="ic"></span><span>Smart</span></button>
                 <button id="auto-toggle" class="smart-pill"><span class="ic"></span><span>Auto</span></button>
                 <button id="history-btn" class="history-btn" title="View conversation history"><span class="ic"></span></button>
+                <button id="sessions-btn" class="history-btn" title="Saved sessions, debriefs and practice"><span class="ic"></span></button>
                 <button id="more-btn" class="more-btn" title="Settings"></button>
                 <div class="spacer"></div>
                 <button id="send-btn" title="Send"></button>
@@ -93,6 +101,44 @@
       </div>
       <div class="ts-footer">
         <button class="ts-clear-btn" id="clear-transcript-btn" title="Clear all history">Clear History</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Saved sessions -->
+  <div id="sessions-scrim" class="hidden">
+    <div id="sessions" class="glass">
+      <div class="s-head">
+        <div class="s-title">Sessions</div>
+        <button id="sessions-close" class="s-close">Done</button>
+      </div>
+      <div id="sessions-list-view" class="sess-pane">
+        <div class="sess-controls">
+          <label class="sess-toggle"><input type="checkbox" id="sessions-enabled" /> Save sessions on this computer</label>
+          <button id="practice-start" class="s-action primary">Start a practice interview</button>
+        </div>
+        <div class="s-hint-block" id="sessions-hint">Each conversation is saved when you clear it, start practice, or quit: the transcript and cue's answers, as a file on this computer only. Audio is never saved.</div>
+        <div class="sess-export">
+          <span>Markdown copy: <em id="sessions-export-dir">off</em></span>
+          <span class="sess-export-actions">
+            <button id="sessions-choose-dir" class="s-action">Choose folder…</button>
+            <button id="sessions-clear-dir" class="s-action hidden">Stop copying</button>
+            <button id="sessions-open-folder" class="s-action">Open sessions folder</button>
+          </span>
+        </div>
+        <input id="sessions-search" class="sess-search" type="search" placeholder="Search questions, answers and debriefs" autocomplete="off" />
+        <div id="sessions-list" class="sess-list"></div>
+      </div>
+      <div id="session-view" class="sess-pane hidden">
+        <div class="sess-view-head">
+          <button id="session-back" class="s-action">← All sessions</button>
+          <span class="sess-view-actions">
+            <button id="session-debrief" class="s-action primary">Debrief</button>
+            <button id="session-export" class="s-action">Export .md</button>
+            <button id="session-delete" class="s-action danger">Delete</button>
+          </span>
+        </div>
+        <div id="session-body" class="sess-body ai-text small"></div>
       </div>
     </div>
   </div>

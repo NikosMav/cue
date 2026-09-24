@@ -60,6 +60,21 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   italics and labelled code blocks were added), with copy buttons for each
   code block and each answer. The renderer lives in `renderer/markdown.js`
   and is unit-tested.
+- Saved sessions (opt-in, Sessions panel): transcript turns and cue's answers
+  are saved per conversation as JSON under the user-data folder (atomic
+  writes, debounced while live, flushed on clear, practice start and quit),
+  with an optional Markdown copy in a chosen folder. Sessions can be searched,
+  read, exported and deleted. The unused `meetings.js`/`notes.js` modules are
+  superseded by `src/sessions.js`.
+- Debrief: a grounded review of a saved session (questions and how they were
+  answered, strengths, improvements with stronger answers built only from the
+  transcript and prep notes, follow-ups, and gaps to add to the prep notes).
+  Very long transcripts keep their beginning and end.
+- Practice interviews: cue asks one question at a time from the job
+  description and background (read aloud with the free, offline system voice
+  via the Web Speech API), then rates the spoken answer. Meeting audio is
+  ignored and the mic is muted while the question is spoken, so cue does not
+  hear itself.
 - Persistent reference notes with factual-grounding instructions. Full notes are
   preserved, including qualifications near the end. No retrieval service or new
   dependency is introduced. Very large notes can still exceed a provider's context

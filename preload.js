@@ -19,6 +19,18 @@ contextBridge.exposeInMainWorld('cue', {
   // Same completeness test the main process uses for auto-answer.
   isLikelyCompleteQuestion: (text) => isLikelyCompleteQuestion(text),
   copyText: (text) => clipboard.writeText(String(text || '')),
+  sessionsList: (query) => ipcRenderer.invoke('sessions:list', query || ''),
+  sessionsGet: (id) => ipcRenderer.invoke('sessions:get', id),
+  sessionsSetEnabled: (enabled) => ipcRenderer.invoke('sessions:set-enabled', !!enabled),
+  sessionsDelete: (id) => ipcRenderer.invoke('sessions:delete', id),
+  sessionsExport: (id) => ipcRenderer.invoke('sessions:export', id),
+  sessionsOpenFolder: () => ipcRenderer.invoke('sessions:open-folder'),
+  sessionsChooseExportDir: () => ipcRenderer.invoke('sessions:choose-export-dir'),
+  sessionsClearExportDir: () => ipcRenderer.invoke('sessions:clear-export-dir'),
+  sessionsDebrief: (id) => ipcRenderer.invoke('sessions:debrief', id),
+  practiceStart: () => ipcRenderer.invoke('practice:start'),
+  practiceEnd: () => ipcRenderer.invoke('practice:end'),
+  practiceSpeaking: (speaking) => ipcRenderer.send('practice:speaking', !!speaking),
   shortcutsGet: () => ipcRenderer.invoke('shortcuts:get'),
   shortcutsSet: (id, accelerator) => ipcRenderer.invoke('shortcuts:set', { id, accelerator }),
   shortcutsReset: () => ipcRenderer.invoke('shortcuts:reset'),
@@ -55,7 +67,7 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }

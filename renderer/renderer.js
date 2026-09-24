@@ -602,20 +602,24 @@
       // Save current input to history before clearing (for undo)
       saveToQuestionHistory(input.value);
       
-      await cue.clearTranscript();
-      clearMessages();
-      // Also clear the floating interim bar
-      if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
-      // FIX #1: Use ts-list instead of non-existent transcript-list
-      const list = document.getElementById('ts-list');
-      if (list) list.innerHTML = '<div class="ts-placeholder">Conversation history will appear here when listening.</div>';
-      transcriptInterimEl = null;
-      clearTranscriptSidebar(); // clear the history sidebar too
-      hardClearSTTFill(); // clear the input box too
-      
+      const { savedId } = await cue.clearTranscript();
+      clearConversationUI();
       const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
-      showToast(`Transcript cleared · ${undoHint}`, 3500);
+      showToast(savedId ? 'Session saved · open Sessions to review it' : `Transcript cleared · ${undoHint}`, 3500);
     });
+  }
+
+  // Empties the answers, transcript sidebar and input box (main has already
+  // reset its own copy of the conversation).
+  function clearConversationUI() {
+    clearMessages();
+    // Also clear the floating interim bar
+    if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
+    const list = document.getElementById('ts-list');
+    if (list) list.innerHTML = '<div class="ts-placeholder">Conversation history will appear here when listening.</div>';
+    transcriptInterimEl = null;
+    clearTranscriptSidebar(); // clear the history sidebar too
+    hardClearSTTFill(); // clear the input box too
   }
 
   // ---- capture: mic (renderer side) — uses AudioWorklet (modern, off-main-thread) ----
@@ -1084,7 +1088,8 @@
   cue.on('vad:state', ({ channel, speaking }) => {
     setLiveDotState(speaking ? 'speaking' : 'idle');
   });
-  cue.on('llm:start', ({ id, userBubble, small, category, auto }) => {
+  cue.on('llm:start', ({ id, userBubble, small, category, auto, mode }) => {
+    if (mode === 'practiceQuestion') category = 'Practice question';
     if (aiEl) finalizeAi('Interrupted');
     currentRequestId = id;
     // Auto-answer took the interviewer's question from the input box.
@@ -1154,7 +1159,9 @@
   cue.on('transcript', ({ channel, text }) => {
     if (!text || text.trim().length < 2 || /^[?!.,;:\-…]+$/.test(text.trim())) return;
     appendTranscriptHistoryTurn(channel, text, false);
-    // Auto-fill the input box with Them (interviewer) speech
+    // Auto-fill the input box with Them (interviewer) speech. In practice the
+    // "interviewer" is cue itself, and its question is already on screen.
+    if (channel === 'them' && practiceActive) return;
     if (channel === 'them') {
       cancelSoftClear(); // Interviewer is speaking, cancel any pending clear
       autoFillInputFromSTT(text);
@@ -1885,9 +1892,209 @@
     messages.appendChild(ai);
   }
 
+  // ---- saved sessions ------------------------------------------------------
+  const sessionsScrim = $('#sessions-scrim');
+  let sessionsView = null;       // { enabled, exportDir, currentId, sessions }
+  let openSessionId = null;
+  let debriefingId = null;
+  let debriefRaw = '';
+  $('#sessions-btn .ic').innerHTML = icon('archive', { size: 15 });
+
+  function formatWhen(ms) {
+    return new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function sessionMeta(s) {
+    const minutes = Math.max(0, Math.round(((s.endedAt || s.updatedAt || s.startedAt) - s.startedAt) / 60000));
+    const parts = [formatWhen(s.startedAt), minutes + ' min', s.questionCount + (s.questionCount === 1 ? ' question' : ' questions')];
+    if (s.id === (sessionsView && sessionsView.currentId)) parts.push('in progress');
+    if (s.hasDebrief) parts.push('debriefed');
+    return parts.join(' · ');
+  }
+
+  function renderSessionsList() {
+    const v = sessionsView;
+    if (!v) return;
+    $('#sessions-enabled').checked = v.enabled;
+    $('#sessions-hint').classList.toggle('hidden', v.enabled && v.sessions.length > 0);
+    $('#sessions-export-dir').textContent = v.exportDir || 'off';
+    $('#sessions-export-dir').title = v.exportDir || '';
+    $('#sessions-clear-dir').classList.toggle('hidden', !v.exportDir);
+    const host = $('#sessions-list');
+    host.innerHTML = '';
+    if (!v.sessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sess-empty';
+      empty.textContent = $('#sessions-search').value.trim() ? 'No sessions match.'
+        : v.enabled ? 'No saved sessions yet. They appear here as you use cue.' : 'Saving is off. Turn it on above to keep your interviews.';
+      host.appendChild(empty);
+      return;
+    }
+    for (const s of v.sessions) {
+      const item = document.createElement('button');
+      item.className = 'sess-item';
+      const title = document.createElement('div');
+      title.className = 'sess-item-title';
+      title.textContent = s.title;
+      const meta = document.createElement('div');
+      meta.className = 'sess-item-meta';
+      meta.textContent = sessionMeta(s);
+      item.append(title, meta);
+      item.addEventListener('click', () => openSession(s.id));
+      host.appendChild(item);
+    }
+  }
+
+  async function refreshSessions() {
+    sessionsView = await cue.sessionsList($('#sessions-search').value);
+    renderSessionsList();
+  }
+
+  function showSessionsList() {
+    openSessionId = null;
+    $('#session-view').classList.add('hidden');
+    $('#sessions-list-view').classList.remove('hidden');
+    refreshSessions();
+  }
+
+  async function openSession(id) {
+    const session = await cue.sessionsGet(id);
+    if (!session) { showToast('That session no longer exists.', 2000); return refreshSessions(); }
+    openSessionId = id;
+    $('#sessions-list-view').classList.add('hidden');
+    $('#session-view').classList.remove('hidden');
+    $('#session-debrief').textContent = session.debrief ? 'Redo debrief' : 'Debrief';
+    $('#session-debrief').disabled = debriefingId === id;
+    $('#session-body').innerHTML = renderMarkdown(session.markdown);
+    $('#session-body').scrollTop = 0;
+  }
+
+  function openSessions() {
+    sessionsScrim.classList.remove('hidden');
+    showSessionsList();
+  }
+  function closeSessions() { sessionsScrim.classList.add('hidden'); }
+
+  $('#sessions-btn').addEventListener('click', openSessions);
+  $('#sessions-close').addEventListener('click', closeSessions);
+  sessionsScrim.addEventListener('click', (e) => { if (e.target === sessionsScrim) closeSessions(); });
+  $('#session-back').addEventListener('click', showSessionsList);
+  let searchTimer = null;
+  $('#sessions-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(refreshSessions, 200); });
+  $('#sessions-enabled').addEventListener('change', async (e) => {
+    sessionsView = await cue.sessionsSetEnabled(e.target.checked);
+    renderSessionsList();
+    showToast(e.target.checked ? 'Sessions will be saved on this computer' : 'Saving off · sessions already saved are kept', 2500);
+  });
+  $('#sessions-choose-dir').addEventListener('click', async () => { sessionsView = await cue.sessionsChooseExportDir(); renderSessionsList(); });
+  $('#sessions-clear-dir').addEventListener('click', async () => { sessionsView = await cue.sessionsClearExportDir(); renderSessionsList(); });
+  $('#sessions-open-folder').addEventListener('click', () => cue.sessionsOpenFolder());
+  $('#session-export').addEventListener('click', async () => {
+    if (!openSessionId) return;
+    try {
+      const r = await cue.sessionsExport(openSessionId);
+      if (!r.canceled) showToast('Exported to ' + r.filePath, 3000);
+    } catch (err) { showToast(err.message || String(err), 3000); }
+  });
+  $('#session-delete').addEventListener('click', async () => {
+    if (!openSessionId) return;
+    if (!confirm('Delete this session? This cannot be undone.')) return;
+    sessionsView = await cue.sessionsDelete(openSessionId);
+    showSessionsList();
+    showToast('Session deleted', 1800);
+  });
+  $('#session-debrief').addEventListener('click', async () => {
+    const id = openSessionId;
+    if (!id) return;
+    debriefingId = id;
+    debriefRaw = '';
+    $('#session-debrief').disabled = true;
+    const body = $('#session-body');
+    body.innerHTML = '<p class="md-h">Debrief</p><div id="debrief-live"><p><em>Writing the debrief…</em></p></div>';
+    body.scrollTop = 0;
+    try {
+      await cue.sessionsDebrief(id);
+      if (openSessionId === id) await openSession(id);
+    } catch (err) {
+      const message = (err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      if (openSessionId === id) { const live = $('#debrief-live'); if (live) live.innerHTML = '<p>' + esc(message) + '</p>'; }
+      else showToast(message, 3000);
+    } finally {
+      debriefingId = null;
+      if (openSessionId === id) $('#session-debrief').disabled = false;
+    }
+  });
+  cue.on('sessions:debrief-token', ({ id, text }) => {
+    if (id !== debriefingId) return;
+    debriefRaw += text;
+    const live = $('#debrief-live');
+    if (live && openSessionId === id) live.innerHTML = renderMarkdown(debriefRaw);
+  });
+  cue.on('sessions:saved', () => {
+    if (!sessionsScrim.classList.contains('hidden') && !openSessionId) refreshSessions();
+  });
+
+  // ---- practice interviews -------------------------------------------------
+  let practiceActive = false;
+  let practiceStartedListening = false;
+  function setPracticeUI(active) {
+    practiceActive = active;
+    $('#practice-row').classList.toggle('hidden', !active);
+    $('#action-row').classList.toggle('hidden', active);
+    if (!active && 'speechSynthesis' in window) speechSynthesis.cancel();
+    syncPracticeVoice();
+  }
+  function practiceVoiceOn() { return !settings || settings.practiceVoice !== false; }
+  function syncPracticeVoice() { $('#practice-voice').textContent = 'Voice: ' + (practiceVoiceOn() ? 'on' : 'off'); }
+
+  // Questions are read aloud with the operating system's own voices (free and
+  // offline). The mic is muted in main while the voice plays.
+  function speakQuestion(text) {
+    if (!practiceVoiceOn() || !('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.02;
+    utterance.onstart = () => cue.practiceSpeaking(true);
+    utterance.onend = () => cue.practiceSpeaking(false);
+    utterance.onerror = () => cue.practiceSpeaking(false);
+    speechSynthesis.speak(utterance);
+  }
+
+  $('#practice-start').addEventListener('click', async () => {
+    const r = await cue.practiceStart();
+    closeSessions();
+    clearConversationUI();
+    setPracticeUI(true);
+    // Listening is needed to hear the answers; the click still counts as the
+    // user gesture that audio capture requires.
+    practiceStartedListening = !$('#stop-btn').classList.contains('active');
+    if (practiceStartedListening) $('#stop-btn').click();
+    runMode('practiceQuestion');
+    showToast((r.savedId ? 'Previous conversation saved · ' : '') + 'Answer out loud, then Rate my answer or Next question', 4000);
+  });
+  $('#practice-next').addEventListener('click', () => { if ('speechSynthesis' in window) speechSynthesis.cancel(); runMode('practiceQuestion'); });
+  $('#practice-rate').addEventListener('click', () => { if ('speechSynthesis' in window) speechSynthesis.cancel(); runMode('practiceFeedback'); });
+  $('#practice-voice').addEventListener('click', async () => {
+    settings.practiceVoice = !practiceVoiceOn();
+    syncPracticeVoice();
+    if (!settings.practiceVoice && 'speechSynthesis' in window) speechSynthesis.cancel();
+    await cue.settingsSet({ practiceVoice: settings.practiceVoice });
+  });
+  $('#practice-end').addEventListener('click', async () => {
+    const r = await cue.practiceEnd();
+    // Leave listening as it was before practice.
+    if (practiceStartedListening && $('#stop-btn').classList.contains('active')) $('#stop-btn').click();
+    practiceStartedListening = false;
+    setPracticeUI(false);
+    clearConversationUI();
+    showToast(r.savedId ? 'Practice saved · open Sessions to debrief it' : 'Practice ended · turn on saving in Sessions to keep practice runs', 3500);
+  });
+  cue.on('practice:state', ({ active }) => { if (active !== practiceActive) setPracticeUI(active); });
+  cue.on('practice:question', ({ text }) => speakQuestion(text));
+
   // ---- global keys -------------------------------------------------------
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !scrim.classList.contains('hidden')) closeSettings();
+    else if (e.key === 'Escape' && !sessionsScrim.classList.contains('hidden')) closeSessions();
     // Escape with nothing else to close stops the answer being written.
     else if (e.key === 'Escape' && busy && !(document.activeElement === input && input.value.trim())) cue.cancelAnswer();
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
@@ -1898,7 +2105,7 @@
   function setIgnore(v) { if (v !== ignoring) { ignoring = v; cue.setIgnoreMouse(v); } }
   document.addEventListener('mousemove', (e) => {
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #onboard-scrim, #consent-scrim'));
+    const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim'));
     setIgnore(!overUI);
   });
   setIgnore(true); // start fully click-through; hovering the panel re-enables it

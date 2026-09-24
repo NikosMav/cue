@@ -263,6 +263,61 @@ const MODES = {
     build() { return SOLVE_PROMPT; }
   },
 
+  // ── Practice: cue plays the interviewer ──────────────────────────────────
+  practiceQuestion: {
+    needsScreen: false,
+    userBubble: null,
+    small: false,
+    practice: true,
+    resumeMode: 'say',
+    buildSystem(contextBlock, aiRules) {
+      return applyRules(buildSystem(
+        'You are a realistic, friendly interviewer running a mock interview for the target role in the reference material. ' +
+        BASE_RULES +
+        'Ask exactly ONE question, worded as you would say it aloud. You may open with one short, neutral acknowledgement of the previous answer. ' +
+        'No numbering, no headings, no hints, and never answer your own question. ' +
+        'Across the interview, mix behavioral, motivation, experience and technical questions that fit the job description and the candidate\'s background. ' +
+        'Do not repeat a question already asked. About one time in three, ask a natural follow-up that probes the candidate\'s last answer instead of changing topic. ' +
+        'If there is no job description, interview for the role the background suggests.',
+        contextBlock
+      ), aiRules, 'practiceQuestion');
+    },
+    build(ctx) {
+      const t = formatTranscript(ctx.transcript, 30);
+      return (t ? 'Interview so far ("Them" is you, the interviewer; "You" is the candidate):\n' + t + '\n\n' : 'The interview is starting.\n\n') +
+        'Ask the next question.';
+    }
+  },
+
+  practiceFeedback: {
+    needsScreen: false,
+    userBubble: 'Rate my answer',
+    small: false,
+    practice: true,
+    resumeMode: 'say',
+    buildSystem(contextBlock, aiRules) {
+      return applyRules(buildSystem(
+        'You are an interview coach giving quick, honest feedback on one practice answer. ' +
+        BASE_RULES +
+        'Judge the answer as the interviewer would: did it answer the question, was it specific, structured and concise, and did it show impact? ' +
+        'Reply in Markdown with exactly three short parts: **What worked** (one or two bullets), **What to tighten** (one or two concrete bullets), ' +
+        'and **A stronger answer** (a spoken answer of about 60–90 words the candidate could give, using only facts from their answer and the reference material). ' +
+        'The answer comes from speech-to-text, so ignore filler words and transcription errors. ' +
+        'If the candidate\'s answer is missing or only a few words, say so in one sentence and give only the stronger answer.',
+        contextBlock
+      ), aiRules, 'practiceFeedback');
+    },
+    build(ctx) {
+      const turns = ctx.transcript || [];
+      let q = turns.length - 1;
+      while (q >= 0 && turns[q].channel !== 'them') q--;
+      const question = q >= 0 ? turns[q].text : '';
+      const answer = turns.slice(q + 1).filter(t => t.channel === 'you').map(t => t.text.trim()).join(' ');
+      return 'Question: ' + JSON.stringify(question || '(no question asked yet)') + '\n\n' +
+        'Candidate\'s answer (speech-to-text): ' + JSON.stringify(answer || '(nothing was captured)');
+    }
+  },
+
   // ── Coding follow-up: continue the thread of the last coding answer ──────
   // Chosen automatically for a typed question right after a coding answer
   // ("optimize it", "what if the input is sorted?", "explain line 4").
@@ -320,7 +375,7 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
   const userTurn = { role: 'user', text: def.build({ transcript: turns, userText, question, answers }) };
   const request = {
     mode,
-    category: def.coding ? null : detectCategory(target),
+    category: def.coding || def.practice ? null : detectCategory(target),
     needsScreen: def.needsScreen && (def.coding || settings.includeScreen !== false),
     system,
     // The reference block opens the system prompt and does not depend on the
@@ -332,4 +387,56 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
   return request;
 }
 
-module.exports = { MODES, formatTranscript, buildPromptRequest, resolveMode };
+// Keep the start and the end of a very long transcript: the opening sets the
+// context and the end holds the latest answers.
+const DEBRIEF_MAX_TRANSCRIPT_CHARS = 60000;
+
+function sessionTranscriptText(session) {
+  const lines = [];
+  const events = [
+    ...(session.transcript || []).map(t => ({ ts: t.ts, line: (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text.trim() })),
+    ...(session.answers || []).filter(a => SPOKEN_MODES.has(a.mode))
+      .map(a => ({ ts: a.ts, line: '[cue suggested: ' + JSON.stringify(a.text.trim().slice(0, 400)) + ']' }))
+  ].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const e of events) lines.push(e.line);
+  let text = lines.join('\n');
+  if (text.length > DEBRIEF_MAX_TRANSCRIPT_CHARS) {
+    const half = DEBRIEF_MAX_TRANSCRIPT_CHARS / 2;
+    text = text.slice(0, half) + '\n[… middle of the interview omitted for length …]\n' + text.slice(-half);
+  }
+  return text;
+}
+
+/**
+ * A post-interview review of a saved session, grounded in what was actually
+ * said and in the candidate's reference material.
+ */
+function buildDebriefRequest(settings, session) {
+  const context = buildInterviewContext(settings, 'say');
+  const practice = session.kind === 'practice';
+  const heardCandidate = (session.transcript || []).some(t => t.channel === 'you');
+  const system = buildSystem(
+    'You are an experienced interview coach writing a debrief of ' + (practice ? 'a practice interview' : 'a job interview') + ' for the candidate. ' +
+    BASE_RULES +
+    '"Them" is the interviewer and "You" is the candidate, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
+    'Lines marked [cue suggested] are suggestions the candidate saw on screen, not things they said. ' +
+    'Write Markdown with these sections, in order: ' +
+    '## Summary (two or three sentences: the role, the main topics, overall impression). ' +
+    '## Questions asked (a numbered list: each question, then one line on how the candidate answered). ' +
+    '## What went well (two to four specific bullets). ' +
+    '## What to improve (two to four specific bullets tied to questions; for the one or two weakest answers, give a stronger spoken version using only facts from the transcript or the reference material). ' +
+    '## Follow-up (points for a thank-you note, and anything promised or worth researching). ' +
+    '## Add to your prep notes (questions the reference material could not answer well, phrased as notes to add; write "Nothing missing" if none). ' +
+    'Never invent what anyone said. ' +
+    (heardCandidate ? '' : 'The candidate\'s microphone was not captured: say so under Summary, list the questions, and review cue\'s suggestions instead of the candidate\'s answers. '),
+    context
+  );
+  return {
+    system,
+    cachePrefix: context && system.startsWith(context) ? context : '',
+    maxTokens: 2500,
+    turns: [{ role: 'user', text: 'Interview transcript:\n' + (sessionTranscriptText(session) || '(empty)') + '\n\nWrite the debrief.' }]
+  };
+}
+
+module.exports = { MODES, formatTranscript, buildPromptRequest, resolveMode, buildDebriefRequest };

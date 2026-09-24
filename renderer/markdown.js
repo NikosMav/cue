@@ -21,7 +21,8 @@
 
   function renderMarkdown(text) {
     const lines = text.split('\n');
-    let html = '', inCode = false, list = null, buf = [];
+    let html = '', inCode = false, inQuote = false, list = null, buf = [];
+    const closeQuote = () => { if (inQuote) { html += '</blockquote>'; inQuote = false; } };
     const flushP = () => { if (buf.length) { html += '<p>' + inlineMarkdown(buf.join(' ')) + '</p>'; buf = []; } };
     const closeList = () => { if (list) { html += '</' + list + '>'; list = null; } };
     const openList = (type) => { if (list !== type) { closeList(); html += '<' + type + '>'; list = type; } };
@@ -29,7 +30,7 @@
       const fence = /^\s*```\s*([\w+#.-]*)/.exec(line);
       if (fence) {
         if (!inCode) {
-          flushP(); closeList();
+          flushP(); closeList(); closeQuote();
           const lang = fence[1] ? '<span class="code-lang">' + esc(fence[1]) + '</span>' : '<span class="code-lang"></span>';
           html += '<div class="code-block"><div class="code-head">' + lang + '<button class="copy-code" type="button">Copy</button></div><pre><code>';
           inCode = true;
@@ -39,6 +40,14 @@
       if (inCode) { html += esc(line) + '\n'; continue; }
       const heading = /^\s{0,3}#{1,6}\s+(.*)$/.exec(line);
       if (heading) { flushP(); closeList(); html += '<p class="md-h">' + inlineMarkdown(heading[1]) + '</p>'; continue; }
+      const quoted = /^\s*>\s?(.*)$/.exec(line);
+      if (quoted) {
+        // Consecutive quoted lines form one block.
+        if (!inQuote) { flushP(); closeList(); html += '<blockquote>'; inQuote = true; } else html += '<br>';
+        html += inlineMarkdown(quoted[1]);
+        continue;
+      }
+      closeQuote();
       const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
       if (bullet) { flushP(); openList('ul'); html += '<li>' + inlineMarkdown(bullet[1]) + '</li>'; continue; }
       const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
@@ -47,7 +56,7 @@
       closeList();
       buf.push(line.trim());
     }
-    flushP(); closeList(); if (inCode) html += '</code></pre></div>';
+    flushP(); closeList(); closeQuote(); if (inCode) html += '</code></pre></div>';
     return html;
   }
 

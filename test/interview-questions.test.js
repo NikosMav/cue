@@ -174,3 +174,58 @@ test('without a preceding coding answer, a typed question stays a normal questio
 test('the coding solver knows several screenshots are parts of one problem', () => {
   assert.match(buildPromptRequest({}, 'leetcode', []).system, /several screenshots.*same problem/);
 });
+
+// ── Practice and debrief ─────────────────────────────────────────────────────
+const { buildDebriefRequest } = require('../src/prompts');
+
+test('practice questions come from the target role and avoid repeats', () => {
+  const t = [at('them', 'Why do you want this role?', 1000), at('you', 'Because of payments.', 5000)];
+  const request = buildPromptRequest(profile, 'practiceQuestion', t);
+  assert.equal(request.category, null);
+  assert.equal(request.needsScreen, false);
+  assert.match(request.system, /Ask exactly ONE question/);
+  assert.match(request.system, /Backend role on the payments team/);
+  assert.match(request.turns[0].text, /Why do you want this role\?/);
+});
+
+test('practice feedback rates the answer given after the latest question', () => {
+  const t = [
+    at('them', 'First question?', 1000), at('you', 'Old answer.', 2000),
+    at('them', 'Tell me about a conflict.', 3000), at('you', 'I disagreed with a PM', 4000), at('you', 'and we agreed on a pilot.', 5000)
+  ];
+  const { turns, system } = buildPromptRequest(profile, 'practiceFeedback', t);
+  assert.match(turns[0].text, /Question: "Tell me about a conflict\."/);
+  assert.match(turns[0].text, /"I disagreed with a PM and we agreed on a pilot\."/);
+  assert.doesNotMatch(turns[0].text, /Old answer/);
+  assert.match(system, /What worked.*What to tighten.*A stronger answer/);
+  assert.match(buildPromptRequest({}, 'practiceFeedback', [at('them', 'Q?', 1)]).turns[0].text, /nothing was captured/);
+});
+
+test('the debrief is grounded in the transcript and the prep notes', () => {
+  const session = {
+    kind: 'interview',
+    transcript: [at('them', 'Why us?', 1000), at('you', 'The payments work.', 3000)],
+    answers: [{ mode: 'answerThis', prompt: 'Why us?', text: 'Say: payments at scale.', ts: 2000 },
+      { mode: 'leetcode', prompt: '', text: 'def solve(): pass', ts: 2500 }]
+  };
+  const request = buildDebriefRequest(profile, session);
+  assert.match(request.system, /## Questions asked/);
+  assert.match(request.system, /## Add to your prep notes/);
+  assert.match(request.system, /Backend role on the payments team/);
+  assert.ok(request.cachePrefix && request.system.startsWith(request.cachePrefix));
+  const text = request.turns[0].text;
+  assert.ok(text.indexOf('Them: Why us?') < text.indexOf('[cue suggested') && text.indexOf('[cue suggested') < text.indexOf('You: The payments'));
+  assert.doesNotMatch(text, /def solve/);
+  assert.doesNotMatch(request.system, /microphone was not captured/);
+  const noMic = buildDebriefRequest({}, { kind: 'interview', transcript: [at('them', 'Q?', 1)], answers: [] });
+  assert.match(noMic.system, /microphone was not captured/);
+});
+
+test('a very long transcript keeps its beginning and end', () => {
+  const transcript = Array.from({ length: 3000 }, (_, i) => at(i % 2 ? 'you' : 'them', `line ${i} ` + 'x'.repeat(40), i));
+  const text = buildDebriefRequest({}, { kind: 'interview', transcript, answers: [] }).turns[0].text;
+  assert.match(text, /line 0 /);
+  assert.match(text, /line 2999 /);
+  assert.match(text, /middle of the interview omitted/);
+  assert.ok(text.length < 62000);
+});

@@ -52,7 +52,7 @@ html, body {
   padding-top: 14px;
   pointer-events: none;                  /* only the actual UI blocks; gaps pass through */
 }
-#toolbar, #panel-wrap, #settings-scrim, #onboard-scrim, #consent-scrim { pointer-events: auto; }
+#toolbar, #panel-wrap, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim { pointer-events: auto; }
 #toolbar { -webkit-app-region: drag; }   /* drag the top pill to move the window */
 #panel-wrap, #panel, #messages, #action-row, #composer, #input, textarea, button, .act, .smart-pill, .more-btn, #send-btn, .s-close, .s-seg button, .ob-buttons button, .ob-ghost, .ob-primary { -webkit-app-region: no-drag; }
 
@@ -485,6 +485,7 @@ button:focus { outline: none; }
   background: rgba(0,0,0,0.35); backdrop-filter: blur(4px);
 }
 #settings-scrim.hidden { display: none; }
+#sessions-scrim.hidden { display: none; }
 #settings { width: min(480px, 94vw); padding: 18px 20px 20px; -webkit-app-region: no-drag; max-height: 88vh; display: flex; flex-direction: column; }
 .s-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-shrink: 0; }
 .s-title { font-size: 17px; font-weight: 600; color: var(--tx-1); }
@@ -607,6 +608,40 @@ button:focus { outline: none; }
 }
 .s-hint-block em { color: var(--tx-2); font-style: normal; font-weight: 600; }
 
+
+/* Sessions */
+#sessions-scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,0.35); }
+#sessions { width: min(560px, 95vw); padding: 18px 20px 20px; -webkit-app-region: no-drag; height: 86vh; display: flex; flex-direction: column; }
+.sess-pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
+.sess-pane.hidden { display: none; }
+.sess-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sess-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--tx-2); font-size: 13px; font-weight: 600; cursor: pointer; }
+.sess-export { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--tx-mut); }
+.sess-export em { color: var(--tx-2); font-style: normal; }
+.sess-export-actions { display: inline-flex; gap: 6px; }
+.s-action.primary { border-color: transparent; background: var(--accent); color: #fff; }
+.s-action.primary:hover:not(:disabled) { background: #5094ff; }
+.sess-search { padding: 8px 10px; border-radius: var(--r-8); border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25); color: var(--tx-1, #fff); font: 13px var(--font); outline: none; }
+.sess-search:focus { border-color: var(--accent); }
+.sess-list { overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.sess-item { text-align: left; padding: 9px 11px; border-radius: var(--r-8); border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: var(--tx-2); cursor: pointer; font-family: var(--font); }
+.sess-item:hover { background: rgba(255,255,255,0.07); }
+.sess-item-title { font-size: 13px; font-weight: 600; color: var(--tx-1, #fff); }
+.sess-item-meta { font-size: 11.5px; color: var(--tx-mut); margin-top: 2px; }
+.sess-empty { color: var(--tx-mut); font-size: 12.5px; padding: 16px 4px; text-align: center; }
+.sess-view-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sess-view-actions { display: inline-flex; gap: 6px; }
+.sess-body { overflow-y: auto; flex: 1; min-height: 0; padding-right: 4px; }
+.ai-text blockquote { margin: 4px 0 10px; padding: 6px 10px; border-left: 3px solid rgba(60,131,245,0.5); background: rgba(60,131,245,0.06); border-radius: 0 6px 6px 0; color: var(--tx-2); }
+/* Practice controls replace the action row while practising */
+#practice-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; white-space: nowrap; }
+#practice-row .act-primary { font-size: 13.5px; padding: 5px 10px; }
+#practice-row .act { font-size: 13px; padding: 5px 7px; }
+.sess-body::-webkit-scrollbar, .sess-list::-webkit-scrollbar { width: 8px; }
+.sess-body::-webkit-scrollbar-thumb, .sess-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+.sess-body::-webkit-scrollbar-track, .sess-list::-webkit-scrollbar-track { background: transparent; }
+#practice-row.hidden, #action-row.hidden { display: none; }
+.practice-badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #86efac; padding: 3px 7px; border-radius: 6px; background: rgba(34,197,94,0.12); margin-right: 4px; }
 
 /* Shortcuts tab */
 .shortcut-list { display: flex; flex-direction: column; gap: 4px; }
