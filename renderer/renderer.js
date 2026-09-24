@@ -2220,14 +2220,33 @@
   });
 
   // ---- click-through: only the UI blocks the mouse; empty gaps pass to your screen ----
-  let ignoring = null;
-  function setIgnore(v) { if (v !== ignoring) { ignoring = v; cue.setIgnoreMouse(v); } }
-  document.addEventListener('mousemove', (e) => {
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const overUI = !!(el && el.closest && el.closest('#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim'));
-    setIgnore(!overUI);
-  });
-  setIgnore(true); // start fully click-through; hovering the panel re-enables it
+  // The renderer reports where its UI is and the main process compares the
+  // cursor with it (src/click-through.js). Deciding here from mousemove
+  // failed: Windows forwards those unreliably while the window is
+  // click-through, and never over the drag handle, so a direct grab of Drag
+  // went to the app behind.
+  const UI_SELECTORS = '#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim';
+  let lastUiRects = '';
+  let uiRectsFrame = null;
+  function reportUiRects() {
+    uiRectsFrame = null;
+    const rects = [...document.querySelectorAll(UI_SELECTORS)]
+      .filter((el) => el.getClientRects().length) // hidden (display: none) parts are skipped
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: Math.floor(r.left), y: Math.floor(r.top), width: Math.ceil(r.width), height: Math.ceil(r.height) };
+      })
+      .filter((r) => r.width > 0 && r.height > 0);
+    const key = JSON.stringify(rects);
+    if (key !== lastUiRects) { lastUiRects = key; cue.setUiRects(rects); }
+  }
+  function scheduleUiRects() { if (!uiRectsFrame) uiRectsFrame = requestAnimationFrame(reportUiRects); }
+  new MutationObserver(scheduleUiRects).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
+  const uiResize = new ResizeObserver(scheduleUiRects);
+  document.querySelectorAll(UI_SELECTORS).forEach((el) => uiResize.observe(el));
+  document.addEventListener('transitionend', scheduleUiRects); // e.g. the panel sliding for the history sidebar
+  window.addEventListener('resize', scheduleUiRects);
+  scheduleUiRects();
 
   // ---- assistant access request ------------------------------------------
   // Shown here rather than as a native dialog because cue hides its dock icon:
@@ -2253,7 +2272,7 @@
     consentScrim.classList.remove('hidden');
     // Do not wait for a mousemove to turn the mouse back on: the pointer may
     // already be still, and the sheet would be unclickable until it moved.
-    setIgnore(false);
+    scheduleUiRects();
     $('#cs-deny').focus();
   });
 
@@ -2372,7 +2391,7 @@
     obDialog = true;
     $('#onboard').classList.add('dialog');
     obIndex = idx; renderOnboard();
-    obScrim.classList.remove('hidden'); setIgnore(false);
+    obScrim.classList.remove('hidden'); scheduleUiRects();
   }
   // Show the card: inside onboarding it becomes the next step; afterwards it
   // is a dialog of its own (also reached from the "never a silent starter"
@@ -2392,7 +2411,7 @@
     obDialog = true;
     $('#onboard').classList.add('dialog');
     obIndex = OB_STEPS.length - 1; renderOnboard();
-    obScrim.classList.remove('hidden'); setIgnore(false);
+    obScrim.classList.remove('hidden'); scheduleUiRects();
   }
   function hideOnboardDialog() { obDialog = false; $('#onboard').classList.remove('dialog'); obScrim.classList.add('hidden'); }
 
@@ -2415,7 +2434,7 @@
     $('#ob-next').textContent = obIndex === OB_STEPS.length - 1 ? 'Done' : 'Next';
     $('#ob-skip').style.visibility = obIndex === OB_STEPS.length - 1 ? 'hidden' : 'visible';
   }
-  function showOnboard() { obDialog = false; $('#onboard').classList.remove('dialog'); obIndex = 0; renderOnboard(); obScrim.classList.remove('hidden'); setIgnore(false); }
+  function showOnboard() { obDialog = false; $('#onboard').classList.remove('dialog'); obIndex = 0; renderOnboard(); obScrim.classList.remove('hidden'); scheduleUiRects(); }
   async function finishOnboard() {
     if (obDialog) { hideOnboardDialog(); return; }
     obScrim.classList.add('hidden');

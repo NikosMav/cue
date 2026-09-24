@@ -110,6 +110,17 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
 - Source startup clears `ELECTRON_RUN_AS_NODE` in its child environment. Installation
   no longer automatically renames Electron or claims Microsoft identity.
 - Fixed the ignore pattern for `cue-data.json` and contradictory macOS audio docs.
+- Dragging works on the first grab. Click-through (transparent areas pass the
+  mouse to the app behind) used to be switched in the renderer from mousemove
+  events Windows forwards while the window ignores the mouse; they arrive
+  unreliably and never over the `-webkit-app-region: drag` toolbar, so a direct
+  grab of Drag went to the app behind. The renderer now reports its UI
+  rectangles and the main process polls the cursor against them
+  (`src/click-through.js`). A position saved on a secondary monitor is restored
+  there instead of being clamped to the primary display, the window is re-sized
+  after creation on a monitor with another scale factor (it came out 1.5x too
+  large), and it returns to its exact size after being dragged between monitors
+  with different scaling (it briefly shrank to 467x401 entering a 150% screen).
 - Screen-share hiding decides from the Windows session of the cue process
   (`tasklist`), not only the inherited `SESSIONNAME`, which launchers can drop or
   leave stale after a Remote Desktop reconnect.

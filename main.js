@@ -15,6 +15,7 @@ const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isVali
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
+const { createClickThrough, placeOnDisplay } = require('./src/click-through');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
@@ -41,6 +42,7 @@ const { locateWhisperRuntime } = require('./src/whisper-runtime');
 const { LocalWhisperTranscriber } = require('./src/local-whisper-transcriber');
 
 let win = null;
+let clickThrough = null; // decides where the overlay takes the mouse (src/click-through.js)
 app.on('second-instance', () => {
   if (win && !win.isDestroyed()) { win.show(); win.focus(); }
 });
@@ -269,11 +271,12 @@ function createWindow() {
   let startX = Math.round(workArea.x + (workArea.width - W) / 2);
   let startY = workArea.y + 6;
 
-  if (savedSettings.windowX !== null && savedSettings.windowY !== null) {
-    const clampedX = Math.max(workArea.x - W + 100, Math.min(savedSettings.windowX, workArea.x + workArea.width - 100));
-    const clampedY = Math.max(workArea.y, Math.min(savedSettings.windowY, workArea.y + workArea.height - 40));
-    startX = clampedX;
-    startY = clampedY;
+  // Restore onto the monitor the position was saved on (or the nearest one if
+  // it is gone), not clamped to the primary display.
+  if (Number.isFinite(savedSettings.windowX) && Number.isFinite(savedSettings.windowY)) {
+    const placed = placeOnDisplay({ x: savedSettings.windowX, y: savedSettings.windowY }, { width: W, height: H }, screen.getAllDisplays());
+    startX = placed.x;
+    startY = placed.y;
   }
 
   const winOptions = {
@@ -304,6 +307,10 @@ function createWindow() {
   }
 
   win = new BrowserWindow(winOptions);
+  // Created on a monitor whose scale differs from the primary's, the window
+  // comes out scaled a second time (1052x900 instead of 700x600 on a 150%
+  // laptop next to a 100% monitor). Applying the bounds once more fixes it.
+  win.setBounds({ x: startX, y: startY, width: W, height: H });
 
   // Fix 2: Only call setContentProtection if the OS supports it, and only on
   // a session where it will not blank the window out for the user themself
@@ -330,6 +337,26 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   let moveSaveTimer = null;
+  // Click-through follows the cursor, polled here rather than inferred from
+  // mouse events Windows forwards unreliably (see src/click-through.js).
+  if (clickThrough) clickThrough.stop();
+  clickThrough = createClickThrough({
+    getCursor: () => screen.getCursorScreenPoint(),
+    getBounds: () => win.getBounds(),
+    isActive: () => !!win && !win.isDestroyed() && win.isVisible() && process.env.CUE_VISIBLE_TEST !== '1',
+    setIgnore: (ignore) => win.setIgnoreMouseEvents(ignore, { forward: true })
+  });
+  win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST !== '1', { forward: true });
+  clickThrough.start();
+  win.on('closed', () => { if (clickThrough) clickThrough.stop(); });
+
+  // Dragging onto a monitor with a different scale factor briefly resizes the
+  // window (to 467x401 when entering a 150% screen) and can leave it a pixel
+  // off. The overlay has one size: restore it once the move ends.
+  win.on('moved', () => {
+    const b = win.getBounds();
+    if (b.width !== W || b.height !== H) win.setBounds({ x: b.x, y: b.y, width: W, height: H });
+  });
   win.on('moved', () => {
     clearTimeout(moveSaveTimer);
     moveSaveTimer = setTimeout(() => {
@@ -1161,7 +1188,13 @@ ipcMain.on('llm:cancel', () => { cancelActiveRequest('stopped'); });
 ipcMain.on('screenshot:queue', () => { queueScreenshot(); });
 ipcMain.on('mic:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('you', arrayBuffer); });
 ipcMain.on('system:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('them', arrayBuffer); });
-ipcMain.on('mouse:ignore', (_e, v) => { if (win) win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST === '1' ? false : !!v, { forward: true }); });
+// The renderer reports where its UI is; the main process decides click-through
+// from the cursor position (src/click-through.js).
+ipcMain.on('mouse:rects', (_e, rects) => {
+  if (!clickThrough || !Array.isArray(rects)) return;
+  const valid = rects.slice(0, 20).filter((r) => r && [r.x, r.y, r.width, r.height].every(Number.isFinite));
+  clickThrough.setRects(valid);
+});
 ipcMain.on('open-pane', (_e, url) => { shell.openExternal(url).catch(() => {}); });
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.on('log', (_e, msg) => console.log('[renderer]', msg));
