@@ -27,6 +27,28 @@ function loadStore(fileContents) {
 const AVAILABLE = { available: true, appToken: 'pat_cue_x', disclosureVersion: 1 };
 const UNAVAILABLE = { available: false, appToken: '', disclosureVersion: 1 };
 
+test('old settings default to brief answers; style and screen preferences survive reload', () => {
+  const { store, read } = loadStore({ provider: 'openai' });
+  assert.equal(store.getSettings().answerLength, 'brief');
+  assert.equal(store.getSettings().includeScreen, true);
+  store.setSettings({ answerLength: 'detailed', includeScreen: false });
+  const reloaded = loadStore(read()).store.getSettings();
+  assert.equal(reloaded.answerLength, 'detailed');
+  assert.equal(reloaded.includeScreen, false);
+});
+
+test('full interview KB persists across reloads and can be cleared without changing credentials', () => {
+  const fixture = loadStore({ apiKeys: { openai: 'test-only-key' } });
+  const knowledgeBase = 'Reference notes\n'.repeat(1600) + 'Final unknown detail: [X].';
+  fixture.store.setSettings({ knowledgeBase });
+  assert.equal(fixture.read().knowledgeBase, knowledgeBase);
+  const reloaded = loadStore(fixture.read());
+  assert.equal(reloaded.store.getSettings().knowledgeBase, knowledgeBase);
+  reloaded.store.setSettings({ knowledgeBase: '' });
+  assert.equal(reloaded.read().knowledgeBase, '');
+  assert.equal(reloaded.read().apiKeys.openai, 'test-only-key');
+});
+
 test('never overwrites a user key: an OpenAI user stays on OpenAI, file otherwise unchanged', () => {
   const fixture = { provider: 'openai', apiKeys: { openai: 'sk-proj-user-typed-this' }, models: { openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' } }, onboarded: true, aiRules: 'no em-dashes' };
   const { store, read } = loadStore(fixture);

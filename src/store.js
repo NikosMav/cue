@@ -54,6 +54,7 @@ const DEFAULTS = {
   // Tab 2: Profile
   resumeText: '',
   jobDescription: '',
+  knowledgeBase: '',     // Full interview reference; never clipped like resume sections.
   // Tab 3: Interview Prep
   starStories: '',       // 3-5 behavioral STAR stories in plain English
   whyCompany: '',        // Why do you want to work here?
@@ -67,6 +68,8 @@ const DEFAULTS = {
   // points", "casual tone". Applied to every LLM mode EXCEPT LeetCode (kept
   // strict for coding problems).
   aiRules: '',
+  answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
+  includeScreen: true,  // Assist/Ask can run with conversation only.
   // Window position
   windowX: null,
   windowY: null,

@@ -73,6 +73,7 @@
               <span class="prep-item" data-field="jd">💼 JD</span>
               <span class="prep-item" data-field="stories">🎯 Stories</span>
               <span class="prep-item" data-field="salary">💰 Salary</span>
+              <span class="prep-item" data-field="kb">📚 KB</span>
             </div>
           </div>
 
@@ -254,6 +255,10 @@
         <label class="s-label">Target job description <span class="s-hint">optional — every answer gets tailored to this role</span></label>
         <div class="s-field s-upload"><span class="s-filename" id="jd-filename"></span><button class="s-upload-btn" id="upload-jd-btn">Import PDF/DOCX</button></div>
         <textarea id="job-description" rows="5" spellcheck="false" placeholder="Paste the job description for the role you're interviewing for. cue will highlight your most relevant experience."></textarea>
+
+        <label class="s-label" for="knowledge-base">Interview knowledge base <span class="s-hint">full prep pack and reference notes</span></label>
+        <textarea id="knowledge-base" rows="10" spellcheck="false" placeholder="Paste your interview prep pack here. Keep unknown details clearly marked; cue will not fill them in."></textarea>
+        <div class="s-hint-block">Saved locally. The complete text is sent to your selected AI provider with each interview answer, follow-up or recap. It remains available across restarts. Coding-only solves exclude it. Longer notes use more tokens and may slow responses.</div>
       </div>
 
       <!-- Tab: Interview Prep -->
@@ -282,6 +287,19 @@
 
       <!-- Tab: Style -->
       <div class="s-body s-tab-pane hidden" data-pane="style">
+        <label class="s-label" for="answer-length">Answer length</label>
+        <select id="answer-length" class="s-select">
+          <option value="brief">Brief — 2–3 sentences</option>
+          <option value="balanced">Balanced — 3–5 sentences</option>
+          <option value="detailed">Detailed — fuller explanation</option>
+        </select>
+        <div class="s-hint-block">For spoken answers, start with the point, add one relevant detail, then stop. Explicit requests for more detail and coding solutions can be longer. Your AI rules can override this style.</div>
+        <label class="s-label" for="include-screen">Screen context for Assist and Ask</label>
+        <select id="include-screen" class="s-select">
+          <option value="yes">Include a screenshot</option>
+          <option value="no">Conversation only — skip screen capture</option>
+        </select>
+        <div class="s-hint-block">Conversation only avoids capturing and sending a screenshot. Solve what's on screen always uses the screen.</div>
         <label class="s-label">AI rules <span class="s-hint">how the AI should write its responses</span></label>
         <textarea id="ai-rules" rows="10" spellcheck="false" maxlength="2000" placeholder="e.g.
 - Never use em-dashes.

@@ -6,11 +6,11 @@ const { captureScreenshot } = require('./src/screen');
 const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
-const { MODES } = require('./src/prompts');
+const { MODES, buildPromptRequest } = require('./src/prompts');
+const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { rms16 } = require('./src/wav');
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { AdaptiveVAD, AudioRingBuffer } = require('./src/vad');
-const { buildInterviewContext, detectCategory } = require('./src/interview-context');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
@@ -239,7 +239,7 @@ function createWindow() {
     transparent: true,
     hasShadow: false,
     resizable: true,
-    skipTaskbar: true,
+    skipTaskbar: process.env.CUE_VISIBLE_TEST !== '1',
     alwaysOnTop: true,
     fullscreenable: false,
     webPreferences: {
@@ -253,7 +253,7 @@ function createWindow() {
   // Fix 1: On Windows, set type:'toolbar' which sets WS_EX_TOOLWINDOW.
   // This removes the window from Alt+Tab AND the taskbar entirely.
   // On macOS, this is not needed (dock hiding + Mission Control handle it).
-  if (isWindows) {
+  if (isWindows && process.env.CUE_VISIBLE_TEST !== '1') {
     winOptions.type = 'toolbar';
   }
 
@@ -294,11 +294,11 @@ function createWindow() {
     }, 500);
   });
 
-  win.setTitle('Microsoft Edge Update'); // set before load
+  win.setTitle('Cue'); // set before load
 
   win.webContents.on('did-finish-load', () => {
     win.showInactive();
-    win.setTitle('Microsoft Edge Update');
+    win.setTitle('Cue');
     // Warn about missing content protection on old Windows builds
     if (isWindows && shouldProtect && !WIN_SUPPORTS_CONTENT_PROTECTION) {
       send('status', {
@@ -536,14 +536,14 @@ async function runFeature(mode, userText) {
   const def = MODES[mode];
   if (!def) return;
   state.busy = true;
-  let streamSettled = false; // drop stray tokens from a stream we've already abandoned
   try {
     const settings = store.getSettings();
     const llm = createLLM(settings);
     const userBubble = def.userBubble !== null
       ? def.userBubble
       : (mode === 'ask' ? userText : mode === 'answerThis' ? `"${(userText || '').slice(0, 60)}${userText && userText.length > 60 ? '…' : ''}"` : null);
-    const category = mode !== 'leetcode' ? detectCategory(transcript) : null;
+    const request = buildPromptRequest(settings, mode, transcript, userText || '');
+    const category = request.category;
     send('llm:start', { userBubble, small: !!def.small, category });
 
     if (!llm.ready) {
@@ -572,7 +572,7 @@ async function runFeature(mode, userText) {
     }
 
     let imageDataUrl = null;
-    if (def.needsScreen) {
+    if (request.needsScreen) {
       try {
         imageDataUrl = await captureScreenshot();
         if (!imageDataUrl) throw new Error('No screen source was available.');
@@ -588,37 +588,13 @@ async function runFeature(mode, userText) {
       }
     }
 
-    const settingsForPrompt = store.getSettings();
-    const contextBlock = buildInterviewContext(settingsForPrompt, mode, transcript);
-    const system = def.buildSystem ? def.buildSystem(contextBlock, settingsForPrompt.aiRules || '') : (def.system || '');
-    const built = def.build({ transcript, userText: userText || '' });
-
-    // Watchdog: a provider that stalls mid-stream would otherwise hang the await forever,
-    // leaving state.busy = true and wedging every later question until an app restart.
-    let watchdog = null;
-    let rearm = () => {};
-    const stalled = new Promise((_res, reject) => {
-      rearm = () => {
-        clearTimeout(watchdog);
-        watchdog = setTimeout(() => reject(new Error('the model stopped responding (timed out). Please try again.')), STREAM_INACTIVITY_MS);
-      };
-      rearm();
-    });
-    try {
-      await Promise.race([
-        llm.stream({
-          system,
-          turns: [{ role: 'user', text: built }],
-          imageDataUrl,
-          onToken: (t) => { if (streamSettled) return; rearm(); send('llm:token', { text: t }); },
-          onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
-        }),
-        stalled
-      ]);
-    } finally {
-      streamSettled = true;
-      clearTimeout(watchdog);
-    }
+    await streamWithWatchdog(params => llm.stream(params), {
+      system: request.system,
+      turns: request.turns,
+      imageDataUrl,
+      onToken: t => send('llm:token', { text: t }),
+      onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
+    }, STREAM_INACTIVITY_MS);
     send('llm:done', {});
     // Streams settle after their headers, so the charge is reconciled from
     // GET /wallet shortly after the answer — one request per answer, debounced.
@@ -629,7 +605,6 @@ async function runFeature(mode, userText) {
     send('llm:error', { message: e && e.message ? e.message : String(e), action });
     if (action) publikHandleErrorAction(action);
   } finally {
-    streamSettled = true;
     state.busy = false;
   }
 }
@@ -871,7 +846,7 @@ ipcMain.handle('transcript:clear', () => {
 ipcMain.on('ask', (_e, payload) => runFeature(payload.mode, payload.text));
 ipcMain.on('mic:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('you', arrayBuffer); });
 ipcMain.on('system:pcm', (_e, arrayBuffer) => { if (state.capturing) routeAudio('them', arrayBuffer); });
-ipcMain.on('mouse:ignore', (_e, v) => { if (win) win.setIgnoreMouseEvents(!!v, { forward: true }); });
+ipcMain.on('mouse:ignore', (_e, v) => { if (win) win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST === '1' ? false : !!v, { forward: true }); });
 ipcMain.on('open-pane', (_e, url) => { shell.openExternal(url).catch(() => {}); });
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.on('log', (_e, msg) => console.log('[renderer]', msg));
@@ -1104,9 +1079,9 @@ function launchApp() {
 
 // -------- lifecycle --------
 app.whenReady().then(async () => {
-  app.setName('MicrosoftEdgeUpdate');
+  app.setName('cue');
   if (isWindows) {
-    process.title = 'MicrosoftEdgeUpdate';
+    process.title = 'cue';
   }
 
   if (isMac) {

@@ -121,5 +121,5 @@ test('buildInterviewContext: returns null with no settings data', () => {
 test('buildInterviewContext: JD tailor note included when JD is set', () => {
   const ctx = buildInterviewContext(fullSettings, 'say', []);
   assert.ok(ctx !== null);
-  assert.ok(ctx.includes('Tailor'), 'should include tailor note when JD is set');
+  assert.match(ctx, /Use the target role only when relevant/);
 });

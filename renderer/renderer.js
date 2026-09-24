@@ -1190,7 +1190,8 @@
       resume:  !!(settings.resumeText && settings.resumeText.trim()),
       jd:      !!(settings.jobDescription && settings.jobDescription.trim()),
       stories: !!(settings.starStories && settings.starStories.trim()),
-      salary:  !!(settings.salaryTarget && settings.salaryTarget.trim())
+      salary:  !!(settings.salaryTarget && settings.salaryTarget.trim()),
+      kb:      !!(settings.knowledgeBase && settings.knowledgeBase.trim())
     };
     document.querySelectorAll('#prep-status .prep-item').forEach((el) => {
       const loaded = fields[el.dataset.field];
@@ -1242,7 +1243,6 @@
 
   // ---- settings ----------------------------------------------------------
   const scrim = $('#settings-scrim');
-  function openSettings() { fillSettings(); scrim.classList.remove('hidden'); }
   async function closeSettings() {
     if (await saveSettings()) scrim.classList.add('hidden');
   }
@@ -1251,7 +1251,6 @@
     scrim.classList.remove('hidden');
     refreshWhisperModels();
   }
-  function closeSettings() { saveSettings(); scrim.classList.add('hidden'); }
   $('#more-btn').addEventListener('click', openSettings);
   $('#s-close').addEventListener('click', () => { void closeSettings(); });
   scrim.addEventListener('click', (e) => { if (e.target === scrim) void closeSettings(); });
@@ -1404,6 +1403,7 @@
     // Profile tab
     $('#resume-text').value = settings.resumeText || '';
     $('#job-description').value = settings.jobDescription || '';
+    $('#knowledge-base').value = settings.knowledgeBase || '';
     // Interview Prep tab
     $('#star-stories').value = settings.starStories || '';
     $('#why-company').value = settings.whyCompany || '';
@@ -1411,6 +1411,8 @@
     $('#work-style').value = settings.workStyle || '';
     // Style tab
     $('#ai-rules').value = settings.aiRules || '';
+    $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
+    $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
     updateAiRulesCounter();
     // Q&A tab
     $('#salary-target').value = settings.salaryTarget || '';
@@ -1486,7 +1488,8 @@
       settings.resumeText ? '✓ resume' : null,
       settings.jobDescription ? '✓ JD' : null,
       settings.starStories ? '✓ stories' : null,
-      settings.salaryTarget ? '✓ salary' : null
+      settings.salaryTarget ? '✓ salary' : null,
+      settings.knowledgeBase ? '✓ KB' : null
     ].filter(Boolean);
     return `${labels[settings.provider] || settings.provider}${publikPart} · STT: ${stt}` + (ready.length ? ' · ' + ready.join(' · ') : '');
   }
@@ -1695,6 +1698,7 @@
     // Profile
     settings.resumeText = $('#resume-text').value.trim();
     settings.jobDescription = $('#job-description').value.trim();
+    settings.knowledgeBase = $('#knowledge-base').value.trim();
     // Interview Prep
     settings.starStories = $('#star-stories').value.trim();
     settings.whyCompany = $('#why-company').value.trim();
@@ -1702,6 +1706,8 @@
     settings.workStyle = $('#work-style').value.trim();
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
+    settings.answerLength = $('#answer-length').value;
+    settings.includeScreen = $('#include-screen').value !== 'no';
     // Q&A
     settings.salaryTarget = $('#salary-target').value.trim();
     settings.questionsToAsk = $('#questions-to-ask').value.trim();

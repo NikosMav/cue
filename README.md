@@ -2,6 +2,12 @@
 
 # cue
 
+This is [NikosMav's contribution fork](https://github.com/NikosMav/cue) of
+[Blueturboguy07/cue](https://github.com/Blueturboguy07/cue). It focuses on concise,
+grounded conversational answers, configurable screen context, and reliable request
+handling. Original authorship and the GPL-3.0-or-later license are preserved.
+See [fork changes and validation](docs/fork-changes.md).
+
 **An open-source AI copilot that floats over your screen — sees what you see, hears your meetings, and stays hidden from screen shares.**
 
 A free, self-hosted alternative to Cluely. Bring your own AI key (OpenAI · Anthropic · Google Gemini · OpenAI-compatible endpoints).
@@ -64,7 +70,7 @@ Go to the [**Releases**](../../releases) page, then choose your platform:
 You need [Node.js](https://nodejs.org) 22.12+ installed (required by dev dependencies). No Xcode and no Visual Studio build tools required — cue deliberately avoids native modules.
 
 ```bash
-git clone https://github.com/Blueturboguy07/cue.git
+git clone https://github.com/NikosMav/cue.git
 cd cue
 npm install
 npm start
@@ -167,6 +173,22 @@ Local mode is independent from the chat provider, so you can use local speech-to
 
 In **Settings**, paste your résumé or professional background into **Résumé / professional background**. cue uses it as the factual reference for career-related answers and says when the résumé does not provide a detail. You can clear it anytime.
 
+**Settings → Profile → Interview knowledge base** accepts longer reference notes.
+The complete notes are stored locally and sent to the selected chat provider with
+each non-coding request. Longer notes increase request size; keep them focused and
+mark unknown or conditional personal details clearly. Clearing the field removes
+the saved reference.
+
+**Settings → Style → Answer length** defaults to **Brief**: usually 2–3 sentences,
+with the answer first, one supporting detail, and no repeated conclusion. Choose
+Balanced or Detailed for a fuller explanation. Explicit requests for more detail
+and complete coding solutions can be longer; these are prompt targets, not hard
+output cuts. Existing custom AI rules can override the default style.
+
+For conversation help without an image, set **Settings → Style → Screen context
+for Assist and Ask → Conversation only**. This skips screenshot capture and upload.
+The dedicated coding solver still uses the screen.
+
 ### Step 3 — The Zoom setting (only needed for Zoom)
 
 cue is hidden from most screen-share tools automatically — **Google Meet, Microsoft Teams, and QuickTime need nothing.** **Zoom** has a specific setting that decides whether it respects cue's "don't capture me" flag:
@@ -201,7 +223,7 @@ cue is an [Electron](https://www.electronjs.org/) app. Everything runs locally e
 **The three inputs are kept completely separate:**
 - **Screen** — captured with Electron's `desktopCapturer` (full-resolution screenshots, taken only when a feature needs one).
 - **Your mic ("You")** — `getUserMedia` → downsampled to 16 kHz audio → transcribed.
-- **Meeting audio ("Them")** — `getDisplayMedia` loopback capture of your system's output audio, kept on its own channel so cue knows *who* said what. **Windows only** — Chromium doesn't implement loopback capture elsewhere, so on macOS this stream comes back video-only and the channel stays silent.
+- **Meeting audio ("Them")** — `getDisplayMedia` loopback capture of your system's output audio, kept on its own channel so cue knows *who* said what. Supported on Windows and macOS 14.4+; on macOS, enable meeting audio in Settings and grant Screen Recording permission.
 
 Both audio streams are transcribed by the independently selected speech provider (local whisper.cpp, Deepgram, OpenAI, or Gemini) and fed, with an optional screenshot, to your chat model. Responses **stream** into the panel word-by-word.
 
@@ -240,7 +262,7 @@ Try `base.en`, `tiny.en`, or a quantized `q5`/`q8` model. Model size in Settings
 You probably granted an older build. Because the app is ad-hoc signed, a rebuild changes its identity and macOS stops honoring the old grant (the checkmark can linger). Toggle cue **off and on** in System Settings → Screen Recording, or remove and re-add it.
 
 **"What should I say?", "Follow-up questions", or "Recap" never hear the other person (macOS).**
-Expected — meeting audio is Windows-only (see [Platform support](#platform-support)). Your own mic still transcribes, so those features see the *You* side of the conversation but never the *Them* side.
+Meeting audio requires macOS 14.4+, Screen Recording permission, and the meeting-audio option enabled in Settings. It is off by default on macOS. Older macOS versions can still use microphone transcription and screenshots.
 
 **cue has no dock or taskbar icon — how do I quit it?**
 That's deliberate; it stays out of your way. Press **`Ctrl` `Shift` `X`** (**`⌘` `⇧` `X`** on macOS). If the shortcut didn't register because another app claimed it, end the **cue** (or **electron**) process in Task Manager / Activity Monitor.
