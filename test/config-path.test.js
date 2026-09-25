@@ -41,7 +41,7 @@ test('profile import preserves keys and models even when a profile contains blan
   assert.deepEqual(result.apiKeys, settings.apiKeys);
   assert.deepEqual(result.models, settings.models);
   assert.equal(result.provider, 'openai');
-  assert.equal(result.resumeText, 'Synthetic CV');
+  assert.equal(result.aboutMe.resumeText, 'Synthetic CV');
 });
 
 test('config CLI uses explicit data directory, preserves keys, and never prints their values', t => {
@@ -59,4 +59,32 @@ test('config CLI uses explicit data directory, preserves keys, and never prints 
   assert.deepEqual(status.credentialProviders, ['openai']);
   assert.equal(JSON.parse(fs.readFileSync(file)).apiKeys.openai, key);
   assert.equal(fs.readdirSync(path.join(data, 'backups')).length, 1);
+  assert.ok(Array.isArray(status.setups));
+  assert.ok(status.aboutMeFields.includes('resumeText'));
+  assert.ok(!result.includes('Synthetic CV'), 'status never prints field contents');
+});
+
+test('profile import fills About me and a named setup, creating it and making it active', () => {
+  const settings = { apiKeys: { openai: 'test-only-key' }, setupsVersion: 1, setups: [], activeSetupId: 'any' };
+  const result = mergeProfile(settings, {
+    resumeText: 'Synthetic CV', starStories: 'Story', jobDescription: 'Backend role', knowledgeBase: 'Notes',
+    aiRules: 'Be brief.', answerLength: 'balanced'
+  }, { setupName: 'Acme interview' });
+  const setup = result.setups.find((s) => s.name === 'Acme interview');
+  assert.equal(setup.kind, 'interview');
+  assert.equal(setup.conversation, 'Backend role');
+  assert.equal(setup.notes, 'Notes');
+  assert.equal(setup.instructions, 'Be brief.');
+  assert.equal(result.activeSetupId, setup.id);
+  assert.deepEqual(result.aboutMe, { resumeText: 'Synthetic CV', stories: 'Story', workStyle: '' });
+  assert.equal(result.answerLength, 'balanced');
+  assert.equal(result.apiKeys.openai, 'test-only-key');
+});
+
+test('re-importing into an existing setup updates it instead of adding a second one', () => {
+  let s = mergeProfile({ setupsVersion: 1, setups: [] }, { jobDescription: 'v1' }, { setupName: 'Acme interview' });
+  s = mergeProfile(s, { jobDescription: 'v2' }, { setupName: 'acme INTERVIEW' });
+  const matches = s.setups.filter((x) => x.name === 'Acme interview');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].conversation, 'v2');
 });
