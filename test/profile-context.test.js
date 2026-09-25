@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { MAX_AI_RULES_CHARS, appendAiRules } = require('../src/profile-context');
+const { MAX_AI_RULES_CHARS, MAX_COMBINED_RULES_CHARS, appendAiRules } = require('../src/profile-context');
 
 test('appendAiRules: leaves the mode prompt unchanged when no rules are set', () => {
   assert.equal(appendAiRules('Base prompt', ''), 'Base prompt');
@@ -27,11 +27,26 @@ test('appendAiRules: appends AFTER the base prompt', () => {
   assert.ok(prompt.indexOf('Base prompt') < prompt.indexOf('--- USER RULES ---'));
 });
 
-test('appendAiRules: bounds rules to MAX_AI_RULES_CHARS', () => {
-  const rules = 'x'.repeat(MAX_AI_RULES_CHARS + 500);
+test('appendAiRules: bounds the combined setup and global rules to MAX_COMBINED_RULES_CHARS', () => {
+  assert.equal(MAX_COMBINED_RULES_CHARS, 2 * MAX_AI_RULES_CHARS + 2);
+  const rules = 'x'.repeat(MAX_COMBINED_RULES_CHARS + 500);
   const prompt = appendAiRules('', rules);
-  assert.ok(prompt.includes('x'.repeat(MAX_AI_RULES_CHARS)));
-  assert.ok(!prompt.includes('x'.repeat(MAX_AI_RULES_CHARS + 1)));
+  assert.ok(prompt.includes('x'.repeat(MAX_COMBINED_RULES_CHARS)));
+  assert.ok(!prompt.includes('x'.repeat(MAX_COMBINED_RULES_CHARS + 1)));
+});
+
+test('long setup instructions cannot push the global AI rules out of the prompt', () => {
+  const { buildPromptRequest } = require('../src/prompts');
+  const { normalizeSetups, effectiveSettings } = require('../src/setups');
+  const s = normalizeSetups({
+    setupsVersion: 1,
+    aiRules: 'GLOBAL RULE: never use em dashes.',
+    setups: [{ id: 'g', name: 'Call', kind: 'general', instructions: 'i'.repeat(2500) }],
+    activeSetupId: 'g'
+  });
+  const { system } = buildPromptRequest(effectiveSettings(s), 'say', [{ channel: 'them', text: 'Thoughts?', ts: 1 }]);
+  assert.match(system, /GLOBAL RULE: never use em dashes\./);
+  assert.equal(s.setups.find((x) => x.id === 'g').instructions.length, MAX_AI_RULES_CHARS, 'setup instructions are bounded');
 });
 
 test('appendAiRules: trims surrounding whitespace before clipping', () => {

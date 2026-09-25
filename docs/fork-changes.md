@@ -143,6 +143,15 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
 - Optional warm-up (on by default, never on publik): a tiny request after launch
   and when listening starts primes the connection and prompt cache. With OpenAI
   gpt-4.1-mini the first answer's first token went from 4.7–5.7 s to 1.3–1.7 s.
+- Setups: several saved setups with a shared About me, switched from the panel.
+  A General prompt layer lets cue work in any conversation (it infers the
+  situation and answers for the user's role; Recap lists decisions and action
+  items); Job interview setups keep the previous prompts byte for byte (golden
+  test). Saving is a per-setup switch, off by default for general setups.
+  Existing settings migrate once, after a backup, into About me and an
+  "Interview" setup. Migrated AI rules become the "Interview" setup's
+  instructions, so they no longer apply in "Any conversation"; copy them to
+  Settings → Style → AI rules to apply them everywhere.
 
 ## Validation and limits
 

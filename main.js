@@ -16,6 +16,13 @@ const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
 const { createClickThrough, placeOnDisplay } = require('./src/click-through');
+const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
+
+// Settings as every feature reads them: About me + the active setup projected
+// onto the flat prep fields (src/setups.js).
+function currentSettings() {
+  return effectiveSettings(store.getSettings());
+}
 const { createStreamingSTT } = require('./src/stt-streaming');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
@@ -385,6 +392,13 @@ function createWindow() {
         message: 'Heads up: screen-share hiding is off for this session (remote desktop / cloud PC / VM sessions can render the window invisible to you as well when it is on). The window will be visible in screen shares here.'
       });
     }
+    // The setups migration didn't complete (see store.js migrationBlocked):
+    // save() is keeping changes in memory only until cue restarts.
+    if (store.migrationBlocked()) {
+      send('status', {
+        message: 'Settings could not be updated to the new setups layout, so changes are kept only until cue restarts. Your previous settings file is unchanged.'
+      });
+    }
   });
   win.webContents.on('render-process-gone', (_e, d) => {
     console.log('[cue] renderer gone', JSON.stringify(d));
@@ -397,7 +411,7 @@ function createWindow() {
 // between utterances, while a key changed in Settings takes effect at once
 // (store.setSettings replaces the settings object).
 function currentBatchSTT() {
-  const settings = store.getSettings();
+  const settings = currentSettings();
   if (batchStt.settings !== settings) batchStt = { settings, stt: createSTT(settings) };
   return batchStt;
 }
@@ -468,7 +482,9 @@ function handleSttError(err, settings) {
 
 // -------- streaming STT setup --------
 function initStreamingSTT() {
-  const settings = store.getSettings();
+  // Vocabulary (Deepgram keyterms) comes from the active setup and is fixed
+  // when listening starts; a setup switch applies from the next start.
+  const settings = currentSettings();
   streamingMode = false;
 
   ['you', 'them'].forEach((channel) => {
@@ -551,7 +567,7 @@ function routeAudio(channel, pcmBuffer) {
 // and use cue's own Screen-Recording grant — no separate helper binary to authorize.
 // Primes the provider so the first answer of a session is fast (src/warmup.js).
 const warmUpProvider = createWarmUp({
-  getSettings: () => store.getSettings(),
+  getSettings: () => currentSettings(),
   createLLM,
   buildPromptRequest,
   isBusy: () => !!activeRequest,
@@ -565,7 +581,7 @@ async function setCapturing(active) {
   if (active) {
     warmUpProvider('listening');
     sttDisabled = false; // reset on re-enable
-    const settings = store.getSettings();
+    const settings = currentSettings();
     if ((settings.sttProvider || 'auto') === 'local') {
       try {
         await startLocalWhisper(settings);
@@ -691,7 +707,7 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
   const emit = (channel, data) => { if (!signal.aborted) send(channel, { id: job.id, ...data }); };
 
   try {
-    const settings = store.getSettings();
+    const settings = currentSettings();
     const llm = createLLM(settings);
     const request = buildPromptRequest(settings, requestedMode, transcript, text, { answers: sessionAnswers });
     const mode = request.mode;
@@ -1035,6 +1051,7 @@ function publishPracticeQuestion(text) {
 }
 
 ipcMain.handle('practice:start', () => {
+  if (currentSettings().setupKind !== 'interview') throw new Error('Practice needs a Job interview setup. Switch to one in the setup menu.');
   if (practice.active) return practiceState();
   cancelActiveRequest('stopped');
   const savedId = resetConversation();
@@ -1069,8 +1086,11 @@ function sessionsDir() {
 function sessionsState(query = '') {
   const settings = store.getSettings();
   const current = sessionRecorder && sessionRecorder.current();
+  const active = currentSettings();
   return {
-    enabled: !!settings.saveSessions,
+    enabled: active.saveSessions,
+    setupName: active.setupName,
+    setupKind: active.setupKind,
     exportDir: settings.sessionsExportDir || '',
     currentId: current ? current.id : null,
     sessions: sessionStore ? sessionStore.list(query) : []
@@ -1102,8 +1122,9 @@ ipcMain.handle('sessions:get', (_e, id) => {
   return session ? { ...session, summary: summarize(session), markdown: sessionToMarkdown(session) } : null;
 });
 ipcMain.handle('sessions:set-enabled', (_e, enabled) => {
-  store.setSettings({ saveSessions: !!enabled });
-  send('settings:changed', { saveSessions: !!enabled });
+  const saved = store.getSettings();
+  const next = store.setSettings({ setups: updateSetup(saved, saved.activeSetupId, { saveSessions: !!enabled }) });
+  send('settings:changed', { setups: next.setups });
   if (enabled && sessionRecorder && !sessionRecorder.current()) {
     // Keep the conversation so far, not only what follows.
     for (const turn of transcript) sessionRecorder.addTurn(turn);
@@ -1159,13 +1180,14 @@ let debriefInFlight = null;
 ipcMain.handle('sessions:debrief', async (_e, id) => {
   const session = isValidId(id) && loadSession(id);
   if (!session) throw new Error('That session no longer exists.');
-  const settings = store.getSettings();
+  const settings = currentSettings();
   const llm = createLLM(settings);
   if (!llm.ready) throw new Error(llm.configurationError || 'Set up an AI provider in Settings first.');
   if (debriefInFlight) debriefInFlight.abort();
   const controller = new AbortController();
   debriefInFlight = controller;
-  const request = buildDebriefRequest(settings, session);
+  // Reviewed against the setup the session was recorded with, not the active one.
+  const request = buildDebriefRequest(settingsForSession(store.getSettings(), session), session);
   try {
     const text = await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
@@ -1476,8 +1498,9 @@ function launchApp() {
   sessionStore = new SessionStore({ dir: sessionsDir() });
   sessionRecorder = new SessionRecorder({
     store: sessionStore,
-    isEnabled: () => !!store.getSettings().saveSessions,
+    isEnabled: () => currentSettings().saveSessions,
     exportDir: () => store.getSettings().sessionsExportDir || '',
+    meta: () => { const s = currentSettings(); return { setupId: s.setupId, setupName: s.setupName, setupKind: s.setupKind }; },
     onSaved: (summary) => send('sessions:saved', summary),
     onError: (error) => {
       recordEvent({ level: 'error', event: 'session_save_failed', msg: error.message, frame: 'SessionRecorder', context: {} });
@@ -1548,6 +1571,14 @@ function launchApp() {
 
 // -------- lifecycle --------
 app.whenReady().then(async () => {
+  // One-time move to setups, after a backup. A failure leaves the file as it
+  // was; cue keeps reading it through the compatibility path.
+  try {
+    if (store.migrateFile()) console.log('[cue] settings migrated to setups');
+  } catch (error) {
+    console.error('[cue] settings migration to setups failed; the settings file was left unchanged:', error.message);
+    recordEvent({ level: 'error', event: 'setups_migration_failed', msg: error.message, frame: 'migrateFile', context: {} });
+  }
   app.setName('cue');
   if (isWindows) {
     process.title = 'cue';

@@ -531,7 +531,7 @@ button:focus { outline: none; }
 /* Wraps to a second row instead of scrolling sideways behind a scrollbar. */
 .s-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; flex-shrink: 0; }
 .s-tab {
-  flex: 1 1 auto; min-width: 72px; padding: 7px 10px; border-radius: var(--r-8);
+  flex: 1 1 auto; min-width: 0; padding: 7px 8px; border-radius: var(--r-8);
   border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03);
   color: var(--tx-mut); font-size: 12px; font-weight: 500; font-family: var(--font);
   cursor: pointer; transition: all 140ms ease; white-space: nowrap;
@@ -999,3 +999,23 @@ button:focus { outline: none; }
 .cs-title { font-size: 15px; font-weight: 620; color: var(--tx-1); line-height: 1.35; }
 .cs-body { margin-top: 10px; color: var(--tx-mut); font-size: 12.5px; line-height: 1.5; white-space: pre-line; }
 .cs-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+
+/* Setups tab */
+.setup-bar { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.setup-bar .s-select { flex: 1; }
+.interview-only.hidden, .s-field.interview-only.hidden { display: none; }
+
+/* Setup switcher in the panel */
+#prep-status { align-items: center; }
+.setup-switch { padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: var(--tx-1); font: 600 12px var(--font); cursor: pointer; }
+.setup-switch:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.setup-switch:disabled { opacity: 0.5; cursor: default; }
+.setup-saving { color: #86efac; font-size: 11px; font-weight: 600; }
+.setup-saving.hidden { display: none; }
+#panel-main { position: relative; }
+.setup-menu { position: absolute; left: 0; bottom: 40px; min-width: 240px; max-height: 260px; overflow-y: auto; padding: 6px; border-radius: 12px; background: rgba(20,22,28,0.97); border: 1px solid var(--bd-strong); box-shadow: 0 12px 32px rgba(0,0,0,0.5); z-index: 20; }
+.setup-menu.hidden { display: none; }
+.setup-menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: none; border-radius: 8px; background: transparent; color: var(--tx-2); font: 500 13px var(--font); cursor: pointer; }
+.setup-menu button:hover { background: rgba(255,255,255,0.08); }
+.setup-menu button.on::before { content: '✓ '; color: #86efac; }
+.setup-menu hr { border: none; border-top: 1px solid var(--bd-hair); margin: 4px 2px; }

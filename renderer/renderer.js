@@ -575,7 +575,8 @@
   smartBtn.addEventListener('click', async () => {
     settings.smart = !settings.smart;
     smartBtn.classList.toggle('on', settings.smart);
-    await cue.settingsSet({ smart: settings.smart });
+    // Keep this copy (and its revision) current for the next save.
+    settings = await cue.settingsSet({ smart: settings.smart });
   });
 
   // Auto-answer toggle: answer the interviewer as soon as they finish asking
@@ -583,13 +584,13 @@
   function syncAutoButton() {
     autoBtn.classList.toggle('on', !!settings.autoAnswer);
     autoBtn.title = settings.autoAnswer
-      ? 'Auto-answer is on: cue answers each interviewer question when they finish asking (while listening)'
+      ? 'Auto-answer is on: cue answers a question from the other side when they finish asking (while listening)'
       : 'Auto-answer is off: press Enter or the shortcut to answer';
   }
   autoBtn.addEventListener('click', async () => {
     settings.autoAnswer = !settings.autoAnswer;
     syncAutoButton();
-    await cue.settingsSet({ autoAnswer: settings.autoAnswer });
+    settings = await cue.settingsSet({ autoAnswer: settings.autoAnswer });
     showToast(settings.autoAnswer ? 'Auto-answer on' : 'Auto-answer off', 1500);
   });
 
@@ -612,6 +613,7 @@
     if (!settings) return;
     Object.assign(settings, patch);
     if ('autoAnswer' in patch) syncAutoButton();
+    if ('setups' in patch) updatePrepStatus();
   });
 
   // Stop = start/stop listening. Kick off system-audio capture straight from the click so
@@ -1277,30 +1279,94 @@
   }
   const aiRulesEl = document.getElementById('ai-rules');
   if (aiRulesEl) aiRulesEl.addEventListener('input', updateAiRulesCounter);
+  let capturing = false;
+  function updateSavingIndicator() {
+    const setup = settings && activeSetupOf(settings);
+    const on = !!(setup && setup.saveSessions && (capturing || practiceActive));
+    $('#setup-saving').classList.toggle('hidden', !on);
+  }
+
+  let lastActiveSetupId = null;
   function updatePrepStatus() {
     if (!settings) return;
-    const fields = {
-      resume:  !!(settings.resumeText && settings.resumeText.trim()),
-      jd:      !!(settings.jobDescription && settings.jobDescription.trim()),
-      stories: !!(settings.starStories && settings.starStories.trim()),
-      salary:  !!(settings.salaryTarget && settings.salaryTarget.trim()),
-      kb:      !!(settings.knowledgeBase && settings.knowledgeBase.trim())
+    const setup = activeSetupOf(settings);
+    if (!setup) return;
+    // The store falls back to "Any conversation" when the active setup is
+    // gone (deleted in another window, a bad import); say so once.
+    if (lastActiveSetupId && lastActiveSetupId !== setup.id && !(settings.setups || []).some((s) => s.id === lastActiveSetupId)) {
+      showToast('The active setup no longer exists; using “' + setup.name + '”.', 3000);
+    }
+    lastActiveSetupId = setup.id;
+    $('#setup-switch-name').textContent = setup.name;
+    const about = settings.aboutMe || {};
+    const loaded = {
+      about: !!((about.resumeText || '').trim() || (about.stories || '').trim()),
+      conversation: !!(setup.conversation || '').trim(),
+      notes: !!(setup.notes || '').trim()
     };
+    const labels = { about: 'About me', conversation: setup.kind === 'interview' ? 'Role' : 'Context', notes: 'Notes' };
     document.querySelectorAll('#prep-status .prep-item').forEach((el) => {
-      const loaded = fields[el.dataset.field];
-      el.classList.toggle('loaded', loaded);
-      el.classList.toggle('missing', !loaded);
-      el.title = loaded
-        ? el.textContent.trim() + ' loaded — click to edit'
-        : el.textContent.trim() + ' not set — click to add';
+      const field = el.dataset.field;
+      el.textContent = labels[field];
+      el.classList.toggle('loaded', loaded[field]);
+      el.classList.toggle('missing', !loaded[field]);
+      el.title = labels[field] + (loaded[field] ? ' loaded — click to edit' : ' not set — click to add');
     });
+    updateSavingIndicator();
   }
-  // The indicators open the tab where that material is edited.
-  $('#prep-status').addEventListener('click', async () => {
-    await openSettings();
-    const tab = document.querySelector('.s-tab[data-tab="profile"]');
-    if (tab) tab.click();
+
+  const setupMenu = $('#setup-menu');
+  const setupSwitchTitle = $('#setup-switch').title;
+  function closeSetupMenu() { setupMenu.classList.add('hidden'); }
+  function renderSetupMenu() {
+    setupMenu.innerHTML = '';
+    for (const s of settings.setups || []) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = s.name;
+      item.classList.toggle('on', s.id === settings.activeSetupId);
+      item.addEventListener('click', async () => {
+        closeSetupMenu();
+        if (s.id === settings.activeSetupId) return;
+        try {
+          settings = await queueSettingsPatch({ activeSetupId: s.id });
+          updatePrepStatus();
+          if (messages.querySelector('.empty-state')) showEmptyState();
+          showToast('Setup: ' + s.name, 1500);
+        } catch (err) {
+          showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3000);
+        }
+      });
+      setupMenu.appendChild(item);
+    }
+    setupMenu.appendChild(document.createElement('hr'));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = 'New setup…';
+    add.addEventListener('click', async () => { closeSetupMenu(); await openSetupsTab(); $('#setup-new').click(); });
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.textContent = 'Manage setups…';
+    manage.addEventListener('click', () => { closeSetupMenu(); openSetupsTab(); });
+    setupMenu.append(add, manage);
+  }
+  $('#setup-switch').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (setupMenu.classList.contains('hidden')) { renderSetupMenu(); setupMenu.classList.remove('hidden'); }
+    else closeSetupMenu();
   });
+  document.addEventListener('click', (e) => { if (!setupMenu.contains(e.target)) closeSetupMenu(); });
+  // Indicators open where that material is edited.
+  document.querySelectorAll('#prep-status .prep-item').forEach((el) => el.addEventListener('click', async () => {
+    if (el.dataset.field === 'about') {
+      await openSettings();
+      const tab = document.querySelector('.s-tab[data-tab="about"]');
+      if (tab) tab.click();
+    } else {
+      openSetupsTab(settings.activeSetupId);
+    }
+  }));
+  cue.on('capture:state', (st) => { capturing = !!(st && st.active); updateSavingIndicator(); });
 
   function updateSmartTooltip() {
     if (!settings) return;
@@ -1636,24 +1702,14 @@
     const localWhisper = settings.localWhisper || { modelId: 'base.en', language: 'auto', threads: 0 };
     $('#whisper-language').value = localWhisper.language || 'auto';
     $('#whisper-threads').value = Number(localWhisper.threads) || 0;
-    // Profile tab
-    $('#resume-text').value = settings.resumeText || '';
-    $('#job-description').value = settings.jobDescription || '';
-    $('#knowledge-base').value = settings.knowledgeBase || '';
-    // Interview Prep tab
-    $('#star-stories').value = settings.starStories || '';
-    $('#why-company').value = settings.whyCompany || '';
-    $('#why-leaving').value = settings.whyLeaving || '';
-    $('#work-style').value = settings.workStyle || '';
+    fillAboutMe();
+    fillSetupForm(editingSetupId || settings.activeSetupId);
     // Style tab
     $('#ai-rules').value = settings.aiRules || '';
     $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
     $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
     $('#warm-up').value = settings.warmUp === false ? 'off' : 'on';
     updateAiRulesCounter();
-    // Q&A tab
-    $('#salary-target').value = settings.salaryTarget || '';
-    $('#questions-to-ask').value = settings.questionsToAsk || '';
   }
 
   // Whoever cue has been told it may answer questions for. Empty is the normal
@@ -1721,14 +1777,8 @@
     const selectedSttProvider = settings.sttProvider || 'auto';
     const automaticStt = k.deepgram ? 'Deepgram (streaming)' : (k.openai ? 'OpenAI Realtime' : (k.groq ? 'Groq Whisper' : (k.gemini ? 'Gemini (batch)' : 'none')));
     const stt = selectedSttProvider === 'auto' ? automaticStt : selectedSttProvider;
-    const ready = [
-      settings.resumeText ? '✓ resume' : null,
-      settings.jobDescription ? '✓ JD' : null,
-      settings.starStories ? '✓ stories' : null,
-      settings.salaryTarget ? '✓ salary' : null,
-      settings.knowledgeBase ? '✓ KB' : null
-    ].filter(Boolean);
-    return `${labels[settings.provider] || settings.provider}${publikPart} · STT: ${stt}` + (ready.length ? ' · ' + ready.join(' · ') : '');
+    const setup = activeSetupOf(settings);
+    return `${labels[settings.provider] || settings.provider}${publikPart} · STT: ${stt}` + (setup ? ' · setup: ' + setup.name : '');
   }
 
   document.querySelectorAll('#provider-seg button').forEach((b) => b.addEventListener('click', () => {
@@ -1912,6 +1962,156 @@
     return run;
   }
 
+  // A small patch (for example the active setup) through the same queue as full saves.
+  // No settingsMeta: a one-field patch cannot clobber other fields, and writes
+  // that do not refresh this copy (Smart, Auto, the auto-answer shortcut, the
+  // export folder) would otherwise make its revision stale and get it rejected.
+  // The store repairs an active id that no longer exists.
+  function queueSettingsPatch(patch) {
+    const run = saveQueue.then(() => cue.settingsSet({ ...patch }));
+    saveQueue = run.catch(() => {});
+    return run;
+  }
+
+  // ---- About me and setups (data model: src/setups.js) --------------------
+  const setupsModel = cue.setupsModel;
+  let editingSetupId = null;
+
+  function activeSetupOf(s) {
+    const list = (s && s.setups) || [];
+    return list.find((x) => x.id === s.activeSetupId) || list.find((x) => x.id === setupsModel.BUILTIN_SETUP_ID) || list[0];
+  }
+  function editingSetup() {
+    return settings.setups.find((x) => x.id === editingSetupId) || activeSetupOf(settings);
+  }
+
+  function fillAboutMe() {
+    const a = settings.aboutMe || {};
+    $('#resume-text').value = a.resumeText || '';
+    $('#star-stories').value = a.stories || '';
+    $('#work-style').value = a.workStyle || '';
+  }
+
+  function applyKindToForm(kind) {
+    const interview = kind === 'interview';
+    document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.classList.toggle('on', b.dataset.kind === kind));
+    document.querySelectorAll('[data-pane="setups"] .interview-only').forEach((el) => el.classList.toggle('hidden', !interview));
+    $('#setup-conversation-label').textContent = interview ? 'Job description' : 'This conversation and your role';
+    $('#job-description').placeholder = interview
+      ? 'Paste the job description for the role.'
+      : 'e.g. Weekly platform sync; I lead the API work and give the status update.';
+    $('#setup-kind-note').textContent = interview
+      ? 'Tuned for job interviews: answers as the candidate, practice interviews available.'
+      : 'Works in any conversation: cue works out the situation from what it hears and answers for your role.';
+  }
+
+  function fillSetupForm(id) {
+    editingSetupId = id || settings.activeSetupId;
+    const setup = editingSetup();
+    editingSetupId = setup.id;
+    const select = $('#setup-select');
+    select.innerHTML = '';
+    for (const s of settings.setups) {
+      const option = document.createElement('option');
+      option.value = s.id;
+      option.textContent = s.name + (s.id === settings.activeSetupId ? ' (active)' : '');
+      select.appendChild(option);
+    }
+    select.value = setup.id;
+    const builtin = setup.id === setupsModel.BUILTIN_SETUP_ID;
+    $('#setup-name').value = setup.name;
+    $('#setup-name').disabled = builtin;
+    $('#setup-delete').disabled = builtin;
+    document.querySelectorAll('#setup-kind-seg button').forEach((b) => { b.disabled = builtin; });
+    $('#job-description').value = setup.conversation || '';
+    $('#knowledge-base').value = setup.notes || '';
+    $('#why-company').value = setup.whyCompany || '';
+    $('#why-leaving').value = setup.whyLeaving || '';
+    $('#salary-target').value = setup.salaryTarget || '';
+    $('#questions-to-ask').value = setup.questionsToAsk || '';
+    $('#setup-instructions').value = setup.instructions || '';
+    $('#setup-save').checked = !!setup.saveSessions;
+    $('#setup-activate').disabled = setup.id === settings.activeSetupId;
+    applyKindToForm(setup.kind);
+  }
+
+  // Writes the form into settings (not yet saved).
+  function collectSetupForm() {
+    const setup = editingSetup();
+    if (!setup) return;
+    const kindButton = document.querySelector('#setup-kind-seg button.on');
+    const patch = {
+      name: setup.id === setupsModel.BUILTIN_SETUP_ID ? setup.name : ($('#setup-name').value.trim() || 'Untitled setup'),
+      kind: setup.id === setupsModel.BUILTIN_SETUP_ID ? 'general' : (kindButton ? kindButton.dataset.kind : setup.kind),
+      conversation: $('#job-description').value.trim(),
+      notes: $('#knowledge-base').value.trim(),
+      whyCompany: $('#why-company').value.trim(),
+      whyLeaving: $('#why-leaving').value.trim(),
+      salaryTarget: $('#salary-target').value.trim(),
+      questionsToAsk: $('#questions-to-ask').value.trim(),
+      instructions: $('#setup-instructions').value.trim(),
+      saveSessions: $('#setup-save').checked
+    };
+    settings.setups = settings.setups.map((s) => (s.id === setup.id ? { ...s, ...patch } : s));
+  }
+
+  function collectAboutMe() {
+    settings.aboutMe = {
+      resumeText: $('#resume-text').value.trim(),
+      stories: $('#star-stories').value.trim(),
+      workStyle: $('#work-style').value.trim()
+    };
+  }
+
+  async function openSetupsTab(id) {
+    await openSettings();
+    fillSetupForm(id || settings.activeSetupId);
+    const tab = document.querySelector('.s-tab[data-tab="setups"]');
+    if (tab) tab.click();
+  }
+
+  $('#setup-select').addEventListener('change', (e) => { collectSetupForm(); fillSetupForm(e.target.value); });
+  document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.addEventListener('click', () => {
+    applyKindToForm(b.dataset.kind);
+    // A new kind brings its default save switch only for a setup that never had content.
+    const s = editingSetup();
+    if (!s.conversation && !s.notes) $('#setup-save').checked = b.dataset.kind === 'interview';
+  }));
+  $('#setup-new').addEventListener('click', () => {
+    collectSetupForm();
+    const setup = setupsModel.makeSetup({ name: 'New setup', kind: 'general' });
+    settings.setups = [...settings.setups, setup];
+    fillSetupForm(setup.id);
+    $('#setup-name').focus();
+    $('#setup-name').select();
+  });
+  $('#setup-duplicate').addEventListener('click', () => {
+    collectSetupForm();
+    const source = editingSetup();
+    const copy = { ...setupsModel.makeSetup({ kind: source.kind }), ...source };
+    copy.id = setupsModel.makeSetup().id;
+    copy.name = source.name + ' copy';
+    settings.setups = [...settings.setups, copy];
+    fillSetupForm(copy.id);
+  });
+  $('#setup-delete').addEventListener('click', () => {
+    const setup = editingSetup();
+    if (setup.id === setupsModel.BUILTIN_SETUP_ID) return;
+    if (!confirm(`Delete the setup "${setup.name}"? Saved sessions are kept.`)) return;
+    settings.setups = settings.setups.filter((s) => s.id !== setup.id);
+    if (settings.activeSetupId === setup.id) {
+      settings.activeSetupId = setupsModel.BUILTIN_SETUP_ID;
+      // Deleted here, on purpose: the "no longer exists" notice is for changes made elsewhere.
+      lastActiveSetupId = settings.activeSetupId;
+    }
+    fillSetupForm(settings.activeSetupId);
+  });
+  $('#setup-activate').addEventListener('click', async () => {
+    collectSetupForm();
+    settings.activeSetupId = editingSetupId;
+    if (await saveSettings()) fillSetupForm(editingSetupId);
+  });
+
   async function saveSettingsNow() {
     // Never persist empty inputs before the asynchronous form load finishes.
     if (!settingsFormReady) return false;
@@ -1946,23 +2146,13 @@
     settings.localWhisper.modelId = $('#whisper-model').value || settings.localWhisper.modelId || 'base.en';
     settings.localWhisper.language = $('#whisper-language').value || 'auto';
     settings.localWhisper.threads = Math.max(0, Math.min(64, Number.parseInt($('#whisper-threads').value, 10) || 0));
-    // Profile
-    settings.resumeText = $('#resume-text').value.trim();
-    settings.jobDescription = $('#job-description').value.trim();
-    settings.knowledgeBase = $('#knowledge-base').value.trim();
-    // Interview Prep
-    settings.starStories = $('#star-stories').value.trim();
-    settings.whyCompany = $('#why-company').value.trim();
-    settings.whyLeaving = $('#why-leaving').value.trim();
-    settings.workStyle = $('#work-style').value.trim();
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
     settings.includeScreen = $('#include-screen').value !== 'no';
     settings.warmUp = $('#warm-up').value !== 'off';
-    // Q&A
-    settings.salaryTarget = $('#salary-target').value.trim();
-    settings.questionsToAsk = $('#questions-to-ask').value.trim();
+    collectAboutMe();
+    collectSetupForm();
     try {
       settings = await cue.settingsSet(settings);
       if (messages.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed
@@ -2001,8 +2191,10 @@
       box.appendChild(document.createElement('br'));
       box.appendChild(open);
     } else {
-      box.innerHTML = '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> ' +
-        'when the interviewer asks a question. You can also type a question below.';
+      const setup = activeSetupOf(settings);
+      box.innerHTML = setup && setup.kind === 'interview'
+        ? '<strong>Ready for your interview.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when you\'re asked something.'
+        : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
     }
     messages.appendChild(box);
   }
@@ -2034,6 +2226,11 @@
     const v = sessionsView;
     if (!v) return;
     $('#sessions-enabled').checked = v.enabled;
+    const label = $('#sessions-enabled').parentElement;
+    label.lastChild.textContent = ' Save conversations with “' + (sessionsView.setupName || 'this setup') + '”';
+    const practice = $('#practice-start');
+    practice.disabled = sessionsView.setupKind !== 'interview';
+    practice.title = practice.disabled ? 'Practice needs a Job interview setup' : 'Cue asks interview questions and rates your answers';
     $('#sessions-hint').classList.toggle('hidden', v.enabled && v.sessions.length > 0);
     $('#sessions-export-dir').textContent = v.exportDir || 'off';
     $('#sessions-export-dir').title = v.exportDir || '';
@@ -2044,7 +2241,7 @@
       const empty = document.createElement('div');
       empty.className = 'sess-empty';
       empty.textContent = $('#sessions-search').value.trim() ? 'No sessions match.'
-        : v.enabled ? 'No saved sessions yet. They appear here as you use cue.' : 'Saving is off. Turn it on above to keep your interviews.';
+        : v.enabled ? 'No saved sessions yet. They appear here as you use cue.' : 'Saving is off. Turn it on above to keep your conversations.';
       host.appendChild(empty);
       return;
     }
@@ -2102,6 +2299,8 @@
   $('#sessions-enabled').addEventListener('change', async (e) => {
     sessionsView = await cue.sessionsSetEnabled(e.target.checked);
     renderSessionsList();
+    settings = await cue.settingsGet();
+    updatePrepStatus();
     showToast(e.target.checked ? 'Sessions will be saved on this computer' : 'Saving off · sessions already saved are kept', 2500);
   });
   $('#sessions-choose-dir').addEventListener('click', async () => { sessionsView = await cue.sessionsChooseExportDir(); renderSessionsList(); });
@@ -2159,8 +2358,14 @@
     practiceActive = active;
     $('#practice-row').classList.toggle('hidden', !active);
     $('#action-row').classList.toggle('hidden', active);
+    // Practice is an interview: a general setup mid-run would mix the prompts.
+    const setupSwitch = $('#setup-switch');
+    setupSwitch.disabled = active;
+    setupSwitch.title = active ? 'Switch setups after ending practice' : setupSwitchTitle;
+    if (active) closeSetupMenu();
     if (!active && 'speechSynthesis' in window) speechSynthesis.cancel();
     syncPracticeVoice();
+    updateSavingIndicator();
   }
   function practiceVoiceOn() { return !settings || settings.practiceVoice !== false; }
   function syncPracticeVoice() { $('#practice-voice').textContent = 'Voice: ' + (practiceVoiceOn() ? 'on' : 'off'); }
@@ -2179,7 +2384,12 @@
   }
 
   $('#practice-start').addEventListener('click', async () => {
-    const r = await cue.practiceStart();
+    let r;
+    try { r = await cue.practiceStart(); }
+    catch (err) {
+      showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3500);
+      return;
+    }
     closeSessions();
     clearConversationUI();
     setPracticeUI(true);

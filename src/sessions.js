@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const SESSION_VERSION = 1;
 const ID_RE = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
 const SPEAKER = { them: 'Interviewer', you: 'You' };
+const SPEAKER_GENERAL = { them: 'Them', you: 'You' };
 const MODE_LABELS = {
   assist: 'Assist', say: 'What should I say?', ask: 'Ask', answerThis: 'Answer this',
   followup: 'Follow-up questions', recap: 'Recap', leetcode: 'Coding solution',
@@ -24,11 +25,14 @@ function stamp(ms) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function newSession({ kind = 'interview', now = Date.now() } = {}) {
+function newSession({ kind = 'interview', now = Date.now(), setupId = '', setupName = '', setupKind = 'interview' } = {}) {
   return {
     version: SESSION_VERSION,
     id: stamp(now) + '-' + crypto.randomBytes(3).toString('hex'),
     kind,                 // 'interview' | 'practice'
+    setupId,              // the setup active when the session started (debriefs use it)
+    setupName,            // its name then, shown in the list and searched
+    setupKind,            // 'interview' | 'general'
     title: '',
     startedAt: now,
     endedAt: null,
@@ -38,6 +42,11 @@ function newSession({ kind = 'interview', now = Date.now() } = {}) {
     debrief: '',
     debriefAt: null
   };
+}
+
+function kindLabel(session) {
+  if (session.kind === 'practice') return 'Practice';
+  return session.setupKind === 'general' ? 'Conversation' : 'Interview';
 }
 
 function isValidId(id) {
@@ -51,7 +60,7 @@ function firstQuestion(session) {
 
 function sessionTitle(session) {
   if (session.title) return session.title;
-  const kind = session.kind === 'practice' ? 'Practice' : 'Interview';
+  const kind = kindLabel(session);
   const question = firstQuestion(session);
   if (!question) return kind;
   return kind + ' · ' + (question.length > 60 ? question.slice(0, 57).trimEnd() + '…' : question);
@@ -62,6 +71,7 @@ function summarize(session) {
   return {
     id: session.id,
     kind: session.kind,
+    setupName: session.setupName || '',
     title: sessionTitle(session),
     startedAt: session.startedAt,
     endedAt: session.endedAt,
@@ -107,7 +117,8 @@ function sessionToMarkdown(session) {
   const end = session.endedAt || session.updatedAt || session.startedAt;
   out.push(`- **Date:** ${formatDate(session.startedAt)}`);
   out.push(`- **Duration:** ${formatDuration(end - session.startedAt)}`);
-  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : 'Live interview'}`);
+  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : session.setupKind === 'general' ? 'Live conversation' : 'Live interview'}`);
+  if (session.setupName) out.push(`- **Setup:** ${session.setupName}`);
   out.push('');
   if (session.debrief && session.debrief.trim()) {
     out.push('## Debrief', '', session.debrief.trim(), '');
@@ -118,9 +129,10 @@ function sessionToMarkdown(session) {
     ...(session.answers || []).map((a) => ({ ts: a.ts, kind: 'answer', a }))
   ].sort((x, y) => (x.ts || 0) - (y.ts || 0));
   if (!events.length) out.push('_Nothing was captured._', '');
+  const speaker = session.setupKind === 'general' ? SPEAKER_GENERAL : SPEAKER;
   for (const event of events) {
     if (event.kind === 'turn') {
-      out.push(`**${SPEAKER[event.t.channel] || event.t.channel}** (${formatClock(event.t.ts)}): ${event.t.text.trim()}`, '');
+      out.push(`**${speaker[event.t.channel] || event.t.channel}** (${formatClock(event.t.ts)}): ${event.t.text.trim()}`, '');
     } else {
       const label = MODE_LABELS[event.a.mode] || event.a.mode;
       const prompt = event.a.prompt ? ` — "${event.a.prompt.trim().slice(0, 120)}"` : '';
@@ -134,7 +146,7 @@ function sessionToMarkdown(session) {
 // every platform's file system.
 function exportFileName(session) {
   const d = new Date(session.startedAt);
-  const kind = session.kind === 'practice' ? 'Practice' : 'Interview';
+  const kind = kindLabel(session);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())} ${kind} (cue ${session.id.slice(-6)}).md`;
 }
 
@@ -191,7 +203,8 @@ class SessionStore {
 }
 
 function matches(session, needle) {
-  const fields = [sessionTitle(session), session.debrief,
+  const fields = [sessionTitle(session), session.setupName,
+    session.debrief,
     ...(session.transcript || []).map((t) => t.text), ...(session.answers || []).map((a) => a.text)];
   return fields.some((f) => typeof f === 'string' && f.toLowerCase().includes(needle));
 }
@@ -202,7 +215,7 @@ function matches(session, needle) {
  * saving is off, so nothing is written without the user's choice.
  */
 class SessionRecorder {
-  constructor({ store, isEnabled, exportDir = () => '', onSaved = () => {}, onError = () => {}, debounceMs = 1500, now = () => Date.now(), timers = { setTimeout, clearTimeout } }) {
+  constructor({ store, isEnabled, exportDir = () => '', onSaved = () => {}, onError = () => {}, debounceMs = 1500, now = () => Date.now(), timers = { setTimeout, clearTimeout }, meta = () => ({}) }) {
     this.store = store;
     this.isEnabled = isEnabled;
     this.exportDir = exportDir;
@@ -211,6 +224,7 @@ class SessionRecorder {
     this.debounceMs = debounceMs;
     this.now = now;
     this.timers = timers;
+    this.meta = meta;
     this.session = null;
     this.kind = 'interview';
     this.timer = null;
@@ -219,7 +233,7 @@ class SessionRecorder {
   current() { return this.session; }
 
   _ensure() {
-    if (!this.session) this.session = newSession({ kind: this.kind, now: this.now() });
+    if (!this.session) this.session = newSession({ kind: this.kind, now: this.now(), ...this.meta() });
     return this.session;
   }
 

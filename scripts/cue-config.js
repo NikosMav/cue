@@ -4,7 +4,9 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { resolveDataDirectory } = require('../src/config-path');
-const { PROFILE_FIELDS, mergeProfile } = require('../src/profile-import');
+const { mergeProfile } = require('../src/profile-import');
+const { effectiveSettings, ABOUT_ME_FIELDS } = require('../src/setups');
+const FLAT_PREP_FIELDS = ['resumeText', 'jobDescription', 'knowledgeBase', 'starStories', 'whyCompany', 'whyLeaving', 'workStyle', 'salaryTarget', 'questionsToAsk', 'aiRules'];
 
 try {
   const fallback = process.platform === 'win32'
@@ -18,9 +20,17 @@ try {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Invalid settings file.');
   const command = process.argv[2] || 'status';
   if (command === 'import-profile') {
-    if (!process.argv[3]) throw new Error('Usage: node scripts/cue-config.js import-profile <profile.json>');
+    if (!process.argv[3] || process.argv[3].startsWith('--')) throw new Error('Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
     const profile = JSON.parse(fs.readFileSync(path.resolve(process.argv[3]), 'utf8').replace(/^\uFEFF/, ''));
-    settings = mergeProfile(settings, profile);
+    const setupFlag = process.argv.indexOf('--setup');
+    let setupName = '';
+    if (setupFlag > 0) {
+      const nextArg = process.argv[setupFlag + 1];
+      if (!nextArg || nextArg.startsWith('--')) throw new Error('--setup needs a setup name. Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
+      setupName = nextArg;
+    }
+    const warnings = [];
+    settings = mergeProfile(settings, profile, { setupName, warnings });
     const backups = path.join(directory, 'backups');
     fs.mkdirSync(backups, { recursive: true });
     fs.writeFileSync(path.join(backups, `before-profile-${crypto.randomUUID()}.json`), raw, { mode: 0o600, flag: 'wx' });
@@ -33,12 +43,17 @@ try {
     } finally {
       if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
     }
+    // Printed after the import has actually landed; stdout stays the JSON status.
+    for (const warning of warnings) console.error(warning);
   } else if (command !== 'status') throw new Error('Commands: status, import-profile <profile.json>');
+  const view = effectiveSettings(settings);
   console.log(JSON.stringify({
     host: os.hostname(), platform: process.platform, settingsFile: file,
     modifiedUtc: fs.statSync(file).mtime.toISOString(), provider: settings.provider,
     credentialProviders: Object.entries(settings.apiKeys || {}).filter(([, value]) => typeof value === 'string' && value.trim()).map(([name]) => name),
-    profileFields: PROFILE_FIELDS.filter(name => typeof settings[name] === 'string' && settings[name].trim()),
+    profileFields: FLAT_PREP_FIELDS.filter((name) => typeof view[name] === 'string' && view[name].trim()),
+    aboutMeFields: ABOUT_ME_FIELDS.filter((name) => view.aboutMe[name] && view.aboutMe[name].trim()),
+    setups: view.setups.map((s) => ({ name: s.name, kind: s.kind, saveSessions: s.saveSessions, active: s.id === view.activeSetupId })),
     answerLength: settings.answerLength, includeScreen: settings.includeScreen
   }, null, 2));
 } catch (error) {

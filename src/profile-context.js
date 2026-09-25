@@ -4,6 +4,10 @@
 // the résumé cap: anything longer should live in a real prompt file, not in
 // a settings field.
 const MAX_AI_RULES_CHARS = 2000;
+// A setup's instructions and the global rules are each bounded by
+// MAX_AI_RULES_CHARS and joined with a blank line (src/setups.js), so the
+// combined text fits here without clipping the global rules at the end.
+const MAX_COMBINED_RULES_CHARS = 2 * MAX_AI_RULES_CHARS + 2;
 
 /**
  * Adds the user-written "AI rules" — instructions on HOW the AI should write —
@@ -27,7 +31,7 @@ const MAX_AI_RULES_CHARS = 2000;
 function appendAiRules(systemPrompt, aiRules) {
   const rules = typeof aiRules === 'string' ? aiRules.trim() : '';
   if (!rules) return systemPrompt;
-  const clipped = rules.slice(0, MAX_AI_RULES_CHARS);
+  const clipped = rules.slice(0, MAX_COMBINED_RULES_CHARS);
   return systemPrompt +
     '\n\nThe user has set the following rules for how you write. Follow them strictly — they override any default tone or formatting in the instructions above. ' +
     'If two rules conflict, prefer the rule that is more specific.\n' +
@@ -36,5 +40,6 @@ function appendAiRules(systemPrompt, aiRules) {
 
 module.exports = {
   MAX_AI_RULES_CHARS,
+  MAX_COMBINED_RULES_CHARS,
   appendAiRules,
 };
