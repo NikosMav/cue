@@ -181,3 +181,18 @@ and whether it finishes after the useful detail. Record word count, time to firs
 text and completion time separately. No paid live-model evaluation is part of the
 offline test suite. Use synthetic notes rather than private interview transcripts
 in public issues, examples and test fixtures.
+
+## Upstream syncs
+
+- 2026-09-25, upstream main at 707bd39 (54 commits). Where upstream removes
+  or overrides a fork feature the fork wins; everything else is taken. Taken:
+  DeepSeek and Cerebras, Gemini 3.x defaults and transcription models, Gemini
+  Live streaming, atomic settings writes with .bak recovery (merged into the
+  fork's store), grounded Recap with the empty-transcript guard, opt-in slide
+  captions, macOS native capture, Linux Wayland switches, mic and streaming
+  race guards. Not taken: removal of the interview tabs, chips and Follow-up;
+  meeting memory (Sessions already save transcripts, per setup, and "Any
+  conversation" saves nothing); the wider window with the left-side history
+  and upstream's drag (the fork's click-through and multi-monitor placement
+  assume the 700px window); swapped Assist/Say shortcuts; the opacity control
+  (its toolbar popover needs the click-through controller to know about it).
