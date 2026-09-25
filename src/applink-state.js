@@ -14,9 +14,10 @@
 //     diagnostic fact about it.
 //   • Whether an API key is set is a diagnosis. The key is a liability.
 
-function describeState({ state, transcript, settings, sttDisabled, shortcuts, windowAlive }) {
+function describeState({ state, transcript, settings, sttDisabled, shortcuts, windowAlive, slides }) {
   const keys = (settings && settings.apiKeys) || {};
   const turns = transcript || [];
+  const slideList = Array.isArray(slides) ? slides : [];
   return {
     capturing: state.capturing,
     busy: state.busy,
@@ -28,6 +29,10 @@ function describeState({ state, transcript, settings, sttDisabled, shortcuts, wi
 
     transcriptTurns: turns.length,
     lastTurnAt: turns.length ? new Date(turns[turns.length - 1].ts).toISOString() : null,
+
+    // Slides: counts only, never captions — same rule as transcript.
+    slideCount: slideList.length,
+    lastSlideAt: slideList.length ? new Date(slideList[slideList.length - 1].ts).toISOString() : null,
 
     provider: settings.provider,
     smart: !!settings.smart,
@@ -55,12 +60,22 @@ function consentCopy(request) {
   const trusted = request.verification === 'code-signature';
   const who = trusted ? request.callerName : `A program identifying itself as “${request.callerName}”`;
   const action = request.scope === 'action';
+  // Reading auto-captured slide captions is materially more sensitive than
+  // "start/stop listening" (the 'action' scope this call is otherwise gated
+  // behind) — it hands over text cue derived from the user's screen. It gets
+  // its own prompt, with copy that says so, rather than silently riding on
+  // whatever scope the caller already holds.
+  const slides = request.scope === 'slides';
 
   return {
     trusted,
-    message: action ? `${who} wants to control cue.` : `${who} wants to see what cue is doing.`,
+    message: slides ? `${who} wants to read cue’s captured slide captions.`
+      : action ? `${who} wants to control cue.`
+      : `${who} wants to see what cue is doing.`,
     detail:
-      (action
+      (slides
+        ? 'cue automatically captions slides shown on your screen during a meeting. This would let the caller read those captions — never a screenshot or the screen itself, and never your transcript, résumé or API keys. '
+        : action
         ? 'It would be able to start and stop listening. '
         : 'It would be able to read cue’s status, recent warnings and errors — never your transcript, your résumé or your API keys. ') +
       (trusted

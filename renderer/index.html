@@ -174,6 +174,8 @@
           <button data-provider="ollama">Ollama</button>
           <button data-provider="groq">Groq</button>
           <button data-provider="minimax">MiniMax</button>
+          <button data-provider="deepseek">DeepSeek</button>
+          <button data-provider="cerebras">Cerebras</button>
           <button data-provider="azure">Azure AI</button>
         </div>
 
@@ -184,6 +186,8 @@
         <div class="s-field"><span>Deepgram</span><input id="key-deepgram" type="password" placeholder="dg-..." autocomplete="off" /></div>
         <div class="s-field"><span>Custom</span><input id="key-custom" type="password" placeholder="optional" autocomplete="off" /></div>
         <div class="s-field"><span>MiniMax</span><input id="key-minimax" type="password" placeholder="MiniMax API key" autocomplete="off" /></div>
+        <div class="s-field"><span>DeepSeek</span><input id="key-deepseek" type="password" placeholder="sk-..." autocomplete="off" /></div>
+        <div class="s-field"><span>Cerebras</span><input id="key-cerebras" type="password" placeholder="csk-..." autocomplete="off" /></div>
 
         <label class="s-label">MiniMax region <span class="s-hint">keys are region-bound — a Global key will 401 against China, and vice versa</span></label>
         <div class="s-seg" id="minimax-region-seg">
@@ -296,6 +300,11 @@
         </div>
 
         <div class="s-status" id="whisper-status"></div>
+
+        <label class="s-label">Meeting slides <span class="s-hint">opt-in · captions shared slides while listening · memory only</span></label>
+        <div class="s-field"><span>Track slides</span><input id="slides-enabled" type="checkbox" style="width:auto;" /></div>
+        <div class="s-field"><span>Check every (ms)</span><input id="slides-interval" type="number" min="1500" max="15000" step="500" value="3000" /></div>
+        <div class="s-note">Checks a tiny thumbnail of your screen every few seconds and captions a slide with your chat model only when it changes. No images are kept; Clear drops the captions.</div>
       </div>
 
       <!-- Tab: About me — used by every setup -->

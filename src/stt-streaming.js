@@ -1,10 +1,13 @@
-// Streaming Speech-to-Text via OpenAI Realtime API (WebSocket transcription session)
-// or Deepgram Nova streaming. Falls back to batch Whisper/Gemini if streaming unavailable.
+// Streaming Speech-to-Text via OpenAI Realtime API (WebSocket transcription session),
+// Deepgram Nova streaming, or Gemini's transcribe-live model over the Live API.
+// Falls back to batch Whisper/Gemini if streaming unavailable.
 //
 // This module manages a persistent WebSocket connection for real-time transcription
 // with sub-200ms latency, interim results, and automatic reconnection.
 
-const { looksLikeHallucination, extractProfileTerms } = require('./stt');
+const { looksLikeHallucination, extractProfileTerms, transcribeGemini, buildVocabPrompt } = require('./stt');
+const { pcmToWav } = require('./wav');
+const { GEMINI_TRANSCRIBE_LIVE_MODEL } = require('./llm');
 
 // Deepgram caps keyterm prompting at roughly 500 tokens and recommends a
 // focused list; 40 short terms stays well inside that and the URL limit.
@@ -29,12 +32,15 @@ class OpenAIRealtimeSTT {
     this._reconnectAttempts = 0;
     this._maxReconnectAttempts = 5;
     this._reconnectDelay = 1000;
+    this._reconnectTimer = null;
     this._pendingAudio = [];
     this._sessionReady = false;
+    this._closedByUs = false; // disconnect() was called: ignore the socket's dying breaths, never reconnect
   }
 
   async connect() {
     if (this.ws && this.connected) return;
+    this._closedByUs = false;
 
     try {
       const WebSocket = require('ws');
@@ -42,13 +48,15 @@ class OpenAIRealtimeSTT {
       // The transcription model goes inside the session config
       const url = 'wss://api.openai.com/v1/realtime?intent=transcription';
 
-      this.ws = new WebSocket(url, {
+      const ws = new WebSocket(url, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`
         }
       });
+      this.ws = ws;
 
-      this.ws.on('open', () => {
+      ws.on('open', () => {
+        if (this.ws !== ws) return; // superseded by a later connect()/disconnect()
         this.connected = true;
         this._reconnectAttempts = 0;
         this.onStatusChange('connected');
@@ -71,7 +79,8 @@ class OpenAIRealtimeSTT {
         });
       });
 
-      this.ws.on('message', (data) => {
+      ws.on('message', (data) => {
+        if (this.ws !== ws) return;
         try {
           const event = JSON.parse(data.toString());
           this._handleEvent(event);
@@ -80,16 +89,21 @@ class OpenAIRealtimeSTT {
         }
       });
 
-      this.ws.on('close', (code) => {
+      ws.on('close', (code) => {
+        if (this.ws !== ws) return;
         this.connected = false;
         this._sessionReady = false;
         this.onStatusChange('disconnected');
-        if (code !== 1000 && !this.reconnecting) {
+        if (code !== 1000 && !this.reconnecting && !this._closedByUs) {
           this._attemptReconnect();
         }
       });
 
-      this.ws.on('error', (err) => {
+      ws.on('error', (err) => {
+        // Closing a socket that is still in the handshake makes `ws` emit
+        // "WebSocket was closed before the connection was established" — that
+        // is our own disconnect(), not a provider failure.
+        if (this.ws !== ws || this._closedByUs) return;
         this.onError({ provider: 'openai-realtime', message: err.message, status: null });
       });
 
@@ -197,18 +211,23 @@ class OpenAIRealtimeSTT {
     this.reconnecting = true;
     this._reconnectAttempts++;
     const delay = this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1);
-    setTimeout(() => {
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
       this.reconnecting = false;
-      this.connect();
+      if (!this._closedByUs) this.connect();
     }, Math.min(delay, 16000));
   }
 
   disconnect() {
+    this._closedByUs = true;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+    this.reconnecting = false;
     this._sessionReady = false;
     this._pendingAudio = [];
     if (this.ws) {
-      this.ws.close(1000);
-      this.ws = null;
+      const ws = this.ws;
+      this.ws = null; // detach first so the resulting close/error events are ignored
+      try { ws.close(1000); } catch (e) { /* ignore */ }
     }
     this.connected = false;
   }
@@ -235,12 +254,15 @@ class DeepgramStreamingSTT {
     this._reconnectAttempts = 0;
     this._maxReconnectAttempts = 5;
     this._reconnectDelay = 1000;
+    this._reconnectTimer = null;
     this._keepAliveInterval = null;
     this._committed = ''; // is_final segments not yet closed out by speech_final
+    this._closedByUs = false; // disconnect() was called: ignore the socket's dying breaths, never reconnect
   }
 
   async connect() {
     if (this.ws && this.connected) return;
+    this._closedByUs = false;
 
     try {
       const WebSocket = require('ws');
@@ -264,15 +286,18 @@ class DeepgramStreamingSTT {
 
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 
-      this.ws = new WebSocket(url, {
+      const ws = new WebSocket(url, {
         headers: { 'Authorization': `Token ${this.apiKey}` }
       });
+      this.ws = ws;
 
-      this.ws.on('open', () => {
+      ws.on('open', () => {
+        if (this.ws !== ws) return; // superseded by a later connect()/disconnect()
         this.connected = true;
         this._reconnectAttempts = 0;
         this.onStatusChange('connected');
         // Keep-alive every 3 seconds to prevent timeout
+        this._clearKeepAlive();
         this._keepAliveInterval = setInterval(() => {
           if (this.ws && this.ws.readyState === 1) {
             this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
@@ -280,21 +305,27 @@ class DeepgramStreamingSTT {
         }, 3000);
       });
 
-      this.ws.on('message', (data) => {
+      ws.on('message', (data) => {
+        if (this.ws !== ws) return;
         try {
           const msg = JSON.parse(data.toString());
           this._handleMessage(msg);
         } catch (e) { /* ignore */ }
       });
 
-      this.ws.on('close', (code) => {
+      ws.on('close', (code) => {
+        if (this.ws !== ws) return;
         this.connected = false;
         this._clearKeepAlive();
         this.onStatusChange('disconnected');
-        if (code !== 1000) this._attemptReconnect();
+        if (code !== 1000 && !this._closedByUs) this._attemptReconnect();
       });
 
-      this.ws.on('error', (err) => {
+      ws.on('error', (err) => {
+        // Closing a socket that is still in the handshake makes `ws` emit
+        // "WebSocket was closed before the connection was established" — that
+        // is our own disconnect(), not a provider failure.
+        if (this.ws !== ws || this._closedByUs) return;
         this.onError({ provider: 'deepgram', message: err.message, status: null });
       });
 
@@ -359,21 +390,228 @@ class DeepgramStreamingSTT {
     }
     this._reconnectAttempts++;
     const delay = this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1);
-    setTimeout(() => this.connect(), Math.min(delay, 16000));
+    this._reconnectTimer = setTimeout(() => { this._reconnectTimer = null; if (!this._closedByUs) this.connect(); }, Math.min(delay, 16000));
   }
 
   disconnect() {
+    this._closedByUs = true;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
     this._flushCommitted();
     this._clearKeepAlive();
     if (this.ws) {
-      // Send CloseStream message for clean shutdown
-      try { this.ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) { /* ignore */ }
-      this.ws.close(1000);
-      this.ws = null;
+      const ws = this.ws;
+      this.ws = null; // detach first so the resulting close/error events are ignored
+      // Send CloseStream message for clean shutdown (only meaningful on an open socket)
+      if (ws.readyState === 1) { try { ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) { /* ignore */ } }
+      try { ws.close(1000); } catch (e) { /* ignore */ }
     }
     this.connected = false;
   }
 }
+
+
+// ============================================================================
+// Gemini Live transcription (gemini-*-transcribe-live over the Live API)
+// Sends 16 kHz PCM as-is; the server streams interimInputTranscription (the
+// full hypothesis so far, refreshed every ~0.5s) and inputTranscription (final,
+// on a pause). Sessions are capped at 10 minutes, so an unexpected close is
+// normal — audio is buffered while the socket reconnects.
+// ============================================================================
+
+const GEMINI_LIVE_CONNECT_TIMEOUT_MS = 15000;
+const GEMINI_LIVE_MAX_PENDING_CHUNKS = 100; // ~10s of 100ms chunks while (re)connecting
+
+class GeminiLiveSTT {
+  constructor(apiKey, options = {}) {
+    this.apiKey = apiKey;
+    this.model = options.model || GEMINI_TRANSCRIBE_LIVE_MODEL;
+    this.vocabulary = options.vocabulary || [];
+    this.session = null;
+    this.connected = false;
+    this.onTranscript = options.onTranscript || (() => {});
+    this.onInterim = options.onInterim || (() => {});
+    this.onError = options.onError || (() => {});
+    this.onStatusChange = options.onStatusChange || (() => {});
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 5;
+    this._reconnectDelay = 1000;
+    this._reconnectTimer = null;
+    this._pendingAudio = [];
+    this._lastInterim = '';
+    this._closedByUs = false;
+    this._connecting = false;
+    this._conn = null; // token for the current socket so a stale one can't drive callbacks
+    // Injectable for tests; production lazily loads @google/genai.
+    this._createClient = options.createClient || ((apiKey) => {
+      const { GoogleGenAI } = require('@google/genai');
+      return new GoogleGenAI({ apiKey });
+    });
+  }
+
+  async connect() {
+    if (this.connected || this._connecting) return;
+    this._connecting = true;
+    this._closedByUs = false;
+    const conn = { closed: false };
+    this._conn = conn;
+    try {
+      const ai = this._createClient(this.apiKey);
+      // The SDK's connect() only resolves after setupComplete and never rejects:
+      // a rejected session (bad key, unknown model, quota) arrives as a socket
+      // close carrying the reason, so race it against that close and a timeout.
+      let rejectClosed = () => {};
+      const closedEarly = new Promise((_, reject) => { rejectClosed = reject; });
+      const attempt = ai.live.connect({
+        model: this.model,
+        config: {
+          responseModalities: ['TEXT'],
+          inputAudioTranscription: {
+            languageCodes: [], // auto-detect, like the batch Gemini path
+            customVocabulary: this.vocabulary.slice(0, 1000)
+          }
+        },
+        callbacks: {
+          onmessage: (msg) => { if (this._conn === conn) this._handleMessage(msg); },
+          onerror: (err) => {
+            if (this._conn !== conn) return;
+            this.onError({ provider: 'gemini-live', message: (err && err.message) || 'Gemini Live connection error', status: null });
+          },
+          onclose: (evt) => {
+            if (this._conn !== conn || conn.closed) return;
+            conn.closed = true;
+            const reason = (evt && evt.reason) || '';
+            if (!this.connected) { rejectClosed(new Error(reason || `Gemini Live closed before setup (code ${evt && evt.code})`)); return; }
+            this._onClosed(evt);
+          }
+        }
+      });
+      let timer = null;
+      const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Gemini Live connection timed out')), GEMINI_LIVE_CONNECT_TIMEOUT_MS); });
+      try {
+        this.session = await Promise.race([attempt, closedEarly, timeout]);
+      } finally {
+        clearTimeout(timer); // don't keep the process alive for a race that already settled
+      }
+      if (this._conn !== conn) { try { this.session.close(); } catch (e) { /* ignore */ } return; } // disconnect() raced us
+      this.connected = true;
+      this._reconnectAttempts = 0;
+      this.onStatusChange('connected');
+      this._flushPendingAudio();
+    } catch (e) {
+      this.session = null;
+      const message = (e && e.message) || String(e);
+      // Rejected sessions carry the API error in the close reason ("API key not
+      // valid", "... is not found for API version ...", quota text) — surface a
+      // status so the shared error mapping in stt.js/llm.js reads it the same.
+      const status = /not found|not supported/i.test(message) ? 404 : (/quota|rate limit|resource_exhausted/i.test(message) ? 429 : null);
+      this.onError({ provider: 'gemini-live', message, status });
+    } finally {
+      this._connecting = false;
+    }
+  }
+
+  _handleMessage(msg) {
+    const sc = msg && msg.serverContent;
+    if (!sc) return;
+    if (sc.interimInputTranscription && typeof sc.interimInputTranscription.text === 'string') {
+      this._lastInterim = sc.interimInputTranscription.text;
+      this.onInterim(this._lastInterim);
+    } else if (sc.inputTranscription && typeof sc.inputTranscription.text === 'string') {
+      const text = sc.inputTranscription.text.trim();
+      this._lastInterim = '';
+      if (text && !looksLikeHallucination(text)) this.onTranscript(text);
+      this.onInterim('');
+    }
+  }
+
+  // Server-initiated close: the 10-minute session cap, or a network blip.
+  _onClosed(evt) {
+    this.connected = false;
+    this.session = null;
+    this.onStatusChange('disconnected');
+    // Whatever the model had recognised so far is the best transcript of the
+    // utterance the close cut off; don't let it vanish.
+    this._flushInterimAsFinal();
+    if (this._closedByUs) return;
+    this._attemptReconnect();
+  }
+
+  _flushInterimAsFinal() {
+    const text = (this._lastInterim || '').trim();
+    this._lastInterim = '';
+    if (text && !looksLikeHallucination(text)) this.onTranscript(text);
+    this.onInterim('');
+  }
+
+  sendAudio(pcmBuffer) {
+    if (!this.connected || !this.session) {
+      // Buffer audio until the session is (re)connected so the words spoken
+      // across the 10-minute rollover are not lost.
+      this._pendingAudio.push(Buffer.from(pcmBuffer));
+      if (this._pendingAudio.length > GEMINI_LIVE_MAX_PENDING_CHUNKS) this._pendingAudio.shift();
+      return;
+    }
+    this._send(Buffer.from(pcmBuffer));
+  }
+
+  _send(buf) {
+    try {
+      this.session.sendRealtimeInput({ audio: { data: buf.toString('base64'), mimeType: 'audio/pcm;rate=16000' } });
+    } catch (e) {
+      this.onError({ provider: 'gemini-live', message: e.message, status: null });
+    }
+  }
+
+  _flushPendingAudio() {
+    while (this._pendingAudio.length > 0 && this.connected) this._send(this._pendingAudio.shift());
+  }
+
+  _attemptReconnect() {
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      this.onError({ provider: 'gemini-live', message: 'Max reconnection attempts reached', status: null });
+      return;
+    }
+    this._reconnectAttempts++;
+    const delay = this._reconnectDelay * Math.pow(2, this._reconnectAttempts - 1);
+    this._reconnectTimer = setTimeout(() => { this._reconnectTimer = null; if (!this._closedByUs) this.connect(); }, Math.min(delay, 16000));
+  }
+
+  disconnect() {
+    this._closedByUs = true;
+    this._conn = null; // orphan any in-flight connect so its callbacks are ignored
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+    this._pendingAudio = [];
+    this._flushInterimAsFinal();
+    if (this.session) {
+      try { this.session.sendRealtimeInput({ audioStreamEnd: true }); } catch (e) { /* ignore */ }
+      try { this.session.close(); } catch (e) { /* ignore */ }
+      this.session = null;
+    }
+    this.connected = false;
+  }
+}
+
+// ============================================================================
+// Batch STT (enhanced version of the original — used as fallback)
+// Supports Whisper and Gemini with better error handling
+// ============================================================================
+
+async function transcribeBatchOpenAI(apiKey, wav, model) {
+  const OpenAI = require('openai');
+  const toFile = OpenAI.toFile || require('openai/uploads').toFile;
+  const client = new OpenAI({ apiKey });
+  const file = await toFile(wav, 'audio.wav', { type: 'audio/wav' });
+  const res = await client.audio.transcriptions.create({
+    file,
+    model: model || 'whisper-1',
+    response_format: 'text',
+    language: 'en'
+  });
+  return (typeof res === 'string' ? res : res.text || '').trim();
+}
+
+// Shared with the batch path in stt.js so both use the transcribe model.
+const transcribeBatchGemini = transcribeGemini;
 
 // ============================================================================
 // Unified Streaming STT Factory
@@ -386,7 +624,7 @@ function createStreamingSTT(settings, channel, callbacks) {
   const selectedProvider = settings.sttProvider || 'auto';
   const { onTranscript, onInterim, onError, onStatusChange } = callbacks;
 
-  if (selectedProvider === 'local' || selectedProvider === 'gemini') {
+  if (selectedProvider === 'local') {
     return { type: 'batch', provider: selectedProvider, instance: null };
   }
 
@@ -415,7 +653,24 @@ function createStreamingSTT(settings, channel, callbacks) {
     return { type: 'streaming', provider: 'openai-realtime', instance: stt };
   }
 
-  // Priority 3: Batch fallback (Gemini or Whisper via old system). Custom has
+  // Priority 3: Gemini transcribe-live (word-by-word interims; one long-lived
+  // session per channel, so it sidesteps the per-request quota that bites the
+  // batch Gemini path). Opt-in only: its interim hypotheses get rewritten as
+  // it goes, which reads as glitchy next to Deepgram, so 'auto' with a
+  // Gemini-only key stays on batch. A failure here falls back to batch Gemini
+  // in main.js.
+  if (selectedProvider === 'gemini' && keys.gemini) {
+    const stt = new GeminiLiveSTT(keys.gemini, {
+      vocabulary: buildVocabPrompt(settings).split(',').map((t) => t.trim()).filter(Boolean),
+      onTranscript: (text) => onTranscript(channel, text),
+      onInterim: (text) => onInterim(channel, text),
+      onError,
+      onStatusChange: (status) => onStatusChange(channel, status)
+    });
+    return { type: 'streaming', provider: 'gemini-live', instance: stt };
+  }
+
+  // Priority 4: Batch fallback (Gemini or Whisper via old system). Custom has
   // no streaming protocol of its own (an arbitrary OpenAI-compatible endpoint
   // isn't assumed to speak Realtime), so an explicit 'custom' choice lands
   // here too and is served by createSTT()'s batch chain — same as local/gemini.
@@ -429,5 +684,8 @@ function createStreamingSTT(settings, channel, callbacks) {
 module.exports = {
   OpenAIRealtimeSTT,
   DeepgramStreamingSTT,
-  createStreamingSTT
+  GeminiLiveSTT,
+  createStreamingSTT,
+  transcribeBatchOpenAI,
+  transcribeBatchGemini
 };

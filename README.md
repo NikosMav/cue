@@ -140,6 +140,8 @@ cue uses **your own** API key, so it's free to run (you only pay your AI provide
 | **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) | Great for screen & coding help. Claude has no speech-to-text, so add an OpenAI or Gemini key too if you want the listening features. |
 | **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | One key does chat + transcription. |
 | **Azure AI Foundry** | [ai.azure.com](https://ai.azure.com) | Paste your **endpoint** plus your key in Settings. **Azure OpenAI:** `https://&lt;resource&gt;.openai.azure.com/openai` — **AI Foundry:** `https://&lt;host&gt;.cognitiveservices.azure.com` (cue appends `/openai/v1` itself). The **model** fields are your deployment names. No speech-to-text — add an OpenAI or Gemini key for listening. |
+| **DeepSeek** | [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) | OpenAI-compatible chat API. No speech-to-text — add an OpenAI or Gemini key too if you want the listening features. |
+| **Cerebras** | [cloud.cerebras.ai](https://cloud.cerebras.ai) | Fast OpenAI-compatible chat at `https://api.cerebras.ai/v1`. No speech-to-text — add an OpenAI, Gemini, or Deepgram key for listening. |
 | **Custom** | Your endpoint or gateway | Any OpenAI-compatible Chat Completions endpoint. The API key is optional for unauthenticated local servers. |
 
 To use an OpenAI-compatible endpoint, select **Custom** and configure its Base URL, API key, and Fast/Smart model IDs. Custom endpoints handle LLM requests only; listening continues to use Deepgram, OpenAI, or Gemini credentials.
@@ -161,6 +163,14 @@ Local mode is independent from the chat provider, so you can use local speech-to
 - Model files are downloaded only when you ask, support cancel/resume, and are checked against pinned byte counts and SHA-256 hashes.
 - Local mode never silently sends audio to a cloud fallback. A local failure is reported without sending the audio elsewhere.
 - Models are stored under Cue's Electron user-data directory and can be imported or deleted from Settings.
+
+### Optional — word-by-word transcription with only a Gemini key
+
+Deepgram and OpenAI keys stream transcripts word by word automatically. A Gemini key transcribes sentence by sentence unless you pick **Gemini** explicitly under **Settings → Audio**, which switches it to the `gemini-3.5-transcribe-live` streaming model (its running hypothesis gets revised as you speak, which some people find jumpy — that's why it's opt-in).
+
+### Optional — slide captions
+
+Under **Settings → Audio → Meeting slides**, cue can caption shared slides while it listens: it checks a tiny thumbnail of your screen every few seconds and, when the slide changes, captions it with your chat model. Captions live in memory only (no images are kept) and **Clear** drops them.
 
 ### Optional — tailor answers to your background
 

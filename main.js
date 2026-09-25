@@ -34,6 +34,15 @@ const publik = require('./src/publik');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
 // checkout → the publik option is simply absent from the provider picker).
 const publikBuild = publik.loadBuildConfig();
+const {
+  hashRGBA,
+  shouldEmitSlide,
+  createSlideStore,
+  clampSlidesConfig,
+  buildSlideSystem,
+  buildSlideUser,
+  DEFAULT_STABLE_REQUIRED
+} = require('./src/slides');
 
 // macOS system-audio loopback (the "them" channel via getDisplayMedia) does not
 // start on Electron 31–38 unless these Chromium features are enabled; without
@@ -42,6 +51,14 @@ const publikBuild = publik.loadBuildConfig();
 // harmless no-op. Must run before app is ready.
 if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
+}
+
+// Linux Wayland / Ozone native rendering configuration. Without this, Electron
+// falls back to XWayland even on a native Wayland session; 'auto' picks Wayland
+// when available and X11 otherwise. Harmless no-op on X11-only sessions.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
 }
 const { WhisperModelManager } = require('./src/whisper-model-manager');
 const { requireWhisperModel } = require('./src/whisper-model-catalog');
@@ -63,6 +80,7 @@ let shortcutStatus = {};
 let shortcutsSuspended = false; // while Settings records a new key combination
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
+const isLinux = process.platform === 'linux';
 
 // -------- Windows version helpers --------
 // WDA_EXCLUDEFROMCAPTURE (setContentProtection) requires Windows 10 build 19041+.
@@ -114,6 +132,14 @@ const state = { capturing: false, busy: false, transcribing: { you: false, them:
 let sttDisabled = false; // set when the key can't reach any speech model (stops retry spam)
 const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TURNS
 const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
+// -------- slides state (memory-only, never written to disk) --------
+let slideStore = createSlideStore({ maxSlides: 50 });
+let slideTimer = null;
+let slideLastHash = null;
+let slideStableCount = 0;
+let slideBusy = false;
+let slideDisabled = false; // set when the chat key rejects slide captions (stops cost spam)
+let slideTxCursor = 0; // transcript.length at last emitted slide
 const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
 let batchTranscriber = null;
 // The one answer being generated. A newer request cancels it instead of
@@ -270,6 +296,12 @@ async function getWhisperOverview() {
 }
 
 // -------- window --------
+function saveWindowPosition() {
+  if (!win || win.isDestroyed()) return;
+  const [x, y] = win.getPosition();
+  store.setSettings({ windowX: x, windowY: y });
+}
+
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
   const W = 700, H = 600;
@@ -291,6 +323,9 @@ function createWindow() {
     height: H,
     x: startX,
     y: startY,
+    // The window is shown inactive and never takes focus, so without this macOS spends the
+    // first click only activating it and a press on the drag handle does nothing.
+    acceptFirstMouse: true,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -327,7 +362,12 @@ function createWindow() {
   // we skip it silently and send a warning to the renderer instead.
   const shouldProtect = !process.env.CUE_NO_PROTECT && winSession.local;
   if (shouldProtect) {
-    if (WIN_SUPPORTS_CONTENT_PROTECTION) {
+    if (isLinux) {
+      // setContentProtection has no effect on Linux (no windowing-system-level
+      // capture-exclusion primitive it can map to) — skip the no-op call and
+      // say so, rather than pretending the window is hidden from screen shares.
+      console.log('[cue] Running on Linux: native screen protection (setContentProtection) is not supported and has been skipped.');
+    } else if (WIN_SUPPORTS_CONTENT_PROTECTION) {
       win.setContentProtection(true);
     } else {
       // Will notify the renderer after it loads
@@ -366,12 +406,7 @@ function createWindow() {
   });
   win.on('moved', () => {
     clearTimeout(moveSaveTimer);
-    moveSaveTimer = setTimeout(() => {
-      if (win && !win.isDestroyed()) {
-        const [x, y] = win.getPosition();
-        store.setSettings({ windowX: x, windowY: y });
-      }
-    }, 500);
+    moveSaveTimer = setTimeout(saveWindowPosition, 500);
   });
 
   win.setTitle('Cue'); // set before load
@@ -488,13 +523,22 @@ function initStreamingSTT() {
   streamingMode = false;
 
   ['you', 'them'].forEach((channel) => {
+    let instance = null; // set below; lets the callbacks tell a stale instance from the live one
     const sttInstance = createStreamingSTT(settings, channel, {
-      onTranscript: publishTranscript,
+      onTranscript: (ch, text) => {
+        if (instance && streamingSTT[ch] !== instance) return; // stale instance after a stop/start
+        publishTranscript(ch, text);
+      },
       onInterim: (ch, text) => {
+        if (instance && streamingSTT[ch] !== instance) return;
         send('stt:interim', { channel: ch, text });
         autoAnswer.noteInterim(ch, text);
       },
       onError: (err) => {
+        // A socket torn down by a quick stop/start can still report an error a
+        // moment later; acting on it would kill the sessions that replaced it
+        // and start the batch loop alongside them (double transcription).
+        if (instance && streamingSTT[channel] !== instance) return;
         console.log('[streaming-stt] error', err.provider, err.message);
         const batchFallbackAvailable = createSTT(settings).available;
         stopStreamingSTT(); // close WebSockets and clear keep-alive intervals
@@ -516,9 +560,10 @@ function initStreamingSTT() {
     });
 
     if (sttInstance.type === 'streaming' && sttInstance.instance) {
+      instance = sttInstance.instance;
       streamingMode = true;
-      streamingSTT[channel] = sttInstance.instance;
-      sttInstance.instance.connect();
+      streamingSTT[channel] = instance;
+      instance.connect();
     }
   });
 
@@ -535,9 +580,148 @@ function stopStreamingSTT() {
   streamingMode = false;
 }
 
+// -------- slides: auto tracking (opt-in, memory-only) --------
+// Cheap hash poll (32px thumbnail) every intervalMs; full-res VLM caption only
+// on stable change. Never blocks runFeature (own slideBusy flag). Images are
+// never stored — only hash + caption + transcript window.
+function getSlidesConfig() {
+  return clampSlidesConfig(store.getSettings().slides || {});
+}
+
+async function captureHashFrame() {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 32, height: 32 }
+  });
+  if (!sources.length) return null;
+  const img = sources[0].thumbnail;
+  if (!img || img.isEmpty()) return null;
+  const size = img.getSize();
+  const bmp = img.toBitmap();
+  if (!bmp || !size.width || !size.height) return null;
+  return { width: size.width, height: size.height, data: bmp };
+}
+
+async function captionSlide(imageDataUrl, transcriptSlice) {
+  const settings = store.getSettings();
+  const llm = createLLM(settings);
+  if (!llm.ready) throw new Error(llm.configurationError || 'Complete the provider settings.');
+  let watchdog = null;
+  const stalled = new Promise((_res, reject) => {
+    watchdog = setTimeout(() => reject(new Error('slide caption timed out')), STREAM_INACTIVITY_MS);
+  });
+  try {
+    return await Promise.race([
+      llm.stream({
+        system: buildSlideSystem(),
+        turns: [{ role: 'user', text: buildSlideUser(transcriptSlice) }],
+        imageDataUrl,
+        maxTokens: 300,
+        onToken: () => {}
+      }),
+      stalled
+    ]);
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+async function pollSlides() {
+  if (!state.capturing || slideBusy || slideDisabled) return;
+  const cfg = getSlidesConfig();
+  if (!cfg.enabled) return;
+  if (slideStore.count() >= cfg.maxSlides) return;
+  let frame = null;
+  try {
+    frame = await captureHashFrame();
+  } catch {
+    return;
+  }
+  if (!frame) return;
+  const newHash = hashRGBA(frame.width, frame.height, frame.data);
+  if (!newHash) return;
+  const decision = shouldEmitSlide(slideLastHash, newHash, {
+    threshold: cfg.threshold,
+    stableCount: slideStableCount,
+    requiredStable: DEFAULT_STABLE_REQUIRED
+  });
+  slideStableCount = decision.stableCount;
+  if (!decision.emit) {
+    if (slideLastHash && decision.distance != null && decision.distance <= cfg.threshold) slideLastHash = slideLastHash;
+    return;
+  }
+  slideLastHash = newHash;
+  slideStableCount = decision.stableCount;
+  // Stable change: take one full-res frame and caption it.
+  slideBusy = true;
+  try {
+    const imageDataUrl = await captureScreenshot();
+    if (!imageDataUrl) return;
+    const txStart = slideTxCursor;
+    const txEnd = transcript.length;
+    const slice = transcript.slice(txStart, txEnd).slice(-8);
+    const caption = (await captionSlide(imageDataUrl, slice) || '').trim();
+    if (!caption) return;
+    const slide = slideStore.add({ hash: newHash, caption, txStart, txEnd });
+    slideTxCursor = txEnd;
+    send('slides:update', { count: slideStore.count(), last: slide });
+    recordEvent({ level: 'info', event: 'slide_captured', msg: 'slide ' + slideStore.count() + ' captioned' });
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    if (/429|quota|401|403|model_not_found/i.test(msg)) {
+      slideDisabled = true;
+      send('status', { message: 'Slide captions paused: ' + msg });
+    } else {
+      console.log('[slides] caption failed', msg);
+    }
+  } finally {
+    slideBusy = false;
+  }
+}
+
+function startSlideLoop() {
+  stopSlideLoop();
+  const cfg = getSlidesConfig();
+  slideTimer = setInterval(() => { pollSlides().catch(() => {}); }, cfg.intervalMs);
+  if (slideTimer.unref) slideTimer.unref();
+}
+
+function stopSlideLoop() {
+  if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+}
+
+function resetSlidesSession() {
+  slideStore.clear();
+  slideLastHash = null;
+  slideStableCount = 0;
+  slideBusy = false;
+  slideDisabled = false;
+  slideTxCursor = transcript.length;
+}
+
 // -------- audio routing (streaming or batch) --------
+// Per-channel level report every few seconds while capturing, so "cue never
+// hears me" reports can be told apart: no chunks (capture never reached the
+// main process), chunks but rms≈0 (a silent/muted device), or healthy audio
+// that the transcriber is dropping.
+const AUDIO_LEVEL_LOG_MS = 5000;
+const audioLevels = { you: { chunks: 0, peakRms: 0 }, them: { chunks: 0, peakRms: 0 }, lastLog: 0 };
+function noteAudioLevel(channel, buf) {
+  const lv = audioLevels[channel];
+  lv.chunks++;
+  if (buf.length >= 2) lv.peakRms = Math.max(lv.peakRms, rms16(buf));
+  const now = Date.now();
+  if (now - audioLevels.lastLog < AUDIO_LEVEL_LOG_MS) return;
+  audioLevels.lastLog = now;
+  const fmt = (c) => `${c}: chunks=${audioLevels[c].chunks} peakRms=${Math.round(audioLevels[c].peakRms)}`;
+  console.log(`[audio] ${fmt('you')} | ${fmt('them')} (gate=${RMS_GATE}, mode=${localWhisperTranscriber ? 'local' : streamingMode ? 'streaming' : 'batch'})`);
+  audioLevels.you = { chunks: 0, peakRms: 0 };
+  audioLevels.them = { chunks: 0, peakRms: 0 };
+}
+
 function routeAudio(channel, pcmBuffer) {
   const buf = Buffer.from(pcmBuffer);
+  noteAudioLevel(channel, buf);
 
   if (practice.active) {
     // In practice cue is the interviewer: meeting audio would only echo its
@@ -587,7 +771,14 @@ async function setCapturing(active) {
         await startLocalWhisper(settings);
         state.capturing = true;
         console.log('[cue] capture started, mode: local');
+        slideDisabled = false;
+        slideTxCursor = transcript.length;
+        slideStore = createSlideStore({ maxSlides: getSlidesConfig().maxSlides });
+        slideLastHash = null;
+        slideStableCount = 0;
+        startSlideLoop();
         send('capture:state', { active: true, streaming: false, mode: 'local' });
+        send('slides:update', { count: 0, last: null });
         return true;
       } catch (error) {
         state.capturing = false;
@@ -610,8 +801,16 @@ async function setCapturing(active) {
     if (!streaming) {
       startBatchTranscription();
     }
+    slideDisabled = false;
+    slideTxCursor = transcript.length;
+    const slideCfg = getSlidesConfig();
+    slideStore = createSlideStore({ maxSlides: slideCfg.maxSlides });
+    slideLastHash = null;
+    slideStableCount = 0;
+    startSlideLoop();
     console.log('[cue] capture started, mode:', streaming ? 'streaming' : 'batch');
     send('capture:state', { active: true, streaming: streamingMode, mode: streaming ? 'streaming' : 'batch' });
+    send('slides:update', { count: 0, last: null });
     return true;
   }
 
@@ -619,6 +818,7 @@ async function setCapturing(active) {
   autoAnswer.reset();
   stopBatchTranscription();
   stopStreamingSTT();
+  stopSlideLoop();
   vad.you.reset(); vad.them.reset();
   const stoppingLocalTranscriber = localWhisperTranscriber;
   localWhisperTranscriber = null;
@@ -715,6 +915,14 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
     const queuedScreens = mode === 'leetcode' ? screenshotQueue.slice() : [];
     emit('llm:start', { userBubble: bubbleFor(mode, def, text, queuedScreens.length), small: !!def.small, category: request.category, mode, auto });
 
+    // A recap of nothing comes back as plausible generic filler. Say so instead.
+    if (def.transcriptRequired && transcript.length === 0) {
+      emit('llm:error', { message: state.capturing
+        ? 'Nothing has been transcribed yet. Let the conversation run a little, then try again.'
+        : 'Nothing captured yet. Start listening first so cue can hear the conversation.' });
+      return;
+    }
+
     if (!llm.ready) {
       const message = llm.configurationError ||
         (llm.model ? 'Add your ' + settings.provider + ' key in Settings → Keys to get answers.'
@@ -796,7 +1004,13 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
 // Redact on the way out, strip on the way in: the publik key never enters the
 // renderer, and the renderer's whole-object Save can never clobber it.
 ipcMain.handle('settings:get', () => store.redactForRenderer(store.getSettings()));
-ipcMain.handle('settings:set', (_e, patch) => { sttDisabled = false; return store.redactForRenderer(store.setRendererSettings(patch)); });
+ipcMain.handle('settings:set', (_e, patch) => {
+  sttDisabled = false;
+  const next = store.setRendererSettings(patch);
+  // Restart slide polling with the new interval when capturing (keeps slides).
+  if (state.capturing) startSlideLoop();
+  return store.redactForRenderer(next);
+});
 
 // -------- publik API --------
 // Contract: ~/publik-api-research/CONTRACT.md. The key is minted only after
@@ -1033,6 +1247,8 @@ function resetConversation() {
 }
 ipcMain.handle('transcript:clear', () => {
   const savedId = resetConversation();
+  resetSlidesSession();
+  send('slides:update', { count: 0, last: null });
   return { ok: true, savedId };
 });
 
@@ -1205,6 +1421,18 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
     if (debriefInFlight === controller) debriefInFlight = null;
   }
 });
+ipcMain.handle('slides:list', () => slideStore.list());
+ipcMain.handle('slides:state', () => ({
+  ...getSlidesConfig(),
+  count: slideStore.count(),
+  polling: !!slideTimer,
+  disabled: slideDisabled
+}));
+ipcMain.handle('slides:clear', () => {
+  resetSlidesSession();
+  send('slides:update', { count: 0, last: null });
+  return { ok: true };
+});
 ipcMain.on('ask', (_e, payload) => runFeature(payload.mode, payload.text));
 ipcMain.on('llm:cancel', () => { cancelActiveRequest('stopped'); });
 ipcMain.on('screenshot:queue', () => { queueScreenshot(); });
@@ -1244,7 +1472,13 @@ ipcMain.handle('profile:pickDocument', async () => {
   }
 });
 ipcMain.handle('applink:state', () => appLinkConsentState());
-ipcMain.handle('applink:revoke', (_e, callerId) => revokeAppLinkCaller(callerId));
+ipcMain.handle('applink:revoke', (_e, callerId) => {
+  // Forgetting a caller also clears its separate slide-caption consent decision,
+  // so a caller the user re-approves later is asked about slides again too,
+  // rather than silently inheriting whatever it was granted or denied before.
+  store.clearSlidesConsent(callerId);
+  return revokeAppLinkCaller(callerId);
+});
 
 // -------- permissions IPC --------
 ipcMain.handle('permissions:check', () => getPermissionStatus());
@@ -1508,6 +1742,7 @@ function launchApp() {
     }
   });
 
+
   const allowMedia = (permission) => permission === 'media' || permission === 'microphone' || permission === 'audioCapture' || permission === 'display-capture' || permission === 'screen';
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowMedia(permission)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowMedia(permission));
@@ -1556,8 +1791,12 @@ function launchApp() {
       sttDisabled,
       shortcuts: { ...shortcutState },
       windowAlive: !!(win && !win.isDestroyed()),
+      slides: slideStore.list(),
     }),
     setCapturing,
+    getSlides: () => slideStore.list(),
+    getSlidesConsent: (callerId) => store.getSlidesConsent(callerId),
+    setSlidesConsent: (callerId, decision) => store.setSlidesConsent(callerId, decision),
     // Looked up rather than captured: the window is recreated on 'activate',
     // so a reference taken at startup goes stale.
     getWindow: () => win,
@@ -1620,9 +1859,14 @@ app.on('will-quit', () => {
   // behind is harmless anyway because readers check whether the PID is alive.
   // Delaying shutdown to tidy a directory would be the wrong trade.
   stopAppLink();
+  stopSlideLoop();
   if (whisperModelManager?.activeDownload) {
     whisperModelManager.cancelDownload(whisperModelManager.activeDownload.modelId);
   }
   if (localWhisperTranscriber) localWhisperTranscriber.forceStop().catch(() => {});
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', (e) => {
+  // Don't quit while the permissions window is open — the user may be in System Settings
+  if (permWin) { e.preventDefault(); return; }
+  app.quit();
+});

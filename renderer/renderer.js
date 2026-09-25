@@ -595,10 +595,18 @@
   });
 
   // Hide / collapse
+  // Hide takes the transcript sidebar with it and brings it back on expand.
+  let reopenSidebarOnExpand = false;
   function toggleHide() {
     const collapsed = $('#panel').classList.toggle('collapsed');
     $('#hide-btn').classList.toggle('collapsed', collapsed);
     $('#live-dot').style.display = collapsed ? 'none' : '';
+    if (collapsed) {
+      reopenSidebarOnExpand = sidebarOpen;
+      if (sidebarOpen) hideSidebar();
+    } else if (reopenSidebarOnExpand) {
+      showSidebar();
+    }
   }
   $('#hide-btn').addEventListener('click', toggleHide);
   cue.on('hide:toggle', toggleHide);
@@ -661,10 +669,15 @@
 
   // ---- capture: mic (renderer side) — uses AudioWorklet (modern, off-main-thread) ----
   let audioCtx = null, micStream = null, micWorklet = null;
+  // Generation counter: startMic() awaits getUserMedia, so a second call (or a
+  // stopMic()) can land mid-flight. A superseded stream is stopped instead of
+  // wired up, so two pipelines never feed the "you" channel and none stays hot.
+  let micGen = 0;
   async function startMic() {
     if (micStream) return;
+    const gen = ++micGen;
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -673,6 +686,11 @@
           sampleRate: 16000
         }
       });
+      if (gen !== micGen || micStream) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      micStream = stream;
       // getUserMedia can resolve with a stream that has no usable audio track
       // (e.g. a virtual/placeholder device, or a device that was unplugged
       // between permission grant and capture start). Fail loudly here instead
@@ -736,6 +754,7 @@
     }
   }
   function stopMic() {
+    micGen++; // invalidate any startMic() still waiting on getUserMedia
     if (micWorklet) {
       if (micWorklet._legacy) {
         micWorklet.proc.disconnect(); micWorklet.proc.onaudioprocess = null;
@@ -1130,6 +1149,11 @@
       const label = document.getElementById('stt-status');
       if (label) { label.textContent = sttLabelText(sttState); label.className = 'stt-status stt-streaming'; }
     }
+  });
+  cue.on('slides:update', ({ count, last }) => {
+    if (!count) return;
+    const title = last && last.caption ? last.caption.split('\n')[0].slice(0, 80) : 'Slide ' + count;
+    showToast(`Slide ${count} captured · ${title}`, 3000);
   });
   cue.on('vad:state', ({ channel, speaking }) => {
     setLiveDotState(speaking ? 'speaking' : 'idle');
@@ -1679,6 +1703,8 @@
     $('#key-ollama').value = settings.apiKeys.ollama || '';
     $('#key-groq').value = settings.apiKeys.groq || '';
     $('#key-minimax').value = settings.apiKeys.minimax || '';
+    $('#key-deepseek').value = settings.apiKeys.deepseek || '';
+    $('#key-cerebras').value = settings.apiKeys.cerebras || '';
     document.querySelectorAll('#minimax-region-seg button').forEach((b) => b.classList.toggle('on', b.dataset.region === (settings.minimaxRegion || 'global_en')));
     $('#key-azure').value = settings.apiKeys.azure || '';
     $('#azure-endpoint').value = settings.azureEndpoint || '';
@@ -1702,6 +1728,9 @@
     const localWhisper = settings.localWhisper || { modelId: 'base.en', language: 'auto', threads: 0 };
     $('#whisper-language').value = localWhisper.language || 'auto';
     $('#whisper-threads').value = Number(localWhisper.threads) || 0;
+    const slidesCfg = settings.slides || { enabled: false, intervalMs: 3000 };
+    $('#slides-enabled').checked = !!slidesCfg.enabled;
+    $('#slides-interval').value = slidesCfg.intervalMs || 3000;
     fillAboutMe();
     fillSetupForm(editingSetupId || settings.activeSetupId);
     // Style tab
@@ -1767,7 +1796,7 @@
 
   function statusText() {
     const k = settings.apiKeys;
-    const labels = { publik: 'publik API', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', deepgram: 'Deepgram', custom: 'Custom', ollama: 'Ollama', groq: 'Groq', minimax: 'MiniMax', azure: 'Azure AI Foundry' };
+    const labels = { publik: 'publik API', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', deepgram: 'Deepgram', custom: 'Custom', ollama: 'Ollama', groq: 'Groq', minimax: 'MiniMax', deepseek: 'DeepSeek', cerebras: 'Cerebras', azure: 'Azure AI Foundry' };
     const has = Object.keys(labels).filter((p) => k[p]).map((p) => labels[p]);
     const publikPart = settings.provider === 'publik' && publikState
       ? ` · ${publikState.connected ? (publikState.balanceLabel ? `balance ${publikState.balanceLabel}` : 'connected') : 'not set up'}`
@@ -2130,6 +2159,8 @@
     settings.apiKeys.ollama = $('#key-ollama').value.trim();
     settings.apiKeys.groq = $('#key-groq').value.trim();
     settings.apiKeys.minimax = $('#key-minimax').value.trim();
+    settings.apiKeys.deepseek = $('#key-deepseek').value.trim();
+    settings.apiKeys.cerebras = $('#key-cerebras').value.trim();
     settings.apiKeys.azure = $('#key-azure').value.trim();
     settings.azureEndpoint = $('#azure-endpoint').value.trim();
     if (!settings.models[settings.provider]) settings.models[settings.provider] = {};
@@ -2145,7 +2176,7 @@
     // a deliberate choice and never switched away from.
     const keylessProviders = ['ollama', 'custom', 'publik'];
     if (!keylessProviders.includes(settings.provider) && !settings.apiKeys[settings.provider]) {
-      const keyedProviders = ['openai', 'anthropic', 'gemini', 'groq', 'minimax', 'azure'];
+      const keyedProviders = ['openai', 'anthropic', 'gemini', 'groq', 'minimax', 'deepseek', 'cerebras', 'azure'];
       const justFilled = keyedProviders.find((p) => settings.apiKeys[p]);
       if (justFilled && justFilled !== settings.provider) {
         settings.provider = justFilled;
@@ -2164,6 +2195,12 @@
     settings.localWhisper.modelId = $('#whisper-model').value || settings.localWhisper.modelId || 'base.en';
     settings.localWhisper.language = $('#whisper-language').value || 'auto';
     settings.localWhisper.threads = Math.max(0, Math.min(64, Number.parseInt($('#whisper-threads').value, 10) || 0));
+    // Slides (opt-in, memory only)
+    settings.slides = {
+      ...(settings.slides || {}),
+      enabled: $('#slides-enabled').checked,
+      intervalMs: Math.max(1500, Math.min(15000, Number.parseInt($('#slides-interval').value, 10) || 3000))
+    };
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
@@ -2440,7 +2477,7 @@
 
   // ---- global keys -------------------------------------------------------
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !scrim.classList.contains('hidden')) closeSettings();
+    if (e.key === 'Escape' && !scrim.classList.contains('hidden')) void closeSettings();
     else if (e.key === 'Escape' && !sessionsScrim.classList.contains('hidden')) closeSessions();
     // Escape with nothing else to close stops the answer being written.
     else if (e.key === 'Escape' && busy && !(document.activeElement === input && input.value.trim())) cue.cancelAnswer();

@@ -13,7 +13,7 @@
 // packages/app-link. Do not edit it here.
 
 const { app, dialog, ipcMain } = require('electron');
-const { AppLinkServer } = require('../vendor/app-link');
+const { AppLinkServer, ERROR_CODES } = require('../vendor/app-link');
 const { describeState, consentCopy } = require('./applink-state');
 
 let link = null;
@@ -125,6 +125,51 @@ function startAppLink(deps) {
         msg: `${caller.name} ${active ? 'started' : 'stopped'} listening`,
       });
       return { capturing: active };
+    },
+  });
+
+  // Forward-only slide access: captions leave only via this consented action,
+  // never via get_state (which stays counts-only). No images are ever returned.
+  //
+  // Reading slide captions is a materially different, more sensitive
+  // capability than "start/stop listening" — the only other thing the link's
+  // 'action' scope currently gates. A caller already trusted for that is NOT
+  // automatically trusted for this: it gets its own, separately-recorded
+  // consent decision (src/store.js's applinkSlidesConsent), asked for with
+  // copy that says specifically what it is (see applink-state.js's 'slides'
+  // branch of consentCopy), the first time this action is actually invoked.
+  link.action('get_slides', {
+    description: 'List auto-captured slide captions for this meeting (memory-only)',
+    inputSchema: { type: 'object', properties: {} },
+    handler: async (_args, { caller }) => {
+      const getDecision = typeof deps.getSlidesConsent === 'function' ? deps.getSlidesConsent : () => undefined;
+      const setDecision = typeof deps.setSlidesConsent === 'function' ? deps.setSlidesConsent : () => {};
+      let decision = getDecision(caller.id);
+      if (decision !== 'granted' && decision !== 'denied') {
+        // verification: 'none' — this layer cannot see the vendor link's own
+        // (possibly stronger) verification of the caller, only that it
+        // already holds the 'action' scope; hedge rather than overstate it.
+        const allowed = await requestConsent({ callerName: caller.name, scope: 'slides', verification: 'none' }, deps);
+        decision = allowed ? 'granted' : 'denied';
+        setDecision(caller.id, decision);
+        link.record({
+          level: 'info',
+          event: 'applink_slides_consent',
+          msg: `${caller.name} was ${decision === 'granted' ? 'granted' : 'denied'} slide-caption access`,
+        });
+      }
+      if (decision !== 'granted') {
+        const error = new Error('the user has not granted slide-caption access to this app');
+        error.rpcCode = ERROR_CODES.SCOPE_DENIED;
+        throw error;
+      }
+      const slides = typeof deps.getSlides === 'function' ? deps.getSlides() : [];
+      link.record({
+        level: 'info',
+        event: 'applink_get_slides',
+        msg: `${caller.name} read ${slides.length} slide captions`,
+      });
+      return { count: slides.length, slides };
     },
   });
 

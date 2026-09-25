@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('cue', {
   systemPcm: (arrayBuffer) => ipcRenderer.send('system:pcm', arrayBuffer),
   setUiRects: (rects) => ipcRenderer.send('mouse:rects', rects),
   clearTranscript: () => ipcRenderer.invoke('transcript:clear'),
+  slidesList: () => ipcRenderer.invoke('slides:list'),
+  slidesState: () => ipcRenderer.invoke('slides:state'),
+  slidesClear: () => ipcRenderer.invoke('slides:clear'),
   openPane: (url) => ipcRenderer.send('open-pane', url),
   publikState: () => ipcRenderer.invoke('publik:state'),
   publikAcceptDisclosure: () => ipcRenderer.invoke('publik:accept-disclosure'),
@@ -69,7 +72,7 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }

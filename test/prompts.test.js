@@ -29,6 +29,29 @@ test('followup mode returns a bullet list', () => {
   assert.match(system, /bullet list|bullets/i);
 });
 
+// MODES.recap is the interview layer; recaps of other conversations use the
+// General layer (see general-layer.test.js).
+test('recap is grounded in the transcript', () => {
+  const system = MODES.recap.buildSystem(null);
+  assert.match(system, /actually said|only what is in the transcript/i, 'recap must be grounded in the transcript');
+  assert.match(system, /generic/i, 'recap must forbid generic filler');
+  assert.equal(MODES.recap.transcriptRequired, true, 'recap needs a transcript to be meaningful');
+  // Modes that also take a screenshot can run on an empty transcript.
+  assert.ok(!MODES.assist.transcriptRequired);
+  assert.ok(!MODES.ask.transcriptRequired);
+  assert.ok(!MODES.leetcode.transcriptRequired);
+});
+
+test('recap user turn carries the real conversation', () => {
+  const transcript = [
+    { channel: 'them', text: 'We shipped the Terraform pipeline on Tuesday.', ts: 1 },
+    { channel: 'you', text: 'How long did the deploy take?', ts: 2 }
+  ];
+  const turn = MODES.recap.build({ transcript, userText: '' });
+  assert.match(turn, /Them: We shipped the Terraform pipeline on Tuesday\./);
+  assert.match(turn, /You: How long did the deploy take\?/);
+});
+
 test('all modes have a build function', () => {
   for (const [name, mode] of Object.entries(MODES)) {
     assert.equal(typeof mode.build, 'function', `${name}.build must be a function`);

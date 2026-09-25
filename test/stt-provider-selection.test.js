@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createSTT } = require('../src/stt');
 const { createStreamingSTT } = require('../src/stt-streaming');
+const { CURRENT_GEMINI_DEFAULT } = require('../src/llm');
 
 const callbacks = {
   onTranscript() {},
@@ -65,4 +66,36 @@ test('auto mode still never reaches for the Custom chat key for STT (unchanged f
   });
   assert.equal(speechToText.available, false);
   assert.deepEqual(speechToText.providers, []);
+});
+
+// Regression for issue #25: Settings held a working Gemini model, but the STT
+// path ignored settings.models entirely and hardcoded its own id — so
+// transcription 404'd against a model the user had never selected, and the
+// error text named that unfamiliar id back at them.
+test('Gemini STT transcribes with the model configured in Settings', () => {
+  const stt = createSTT({
+    sttProvider: 'gemini',
+    apiKeys: { gemini: 'gemini-key' },
+    models: { gemini: { fast: 'gemini-3.5-flash-lite', smart: 'gemini-3.6-flash' } }
+  });
+  assert.deepEqual(stt.models, ['gemini-3.5-flash-lite']);
+});
+
+test('Gemini STT honours the smart tier the same way the chat path does', () => {
+  const stt = createSTT({
+    sttProvider: 'gemini',
+    smart: true,
+    apiKeys: { gemini: 'gemini-key' },
+    models: { gemini: { fast: 'gemini-3.5-flash-lite', smart: 'gemini-3.6-flash' } }
+  });
+  assert.deepEqual(stt.models, ['gemini-3.6-flash']);
+});
+
+test('Gemini STT migrates a retired model saved on disk instead of 404ing forever', () => {
+  const stt = createSTT({
+    sttProvider: 'gemini',
+    apiKeys: { gemini: 'gemini-key' },
+    models: { gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash' } }
+  });
+  assert.deepEqual(stt.models, [CURRENT_GEMINI_DEFAULT]);
 });

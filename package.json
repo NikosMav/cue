@@ -11,8 +11,10 @@
     "prepare:whisper": "node scripts/prepare-whisper-runtime.js",
     "verify:whisper-runtime": "node scripts/verify-whisper-runtime.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --mac zip",
-    "dist:mac": "electron-builder --mac zip",
+    "dist": "electron-builder --mac zip --x64 --arm64",
+    "dist:mac": "electron-builder --mac zip --x64 --arm64",
+    "dist:mac:x64": "electron-builder --mac zip --x64",
+    "dist:mac:arm64": "electron-builder --mac zip --arm64",
     "dist:win": "electron-builder --win",
     "pack:win": "electron-builder --win --dir",
     "dist:linux": "electron-builder --linux AppImage --x64",
@@ -27,7 +29,7 @@
     "cross-platform"
   ],
   "devDependencies": {
-    "electron": "33.2.1",
+    "electron": "^33.2.1",
     "electron-builder": "^26.15.3",
     "extract-zip": "^2.0.1",
     "resedit": "^3.0.2",

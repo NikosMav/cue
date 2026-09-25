@@ -8,10 +8,19 @@ const CUSTOM_PROVIDER = 'custom';
 const PUBLIK_PROVIDER = publik.PUBLIK_PROVIDER;
 // gemini-2.0-flash was Google's default here until it was deprecated (Feb 2026)
 // and fully retired (Mar 3 2026) — every request against it now 404s with a
-// generic "exception parsing response" body. gemini-2.5-flash is the model
-// Google's own SDK examples standardize on and is documented as free-tier
-// available, so it is the single default used everywhere in this file.
-const CURRENT_GEMINI_DEFAULT = 'gemini-2.5-flash';
+// generic "exception parsing response" body. gemini-3.8-flash is the current
+// Flash release (Aug 2026), so it is the single default used everywhere in
+// this file and for Gemini transcription in stt.js / stt-streaming.js.
+const CURRENT_GEMINI_DEFAULT = 'gemini-3.8-flash';
+// Purpose-built speech-to-text model: no thinking tokens, returns nothing on
+// silence, and answers with an `audioTranscription` part instead of `text`
+// (see extractGeminiTranscript in stt.js). Falls back to
+// CURRENT_GEMINI_DEFAULT if Google ever retires it.
+const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe';
+// Streaming counterpart over the Live API (bidiGenerateContent): word-by-word
+// interim hypotheses plus a final on each pause. Used by GeminiLiveSTT in
+// stt-streaming.js; the batch model above is the fallback when it fails.
+const GEMINI_TRANSCRIBE_LIVE_MODEL = 'gemini-3.5-transcribe-live';
 // claude-3-5-haiku-latest / claude-3-5-sonnet-latest were retired by Anthropic
 // (every claude-2.x and claude-3.x id 404s with not_found_error). Fast is the
 // current Haiku, which answers without thinking; Smart is the current Opus,
@@ -20,21 +29,43 @@ const CURRENT_GEMINI_DEFAULT = 'gemini-2.5-flash';
 const CURRENT_ANTHROPIC_DEFAULT_FAST = 'claude-haiku-4-5';
 const CURRENT_ANTHROPIC_DEFAULT_SMART = 'claude-opus-5';
 const DEFAULT_MODELS = {
+  cerebras: 'qwen-3.8-27b',
   openai: 'gpt-4.1-mini',
   anthropic: CURRENT_ANTHROPIC_DEFAULT_FAST,
   gemini: CURRENT_GEMINI_DEFAULT,
   ollama: 'llama3.2',
   groq: 'llama-3.1-8b-instant',
   minimax: 'MiniMax-M2.7',
+  // deepseek-chat/deepseek-reasoner were retired 2026-07-24 and now 404; the
+  // replacement aliases are deepseek-flash (non-thinking) and deepseek-v4-pro
+  // (thinking), so those are the defaults used everywhere in this file.
+  deepseek: 'deepseek-flash',
   azure: 'gpt-4o-mini',
   publik: publik.DEFAULT_MODELS.fast
 };
+const CEREBRAS_BASE_URL = 'https://api.cerebras.ai/v1';
 
-// Gemini model ids that Google has since deprecated/retired. A settings file
-// saved before this fix can still have one of these persisted on disk, so
-// createLLM migrates them at read time rather than only fixing the default —
-// otherwise an existing user would keep re-hitting the same 404 forever.
-const DEAD_GEMINI_MODEL_RE = /^gemini-(1\.0|1\.5|2\.0)(?:-|$)/i;
+// Gemini model ids that Google has since deprecated/retired (the 2.5 family
+// went "no longer available to new users" in Sep 2026). A settings file saved
+// before this fix can still have one of these persisted on disk, so
+// resolveGeminiModel migrates them at read time rather than only fixing the
+// default — otherwise an existing user would keep re-hitting the same 404
+// forever.
+const DEAD_GEMINI_MODEL_RE = /^gemini-(1\.0|1\.5|2\.0|2\.5)(?:-|$)/i;
+
+// Single place that answers "which Gemini model should this request use?".
+// Both the chat path (createLLM) and the transcription paths (src/stt.js,
+// src/stt-streaming.js) go through here. STT used to skip this and hardcode
+// the default instead, so a user who picked a working model in Settings still
+// got 404s from a model they had never selected — the app reported a failure
+// against a model id that appeared nowhere in their config.
+function resolveGeminiModel(settings) {
+  const s = settings || {};
+  const tier = s.smart ? 'smart' : 'fast';
+  const configured = ((s.models || {}).gemini || {})[tier];
+  if (!configured || DEAD_GEMINI_MODEL_RE.test(configured)) return CURRENT_GEMINI_DEFAULT;
+  return configured;
+}
 
 // Same self-heal, for Anthropic: matches every retired claude-2.x/claude-3.x
 // id (including the "-latest" aliases), so a settings file saved back when
@@ -43,7 +74,16 @@ const DEAD_GEMINI_MODEL_RE = /^gemini-(1\.0|1\.5|2\.0)(?:-|$)/i;
 // live model on next read instead of permanently re-hitting the same 404.
 const DEAD_ANTHROPIC_MODEL_RE = /^claude-(2(?:\.\d+)?(?:-|$)|3-)/i;
 
-const PROVIDER_LABELS = { azure: 'Azure AI Foundry', openai: 'OpenAI', minimax: 'MiniMax', publik: publik.PROVIDER_LABEL };
+// Same story for DeepSeek's retired chat/reasoner aliases — map each to its
+// closest current replacement rather than collapsing both to one default.
+const DEAD_DEEPSEEK_MODEL_RE = /^deepseek-(chat|reasoner)$/i;
+const CURRENT_DEEPSEEK_FAST_DEFAULT = 'deepseek-flash';
+const CURRENT_DEEPSEEK_SMART_DEFAULT = 'deepseek-v4-pro';
+
+const PROVIDER_LABELS = { azure: 'Azure AI Foundry', cerebras: 'Cerebras', openai: 'OpenAI', minimax: 'MiniMax', publik: publik.PROVIDER_LABEL, deepseek: 'DeepSeek' };
+
+// DeepSeek is OpenAI-compatible and reuses the OpenAI screenshot/streaming path via baseURL.
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
 function normalizeProviderName(provider) {
   if (!provider) return 'provider';
@@ -416,15 +456,21 @@ function anthropicRequestShape(model, maxTokens, effort) {
 
 // Gemini 2.5 models think by default and count it against maxOutputTokens,
 // which could leave a short spoken answer empty. Low effort turns thinking off
-// on Flash (Pro cannot turn it off; 128 is its minimum). Other Gemini models
-// keep their own thinking defaults and just get room for it.
+// on Flash (Pro cannot turn it off; 128 is its minimum). Gemini 3.x takes a
+// thinking level instead of a budget: "low" is the one level every 3.x model
+// accepts, and on Flash it means no thinking at all (about 3x faster). Other
+// Gemini models keep their own thinking defaults and just get room for it.
 const GEMINI_THINKING_BUDGET = { low: 0, medium: 1024, high: 4096 };
+const GEMINI3_LOW_HEADROOM_TOKENS = 1024;
 function geminiOutputConfig(model, maxTokens, effort) {
   const id = model || '';
   if (/^gemini-2\.5-(flash|pro)/.test(id)) {
     const minimum = /^gemini-2\.5-pro/.test(id) ? 128 : 0;
     const budget = Math.max(minimum, GEMINI_THINKING_BUDGET[effort] ?? GEMINI_THINKING_BUDGET.medium);
     return { maxOutputTokens: maxTokens + budget, thinkingConfig: { thinkingBudget: budget } };
+  }
+  if (/^gemini-3/.test(id) && effort === 'low') {
+    return { maxOutputTokens: maxTokens + GEMINI3_LOW_HEADROOM_TOKENS, thinkingConfig: { thinkingLevel: 'low' } };
   }
   if (/^gemini-/.test(id)) return { maxOutputTokens: maxTokens + THINKING_HEADROOM_TOKENS };
   return { maxOutputTokens: maxTokens };
@@ -478,9 +524,17 @@ async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageD
     }
     return { role: t.role === 'assistant' ? 'model' : 'user', parts };
   });
-  const stream = await ai.models.generateContentStream({
-    model, contents, config: { systemInstruction: system, ...geminiOutputConfig(model, maxTokens, effort), abortSignal: signal }
-  });
+  const config = { systemInstruction: system, ...geminiOutputConfig(model, maxTokens, effort), abortSignal: signal };
+  let stream;
+  try {
+    stream = await ai.models.generateContentStream({ model, contents, config });
+  } catch (e) {
+    // A model that predates thinkingLevel (or a custom id that rejects it)
+    // should still answer: retry once without the thinking setting.
+    if (!config.thinkingConfig || !/thinking/i.test((e && e.message) || '')) throw e;
+    delete config.thinkingConfig;
+    stream = await ai.models.generateContentStream({ model, contents, config });
+  }
   let full = '';
   for await (const chunk of stream) {
     const t = chunk && chunk.text;
@@ -566,12 +620,15 @@ function createLLM(settings) {
   const tier = settings.smart ? 'smart' : 'fast';
   const models = settings.models || {};
   let model = (models[provider] || {})[tier];
-  if (provider === 'gemini' && DEAD_GEMINI_MODEL_RE.test(model || '')) {
-    model = CURRENT_GEMINI_DEFAULT;
+  if (provider === 'gemini') {
+    model = resolveGeminiModel(settings);
   }
   if (provider === PUBLIK_PROVIDER && !model) model = publik.DEFAULT_MODELS[tier];
   if (provider === 'anthropic' && DEAD_ANTHROPIC_MODEL_RE.test(model || '')) {
     model = tier === 'smart' ? CURRENT_ANTHROPIC_DEFAULT_SMART : CURRENT_ANTHROPIC_DEFAULT_FAST;
+  }
+  if (provider === 'deepseek' && DEAD_DEEPSEEK_MODEL_RE.test(model || '')) {
+    model = /reasoner/i.test(model) ? CURRENT_DEEPSEEK_SMART_DEFAULT : CURRENT_DEEPSEEK_FAST_DEFAULT;
   }
   if (!model) model = DEFAULT_MODELS[provider] || '';
   const minimaxRegion = settings.minimaxRegion || 'global_en';
@@ -625,7 +682,9 @@ function createLLM(settings) {
         if (provider === PUBLIK_PROVIDER) return await streamOpenAI(args);
         if (provider === 'ollama') return await streamOllama(args);
         if (provider === 'groq') return await streamOpenAI({ ...args, baseURL: 'https://api.groq.com/openai/v1' });
+        if (provider === 'cerebras') return await streamOpenAI({ ...args, baseURL: CEREBRAS_BASE_URL });
         if (provider === 'minimax') return await streamOpenAI({ ...args, baseURL: MINIMAX_BASE_URLS[minimaxRegion] || MINIMAX_BASE_URLS.global_en });
+        if (provider === 'deepseek') return await streamOpenAI({ ...args, baseURL: DEEPSEEK_BASE_URL });
         if (provider === 'anthropic') return await streamAnthropic(args);
         if (provider === 'gemini') return await streamGemini(args);
         if (provider === 'azure') return await streamAzure(args);
@@ -653,7 +712,11 @@ module.exports = {
   resolveEffort,
   formatProviderErrorMessage,
   isQuotaError,
+  isNotFoundError,
+  resolveGeminiModel,
   CURRENT_GEMINI_DEFAULT,
+  GEMINI_TRANSCRIBE_MODEL,
+  GEMINI_TRANSCRIBE_LIVE_MODEL,
   CURRENT_ANTHROPIC_DEFAULT_FAST,
   CURRENT_ANTHROPIC_DEFAULT_SMART,
   PUBLIK_PROVIDER,

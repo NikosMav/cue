@@ -282,17 +282,23 @@ const MODES = {
     userBubble: 'Recap',
     small: true,
     resumeMode: 'recap',
+    transcriptRequired: true,
     buildSystem(contextBlock, aiRules) {
       return applyRules(buildSystem(
-        'You are cue. Summarize the interview so far:\n' +
-        '• Topics covered\n• Questions asked\n• Key answers given\n• Any red flags or areas to strengthen\n' +
+        'You are cue. Recap this conversation so far, using only what is in the transcript:\n' +
+        '• Topics covered — the actual subjects discussed, with the specifics (names, numbers, decisions) mentioned\n' +
+        '• Questions asked — by either side, as they were phrased\n' +
+        '• Key points made — what each side said or committed to\n' +
+        '• Open threads — anything unresolved, unclear, or worth strengthening\n' +
+        'If the context block shows this is a job interview, frame the last section as areas for the candidate to strengthen. ' +
+        'Do not pad thin sections with generic filler; omit a header that has nothing real under it. ' +
         'Use short bullets under bold headers. Be concise.',
         contextBlock
       ), aiRules, 'recap');
     },
     build(ctx) {
       const t = formatTranscript(ctx.transcript, 0);
-      return 'Full interview transcript:\n' + (t || '(nothing captured yet)') + '\n\nRecap this interview.';
+      return 'Full transcript of the conversation:\n' + (t || '(nothing captured yet)') + '\n\nRecap this conversation.';
     }
   },
 

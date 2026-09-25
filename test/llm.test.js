@@ -34,7 +34,7 @@ Module._load = function loadWithOpenAIStub(request, parent, isMain) {
   return originalModuleLoad.call(this, request, parent, isMain);
 };
 
-const { createLLM, formatProviderErrorMessage, isQuotaError, CURRENT_GEMINI_DEFAULT, PUBLIK_PROVIDER, isRateLimitError } = require('../src/llm');
+const { createLLM, formatProviderErrorMessage, isQuotaError, geminiOutputConfig, resolveEffort, CURRENT_GEMINI_DEFAULT, PUBLIK_PROVIDER, isRateLimitError } = require('../src/llm');
 
 test.after(() => {
   Module._load = originalModuleLoad;
@@ -156,11 +156,84 @@ test('routes MiniMax to the China endpoint when that region is selected', async 
   assert.equal(capturedClientOptions.baseURL, 'https://api.minimaxi.com/v1');
 });
 
-test('falls back to the global endpoint for an unknown region', async () => {
+function cerebrasSettings(overrides) {
+  return Object.assign({
+    provider: 'cerebras',
+    smart: true,
+    apiKeys: { cerebras: 'csk-test' },
+    models: { cerebras: { fast: 'qwen-3.8-27b', smart: 'qwen-3.8-27b' } }
+  }, overrides || {});
+}
+
+test('selects the Cerebras model for the active tier and reports readiness', () => {
+  const smart = createLLM(cerebrasSettings({ smart: true }));
+  assert.equal(smart.provider, 'cerebras');
+  assert.equal(smart.model, 'qwen-3.8-27b');
+  assert.equal(smart.ready, true);
+
+  const fast = createLLM(cerebrasSettings({ smart: false }));
+  assert.equal(fast.model, 'qwen-3.8-27b');
+});
+
+test('routes Cerebras to https://api.cerebras.ai/v1', async () => {
   capturedClientOptions = null;
-  const llm = createLLM(minimaxSettings({ minimaxRegion: 'unknown' }));
+  const llm = createLLM(cerebrasSettings());
   await llm.stream({ system: 's', turns: [{ role: 'user', text: 'hi' }], onToken: () => {} });
-  assert.equal(capturedClientOptions.baseURL, 'https://api.minimax.io/v1');
+  assert.equal(capturedClientOptions.baseURL, 'https://api.cerebras.ai/v1');
+  assert.equal(capturedClientOptions.apiKey, 'csk-test');
+});
+
+// ---- DeepSeek ---------------------------------------------------------------
+// DeepSeek is OpenAI-compatible with a single fixed endpoint, so this asserts
+// the model/readiness plumbing and the baseURL used to reach it.
+
+function deepseekSettings(overrides) {
+  return Object.assign({
+    provider: 'deepseek',
+    smart: true,
+    apiKeys: { deepseek: 'test-key' },
+    models: { deepseek: { fast: 'deepseek-flash', smart: 'deepseek-v4-pro' } }
+  }, overrides || {});
+}
+
+test('selects the DeepSeek model for the active tier and reports readiness', () => {
+  const smart = createLLM(deepseekSettings({ smart: true }));
+  assert.equal(smart.provider, 'deepseek');
+  assert.equal(smart.model, 'deepseek-v4-pro');
+  assert.equal(smart.ready, true);
+
+  const fast = createLLM(deepseekSettings({ smart: false }));
+  assert.equal(fast.model, 'deepseek-flash');
+});
+
+// deepseek-chat/deepseek-reasoner were retired 2026-07-24 and now 404; a
+// settings file saved before this fix can still have one persisted on disk.
+test('self-heals a settings file saved with the retired deepseek-chat/deepseek-reasoner aliases', () => {
+  const fast = createLLM(deepseekSettings({
+    smart: false,
+    models: { deepseek: { fast: 'deepseek-chat', smart: 'deepseek-reasoner' } }
+  }));
+  assert.equal(fast.model, 'deepseek-flash');
+
+  const smart = createLLM(deepseekSettings({
+    smart: true,
+    models: { deepseek: { fast: 'deepseek-chat', smart: 'deepseek-reasoner' } }
+  }));
+  assert.equal(smart.model, 'deepseek-v4-pro');
+});
+
+test('routes DeepSeek to its OpenAI-compatible endpoint', async () => {
+  capturedClientOptions = null;
+  const llm = createLLM(deepseekSettings());
+  await llm.stream({ system: 's', turns: [{ role: 'user', text: 'hi' }], onToken: () => {} });
+  assert.equal(capturedClientOptions.baseURL, 'https://api.deepseek.com');
+  assert.equal(capturedClientOptions.apiKey, 'test-key');
+});
+
+test('reports a configuration error when the DeepSeek key is missing', () => {
+  const llm = createLLM(deepseekSettings({ apiKeys: { deepseek: '' } }));
+  assert.equal(llm.ready, false);
+  assert.match(llm.configurationError, /Add your deepseek API key/);
 });
 
 // ---- Gemini 404/429 error mapping ------------------------------------------
@@ -200,7 +273,7 @@ test('formatProviderErrorMessage: maps a Gemini 429 to a free-tier quota message
     status: 429,
     body: { error: { message: 'You exceeded your current quota', code: 429, status: 'RESOURCE_EXHAUSTED' } }
   });
-  const message = formatProviderErrorMessage(error, 'gemini', 'gemini-2.5-flash');
+  const message = formatProviderErrorMessage(error, 'gemini', 'gemini-3.6-flash');
   assert.match(message, /Your Gemini account is out of quota or credit \(429/);
   assert.match(message, /billing/);
   assert.doesNotMatch(message, /RESOURCE_EXHAUSTED/);
@@ -369,7 +442,15 @@ test('createLLM: falls back to CURRENT_GEMINI_DEFAULT when no model is configure
 
 test('createLLM: a fresh install (store.js DEFAULTS shape) resolves to the current default', () => {
   const llm = createLLM(geminiSettings({
-    models: { gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash' } }
+    models: { gemini: { fast: 'gemini-3.8-flash', smart: 'gemini-3.1-pro-preview' } }
+  }));
+  assert.equal(llm.model, CURRENT_GEMINI_DEFAULT);
+});
+
+test('createLLM: self-heals a settings file saved with the retired gemini-2.5-flash default', () => {
+  const llm = createLLM(geminiSettings({
+    models: { gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-pro' } },
+    smart: true
   }));
   assert.equal(llm.model, CURRENT_GEMINI_DEFAULT);
 });
@@ -565,4 +646,25 @@ test('isRateLimitError: a genuine quota error is never also a rate limit, and no
   assert.equal(isRateLimitError(quota), false);
   assert.equal(isRateLimitError(new Error('socket hang up')), false);
   assert.equal(isRateLimitError(geminiApiError({ status: 404, body: {} })), false);
+});
+
+test('createLLM: self-heals gemini-2.5-* , which Google closed to new API keys', () => {
+  const llm = createLLM(geminiSettings({
+    models: { gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash-lite' } }
+  }));
+  assert.equal(llm.model, CURRENT_GEMINI_DEFAULT);
+});
+
+// Gemini 3.x bills thinking tokens against maxOutputTokens; the visible answer
+// must keep the budget the caller asked for.
+test('Gemini default: spoken answers (low effort) turn thinking down and keep headroom for it', () => {
+  const cfg = geminiOutputConfig(CURRENT_GEMINI_DEFAULT, 700, resolveEffort('low', false));
+  assert.deepEqual(cfg.thinkingConfig, { thinkingLevel: 'low' });
+  assert.ok(cfg.maxOutputTokens >= 700 + 1024, `fast cap ${cfg.maxOutputTokens} leaves no room for thoughts`);
+});
+
+test('Gemini default: Smart keeps the model default reasoning with a larger cap', () => {
+  const cfg = geminiOutputConfig(CURRENT_GEMINI_DEFAULT, 1400, resolveEffort('low', true));
+  assert.equal(cfg.thinkingConfig, undefined);
+  assert.ok(cfg.maxOutputTokens >= 1400 + 4096);
 });

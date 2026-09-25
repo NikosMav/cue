@@ -1,12 +1,19 @@
 // Simple JSON-file settings store (avoids native modules so `npm install` stays clean).
+//
+// The durable-write mechanics (atomic temp+rename, .bak snapshot, 0600
+// permissions) live in ./settings-store-core so they can be unit tested
+// without Electron; this file owns the schema, defaults, the setups migration
+// and the public surface (getSettings/setSettings/etc.).
 const fs = require('fs');
 const path = require('path');
 const crypto = require('node:crypto');
 const { app } = require('electron');
+const { createFileStore } = require('./settings-store-core');
 const { normalizeBaseUrl } = require('./openai-compatible');
 const { migrateSettings, SETUPS_VERSION } = require('./setups');
 
-const FILE = path.join(app.getPath('userData'), 'cue-data.json');
+const fileStore = createFileStore(() => app.getPath('userData'), 'cue-data.json');
+const FILE = fileStore.mainPath();
 
 const { MAX_AI_RULES_CHARS } = require('./profile-context');
 
@@ -28,7 +35,7 @@ const DEFAULTS = {
   meetingAudio: process.platform !== 'darwin',
   baseUrl: '',
   minimaxRegion: 'global_en',
-  apiKeys: { openai: '', anthropic: '', gemini: '', deepgram: '', custom: '', ollama: '', groq: '', minimax: '' , azure: '', publik: '' },
+  apiKeys: { cerebras: '', openai: '', anthropic: '', gemini: '', deepgram: '', custom: '', ollama: '', groq: '', minimax: '', deepseek: '', azure: '', publik: '' },
   azureEndpoint: '',
   // publik API (packaged-build default). apiKeys.publik holds the minted key;
   // everything here is state the main process owns — the renderer only reads
@@ -70,10 +77,25 @@ const DEFAULTS = {
   // Global shortcut overrides by action id (src/shortcuts.js); '' clears one.
   // Written only through setShortcutOverrides so a reset can remove a key.
   shortcuts: {},    // Answer the interviewer's question as soon as they finish, without a key press.
+  // Overlay opacity (1 = fully opaque). Clamped so the window never vanishes.
+  opacity: 1,
+  // Slides: opt-in auto slide tracking (memory-only, forwarded, never written to disk).
+  slides: {
+    enabled: false,
+    intervalMs: 3000,
+    threshold: 5,
+    maxSlides: 50
+  },
+  // Per-caller consent for the app-link get_slides action, separate from the
+  // link's coarse read/action scopes: a caller already trusted to start/stop
+  // listening (scope "action") is NOT automatically trusted to read slide
+  // captions too. Keyed by app-link caller id; value is 'granted' or 'denied'.
+  applinkSlidesConsent: {},
   // Window position
   windowX: null,
   windowY: null,
   models: {
+    cerebras: { fast: 'qwen-3.8-27b', smart: 'qwen-3.8-27b' },
     openai: { fast: 'gpt-4.1-mini', smart: 'gpt-4.1' },
     // Kept in sync with CURRENT_ANTHROPIC_DEFAULT_FAST/_SMART in src/llm.js —
     // claude-3-5-haiku-latest/claude-3-5-sonnet-latest (the previous defaults
@@ -83,15 +105,17 @@ const DEFAULTS = {
     // llm.js's DEAD_ANTHROPIC_MODEL_RE self-heal additionally migrates any
     // settings file already saved with the old dead ids.
     anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-opus-5' },
-    // Kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js — gemini-2.0-flash
-    // (the previous default here) was retired by Google on 2026-03-03 and 404s
-    // on every request. gemini-2.5-flash is current and free-tier available.
-    // Same model for both tiers: Smart gives it a thinking budget (src/llm.js).
-    gemini: { fast: 'gemini-2.5-flash', smart: 'gemini-2.5-flash' },
+    // fast is kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js —
+    // gemini-2.0-flash (the original default here) was retired by Google on
+    // 2026-03-03 and 404s on every request. smart is the newest Pro release.
+    gemini: { fast: 'gemini-3.8-flash', smart: 'gemini-3.1-pro-preview' },
     custom: { fast: '', smart: '' },
     ollama: { fast: 'llama3.2', smart: 'llama3.3' },
     groq: { fast: 'llama-3.1-8b-instant', smart: 'llama-3.3-70b-versatile' },
     minimax: { fast: 'MiniMax-M2.7', smart: 'MiniMax-M3' },
+    // deepseek-chat/deepseek-reasoner were retired 2026-07-24; deepseek-flash
+    // (non-thinking) and deepseek-v4-pro (thinking) are the current aliases.
+    deepseek: { fast: 'deepseek-flash', smart: 'deepseek-v4-pro' },
     azure: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
     // Tier aliases, never upstream slugs; the provisioning response overrides them.
     publik: { fast: 'publik-fast', smart: 'publik-balanced' }
@@ -100,10 +124,20 @@ const DEFAULTS = {
 
 // Fields the renderer may never write. settings:set passes patches through
 // stripRendererPatch; settings:get hands out redactForRenderer's view.
+const MIN_OPACITY = 0.2;
+const MAX_OPACITY = 1;
+
+function clampOpacity(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(MAX_OPACITY, Math.max(MIN_OPACITY, Math.round(n * 100) / 100));
+}
+
 const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY', 'setupsVersion'];
 
 let data = null;
 let hasSavedFile = false;
+let lastError = null;
 // Set while the file on disk is still in the single-profile layout (or
 // migrateFile failed) and migrateFile has not succeeded in this process.
 // save() then keeps changes in memory only: writing the new layout without
@@ -129,26 +163,56 @@ function deepMerge(base, over) {
   return out;
 }
 
+function readSettingsFile(file) {
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
+  return saved;
+}
+
+// A crash mid-write or a lost file used to blank every key. The .bak that
+// settings-store-core keeps from the previous save is put back in place; the
+// unreadable file is kept in backups/ for inspection. Without a usable .bak
+// nothing is replaced.
+function recoverFromBackup(error) {
+  let saved;
+  try { saved = readSettingsFile(fileStore.bakPath()); }
+  catch { throw new Error(`Cannot read Cue settings at ${FILE}. Existing settings were not replaced.`); }
+  if (error.code !== 'ENOENT') {
+    const backups = path.join(path.dirname(FILE), 'backups');
+    fs.mkdirSync(backups, { recursive: true });
+    fs.copyFileSync(FILE, path.join(backups, `unreadable-${Date.now()}.json`));
+  }
+  fs.copyFileSync(fileStore.bakPath(), FILE);
+  console.error(`[cue] ${FILE} was ${error.code === 'ENOENT' ? 'missing' : 'unreadable'}; restored the previous save from ${fileStore.bakPath()}`);
+  return saved;
+}
+
 function load() {
   // Changes that could not be written are newer than the file.
   if (migrationBlocked && unsavedWhileBlocked && data) return data;
   // Read the current file: profile tools and another process may have changed it.
+  let saved;
   try {
-    const saved = JSON.parse(fs.readFileSync(FILE, 'utf8').replace(/^\uFEFF/, ''));
-    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
-    // Legacy single-profile files are read in the setups layout without being
-    // rewritten; migrateFile() writes the new layout once, after a backup.
-    // Another tool may have written the new layout (with its own backup) since.
-    migrationBlocked = !(Number(saved.setupsVersion) >= SETUPS_VERSION) && !migrationDone;
-    data = migrateSettings(deepMerge(DEFAULTS, saved)).settings;
-    hasSavedFile = true;
+    saved = readSettingsFile(FILE);
   } catch (error) {
-    if (error.code === 'ENOENT' && !hasSavedFile) data = migrateSettings(deepMerge(DEFAULTS, {})).settings;
-    else throw new Error(`Cannot read Cue settings at ${FILE}. Existing settings were not replaced.`);
+    if (error.code === 'ENOENT' && !hasSavedFile && !fs.existsSync(fileStore.bakPath())) {
+      data = migrateSettings(deepMerge(DEFAULTS, {})).settings;
+      return data;
+    }
+    saved = recoverFromBackup(error);
   }
+  // Legacy single-profile files are read in the setups layout without being
+  // rewritten; migrateFile() writes the new layout once, after a backup.
+  // Another tool may have written the new layout (with its own backup) since.
+  migrationBlocked = !(Number(saved.setupsVersion) >= SETUPS_VERSION) && !migrationDone;
+  data = migrateSettings(deepMerge(DEFAULTS, saved)).settings;
+  hasSavedFile = true;
   return data;
 }
-// 0600: the file holds every BYO key and now a publik key. A no-op on Windows.
+
+// Atomic temp+rename with a .bak of the previous save and 0600 permissions
+// (settings-store-core.js). A failure throws so the user sees it; the file on
+// disk keeps the previous save, and lastSaveError() keeps the cause.
 function save() {
   if (migrationBlocked) {
     // Callers such as the window "moved" handler must not throw here.
@@ -159,15 +223,15 @@ function save() {
     }
     return;
   }
-  const temporary = `${FILE}.${crypto.randomUUID()}.tmp`;
   try {
     fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
-    fs.renameSync(temporary, FILE);
+    fileStore.persist(data);
     hasSavedFile = true;
-  } catch {
-    try { fs.unlinkSync(temporary); } catch { /* best effort for our temporary file */ }
+    lastError = null;
+  } catch (error) {
+    lastError = error;
     data = null;
+    console.error('[cue] failed to save settings:', error && error.message);
     throw new Error(`Could not save Cue settings at ${FILE}. Your previous file was kept.`);
   }
 }
@@ -255,6 +319,9 @@ function migrateFile() {
 
 module.exports = {
   MAX_AI_RULES_CHARS,
+  MIN_OPACITY,
+  MAX_OPACITY,
+  clampOpacity,
   RENDERER_READ_ONLY,
   applyPublikDefault,
   stripRendererPatch,
@@ -266,6 +333,8 @@ module.exports = {
   // True while save() is keeping changes in memory only (see migrationBlocked
   // above): the renderer/main process can use this to warn the user.
   migrationBlocked() { return migrationBlocked; },
+  /** Null when the last save succeeded; the Error otherwise. */
+  lastSaveError() { return lastError; },
   // Main-process only: the provisioning flow writes the key and its state here.
   setPublik(patch) {
     load();
@@ -287,8 +356,30 @@ module.exports = {
     load();
     const nextSettings = migrateSettings(deepMerge(data, patch || {})).settings;
     nextSettings.baseUrl = normalizeBaseUrl(nextSettings.baseUrl);
+    nextSettings.opacity = clampOpacity(nextSettings.opacity);
     data = nextSettings;
     save();
     return data;
+  },
+  // Per-caller consent for the app-link get_slides action — separate from the
+  // link's own read/action scope grants (see src/applink.js). 'granted',
+  // 'denied', or undefined if the caller has never been asked.
+  getSlidesConsent(callerId) {
+    load();
+    return (data.applinkSlidesConsent || {})[callerId];
+  },
+  setSlidesConsent(callerId, decision) {
+    load();
+    data.applinkSlidesConsent = { ...(data.applinkSlidesConsent || {}), [callerId]: decision };
+    save();
+    return data.applinkSlidesConsent;
+  },
+  clearSlidesConsent(callerId) {
+    load();
+    if (!data.applinkSlidesConsent || !(callerId in data.applinkSlidesConsent)) return;
+    const next = { ...data.applinkSlidesConsent };
+    delete next[callerId];
+    data.applinkSlidesConsent = next;
+    save();
   }
 };

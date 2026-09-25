@@ -59,7 +59,7 @@ jobs:
 
       - name: Build macOS
         if: matrix.os == 'macos-latest'
-        run: npm run dist
+        run: npm run dist:mac:x64 && npm run dist:mac:arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder.cjs signs and notarizes only when MAC_SIGN=1; without
