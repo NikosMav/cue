@@ -4,6 +4,8 @@
 // prompt builders and main.js read the flat view from effectiveSettings(),
 // which keeps interview prompts byte-identical to the single-profile days.
 
+const { MAX_AI_RULES_CHARS } = require('./profile-context');
+
 const BUILTIN_SETUP_ID = 'any';
 const SETUPS_VERSION = 1;
 const KINDS = ['interview', 'general'];
@@ -48,6 +50,8 @@ function normalizeSetups(settings) {
     if (!raw || typeof raw !== 'object' || !str(raw.id) || ids.has(raw.id)) continue;
     const setup = makeSetup({ id: raw.id, name: str(raw.name).trim() || 'Untitled setup', kind: raw.kind, saveSessions: raw.saveSessions });
     for (const field of SETUP_TEXT_FIELDS) setup[field] = str(raw[field]);
+    // The import and the Settings form cap this too; a hand-edited file may not.
+    setup.instructions = setup.instructions.slice(0, MAX_AI_RULES_CHARS);
     ids.add(setup.id);
     setups.push(setup);
   }
