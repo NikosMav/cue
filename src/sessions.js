@@ -24,11 +24,13 @@ function stamp(ms) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function newSession({ kind = 'interview', now = Date.now() } = {}) {
+function newSession({ kind = 'interview', now = Date.now(), setupName = '', setupKind = 'interview' } = {}) {
   return {
     version: SESSION_VERSION,
     id: stamp(now) + '-' + crypto.randomBytes(3).toString('hex'),
     kind,                 // 'interview' | 'practice'
+    setupName,            // the setup active when the session started
+    setupKind,            // 'interview' | 'general'
     title: '',
     startedAt: now,
     endedAt: null,
@@ -38,6 +40,11 @@ function newSession({ kind = 'interview', now = Date.now() } = {}) {
     debrief: '',
     debriefAt: null
   };
+}
+
+function kindLabel(session) {
+  if (session.kind === 'practice') return 'Practice';
+  return session.setupKind === 'general' ? 'Conversation' : 'Interview';
 }
 
 function isValidId(id) {
@@ -51,7 +58,7 @@ function firstQuestion(session) {
 
 function sessionTitle(session) {
   if (session.title) return session.title;
-  const kind = session.kind === 'practice' ? 'Practice' : 'Interview';
+  const kind = kindLabel(session);
   const question = firstQuestion(session);
   if (!question) return kind;
   return kind + ' · ' + (question.length > 60 ? question.slice(0, 57).trimEnd() + '…' : question);
@@ -62,6 +69,7 @@ function summarize(session) {
   return {
     id: session.id,
     kind: session.kind,
+    setupName: session.setupName || '',
     title: sessionTitle(session),
     startedAt: session.startedAt,
     endedAt: session.endedAt,
@@ -107,7 +115,8 @@ function sessionToMarkdown(session) {
   const end = session.endedAt || session.updatedAt || session.startedAt;
   out.push(`- **Date:** ${formatDate(session.startedAt)}`);
   out.push(`- **Duration:** ${formatDuration(end - session.startedAt)}`);
-  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : 'Live interview'}`);
+  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : session.setupKind === 'general' ? 'Live conversation' : 'Live interview'}`);
+  if (session.setupName) out.push(`- **Setup:** ${session.setupName}`);
   out.push('');
   if (session.debrief && session.debrief.trim()) {
     out.push('## Debrief', '', session.debrief.trim(), '');
@@ -134,7 +143,7 @@ function sessionToMarkdown(session) {
 // every platform's file system.
 function exportFileName(session) {
   const d = new Date(session.startedAt);
-  const kind = session.kind === 'practice' ? 'Practice' : 'Interview';
+  const kind = kindLabel(session);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())} ${kind} (cue ${session.id.slice(-6)}).md`;
 }
 
@@ -191,7 +200,8 @@ class SessionStore {
 }
 
 function matches(session, needle) {
-  const fields = [sessionTitle(session), session.debrief,
+  const fields = [sessionTitle(session), session.setupName,
+    session.debrief,
     ...(session.transcript || []).map((t) => t.text), ...(session.answers || []).map((a) => a.text)];
   return fields.some((f) => typeof f === 'string' && f.toLowerCase().includes(needle));
 }
@@ -202,7 +212,7 @@ function matches(session, needle) {
  * saving is off, so nothing is written without the user's choice.
  */
 class SessionRecorder {
-  constructor({ store, isEnabled, exportDir = () => '', onSaved = () => {}, onError = () => {}, debounceMs = 1500, now = () => Date.now(), timers = { setTimeout, clearTimeout } }) {
+  constructor({ store, isEnabled, exportDir = () => '', onSaved = () => {}, onError = () => {}, debounceMs = 1500, now = () => Date.now(), timers = { setTimeout, clearTimeout }, meta = () => ({}) }) {
     this.store = store;
     this.isEnabled = isEnabled;
     this.exportDir = exportDir;
@@ -211,6 +221,7 @@ class SessionRecorder {
     this.debounceMs = debounceMs;
     this.now = now;
     this.timers = timers;
+    this.meta = meta;
     this.session = null;
     this.kind = 'interview';
     this.timer = null;
@@ -219,7 +230,7 @@ class SessionRecorder {
   current() { return this.session; }
 
   _ensure() {
-    if (!this.session) this.session = newSession({ kind: this.kind, now: this.now() });
+    if (!this.session) this.session = newSession({ kind: this.kind, now: this.now(), ...this.meta() });
     return this.session;
   }
 

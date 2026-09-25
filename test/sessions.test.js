@@ -110,3 +110,33 @@ test('Markdown export interleaves the conversation and cue answers in time order
   assert.match(md, /> Line one\n> Line two/);
   assert.match(exportFileName(s), /^\d{4}-\d{2}-\d{2} \d{4} Interview \(cue [0-9a-f]{6}\)\.md$/);
 });
+
+test('sessions from a general setup are titled "Conversation" and record the setup', () => {
+  const { summarize } = require('../src/sessions');
+  const s = newSession({ now: 1, setupName: 'Team sync', setupKind: 'general' });
+  s.transcript.push({ channel: 'them', text: 'Where are we on the release?', ts: 2 });
+  const summary = summarize(s);
+  assert.equal(summary.title, 'Conversation · Where are we on the release?');
+  assert.equal(summary.setupName, 'Team sync');
+  assert.match(sessionToMarkdown(s), /\*\*Setup:\*\* Team sync/);
+});
+
+test('sessions without setup metadata keep their old titles', () => {
+  const { summarize } = require('../src/sessions');
+  const s = newSession({ now: 1 });
+  s.transcript.push({ channel: 'them', text: 'Tell me about yourself.', ts: 2 });
+  assert.equal(summarize(s).title, 'Interview · Tell me about yourself.');
+});
+
+test('the recorder stamps each new session with the setup active when it starts', () => {
+  const { SessionRecorder } = require('../src/sessions');
+  const saved = [];
+  let meta = { setupName: 'Interview', setupKind: 'interview' };
+  const recorder = new SessionRecorder({ store: { save: (s) => saved.push(s) }, isEnabled: () => true, meta: () => meta, debounceMs: 0 });
+  recorder.addTurn({ channel: 'them', text: 'Hi', ts: 1 });
+  assert.equal(recorder.current().setupName, 'Interview');
+  meta = { setupName: 'Team sync', setupKind: 'general' };
+  recorder.end();
+  recorder.addTurn({ channel: 'them', text: 'Hello', ts: 2 });
+  assert.equal(recorder.current().setupName, 'Team sync');
+});
