@@ -1636,24 +1636,14 @@
     const localWhisper = settings.localWhisper || { modelId: 'base.en', language: 'auto', threads: 0 };
     $('#whisper-language').value = localWhisper.language || 'auto';
     $('#whisper-threads').value = Number(localWhisper.threads) || 0;
-    // Profile tab
-    $('#resume-text').value = settings.resumeText || '';
-    $('#job-description').value = settings.jobDescription || '';
-    $('#knowledge-base').value = settings.knowledgeBase || '';
-    // Interview Prep tab
-    $('#star-stories').value = settings.starStories || '';
-    $('#why-company').value = settings.whyCompany || '';
-    $('#why-leaving').value = settings.whyLeaving || '';
-    $('#work-style').value = settings.workStyle || '';
+    fillAboutMe();
+    fillSetupForm(editingSetupId || settings.activeSetupId);
     // Style tab
     $('#ai-rules').value = settings.aiRules || '';
     $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
     $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
     $('#warm-up').value = settings.warmUp === false ? 'off' : 'on';
     updateAiRulesCounter();
-    // Q&A tab
-    $('#salary-target').value = settings.salaryTarget || '';
-    $('#questions-to-ask').value = settings.questionsToAsk || '';
   }
 
   // Whoever cue has been told it may answer questions for. Empty is the normal
@@ -1721,14 +1711,8 @@
     const selectedSttProvider = settings.sttProvider || 'auto';
     const automaticStt = k.deepgram ? 'Deepgram (streaming)' : (k.openai ? 'OpenAI Realtime' : (k.groq ? 'Groq Whisper' : (k.gemini ? 'Gemini (batch)' : 'none')));
     const stt = selectedSttProvider === 'auto' ? automaticStt : selectedSttProvider;
-    const ready = [
-      settings.resumeText ? '✓ resume' : null,
-      settings.jobDescription ? '✓ JD' : null,
-      settings.starStories ? '✓ stories' : null,
-      settings.salaryTarget ? '✓ salary' : null,
-      settings.knowledgeBase ? '✓ KB' : null
-    ].filter(Boolean);
-    return `${labels[settings.provider] || settings.provider}${publikPart} · STT: ${stt}` + (ready.length ? ' · ' + ready.join(' · ') : '');
+    const setup = activeSetupOf(settings);
+    return `${labels[settings.provider] || settings.provider}${publikPart} · STT: ${stt}` + (setup ? ' · setup: ' + setup.name : '');
   }
 
   document.querySelectorAll('#provider-seg button').forEach((b) => b.addEventListener('click', () => {
@@ -1912,6 +1896,141 @@
     return run;
   }
 
+  // ---- About me and setups (data model: src/setups.js) --------------------
+  const setupsModel = cue.setupsModel;
+  let editingSetupId = null;
+
+  function activeSetupOf(s) {
+    const list = (s && s.setups) || [];
+    return list.find((x) => x.id === s.activeSetupId) || list.find((x) => x.id === setupsModel.BUILTIN_SETUP_ID) || list[0];
+  }
+  function editingSetup() {
+    return settings.setups.find((x) => x.id === editingSetupId) || activeSetupOf(settings);
+  }
+
+  function fillAboutMe() {
+    const a = settings.aboutMe || {};
+    $('#resume-text').value = a.resumeText || '';
+    $('#star-stories').value = a.stories || '';
+    $('#work-style').value = a.workStyle || '';
+  }
+
+  function applyKindToForm(kind) {
+    const interview = kind === 'interview';
+    document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.classList.toggle('on', b.dataset.kind === kind));
+    document.querySelectorAll('[data-pane="setups"] .interview-only').forEach((el) => el.classList.toggle('hidden', !interview));
+    $('#setup-conversation-label').textContent = interview ? 'Job description' : 'This conversation and your role';
+    $('#job-description').placeholder = interview
+      ? 'Paste the job description for the role.'
+      : 'e.g. Weekly platform sync; I lead the API work and give the status update.';
+    $('#setup-kind-note').textContent = interview
+      ? 'Tuned for job interviews: answers as the candidate, practice interviews available.'
+      : 'Works in any conversation: cue works out the situation from what it hears and answers for your role.';
+  }
+
+  function fillSetupForm(id) {
+    editingSetupId = id || settings.activeSetupId;
+    const setup = editingSetup();
+    editingSetupId = setup.id;
+    const select = $('#setup-select');
+    select.innerHTML = '';
+    for (const s of settings.setups) {
+      const option = document.createElement('option');
+      option.value = s.id;
+      option.textContent = s.name + (s.id === settings.activeSetupId ? ' (active)' : '');
+      select.appendChild(option);
+    }
+    select.value = setup.id;
+    const builtin = setup.id === setupsModel.BUILTIN_SETUP_ID;
+    $('#setup-name').value = setup.name;
+    $('#setup-name').disabled = builtin;
+    $('#setup-delete').disabled = builtin;
+    document.querySelectorAll('#setup-kind-seg button').forEach((b) => { b.disabled = builtin; });
+    $('#job-description').value = setup.conversation || '';
+    $('#knowledge-base').value = setup.notes || '';
+    $('#why-company').value = setup.whyCompany || '';
+    $('#why-leaving').value = setup.whyLeaving || '';
+    $('#salary-target').value = setup.salaryTarget || '';
+    $('#questions-to-ask').value = setup.questionsToAsk || '';
+    $('#setup-instructions').value = setup.instructions || '';
+    $('#setup-save').checked = !!setup.saveSessions;
+    $('#setup-activate').disabled = setup.id === settings.activeSetupId;
+    applyKindToForm(setup.kind);
+  }
+
+  // Writes the form into settings (not yet saved).
+  function collectSetupForm() {
+    const setup = editingSetup();
+    if (!setup) return;
+    const kindButton = document.querySelector('#setup-kind-seg button.on');
+    const patch = {
+      name: setup.id === setupsModel.BUILTIN_SETUP_ID ? setup.name : ($('#setup-name').value.trim() || 'Untitled setup'),
+      kind: setup.id === setupsModel.BUILTIN_SETUP_ID ? 'general' : (kindButton ? kindButton.dataset.kind : setup.kind),
+      conversation: $('#job-description').value.trim(),
+      notes: $('#knowledge-base').value.trim(),
+      whyCompany: $('#why-company').value.trim(),
+      whyLeaving: $('#why-leaving').value.trim(),
+      salaryTarget: $('#salary-target').value.trim(),
+      questionsToAsk: $('#questions-to-ask').value.trim(),
+      instructions: $('#setup-instructions').value.trim(),
+      saveSessions: $('#setup-save').checked
+    };
+    settings.setups = settings.setups.map((s) => (s.id === setup.id ? { ...s, ...patch } : s));
+  }
+
+  function collectAboutMe() {
+    settings.aboutMe = {
+      resumeText: $('#resume-text').value.trim(),
+      stories: $('#star-stories').value.trim(),
+      workStyle: $('#work-style').value.trim()
+    };
+  }
+
+  async function openSetupsTab(id) {
+    await openSettings();
+    fillSetupForm(id || settings.activeSetupId);
+    const tab = document.querySelector('.s-tab[data-tab="setups"]');
+    if (tab) tab.click();
+  }
+
+  $('#setup-select').addEventListener('change', (e) => { collectSetupForm(); fillSetupForm(e.target.value); });
+  document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.addEventListener('click', () => {
+    applyKindToForm(b.dataset.kind);
+    // A new kind brings its default save switch only for a setup that never had content.
+    const s = editingSetup();
+    if (!s.conversation && !s.notes) $('#setup-save').checked = b.dataset.kind === 'interview';
+  }));
+  $('#setup-new').addEventListener('click', () => {
+    collectSetupForm();
+    const setup = setupsModel.makeSetup({ name: 'New setup', kind: 'general' });
+    settings.setups = [...settings.setups, setup];
+    fillSetupForm(setup.id);
+    $('#setup-name').focus();
+    $('#setup-name').select();
+  });
+  $('#setup-duplicate').addEventListener('click', () => {
+    collectSetupForm();
+    const source = editingSetup();
+    const copy = { ...setupsModel.makeSetup({ kind: source.kind }), ...source };
+    copy.id = setupsModel.makeSetup().id;
+    copy.name = source.name + ' copy';
+    settings.setups = [...settings.setups, copy];
+    fillSetupForm(copy.id);
+  });
+  $('#setup-delete').addEventListener('click', () => {
+    const setup = editingSetup();
+    if (setup.id === setupsModel.BUILTIN_SETUP_ID) return;
+    if (!confirm(`Delete the setup "${setup.name}"? Saved sessions are kept.`)) return;
+    settings.setups = settings.setups.filter((s) => s.id !== setup.id);
+    if (settings.activeSetupId === setup.id) settings.activeSetupId = setupsModel.BUILTIN_SETUP_ID;
+    fillSetupForm(settings.activeSetupId);
+  });
+  $('#setup-activate').addEventListener('click', async () => {
+    collectSetupForm();
+    settings.activeSetupId = editingSetupId;
+    if (await saveSettings()) fillSetupForm(editingSetupId);
+  });
+
   async function saveSettingsNow() {
     // Never persist empty inputs before the asynchronous form load finishes.
     if (!settingsFormReady) return false;
@@ -1946,23 +2065,13 @@
     settings.localWhisper.modelId = $('#whisper-model').value || settings.localWhisper.modelId || 'base.en';
     settings.localWhisper.language = $('#whisper-language').value || 'auto';
     settings.localWhisper.threads = Math.max(0, Math.min(64, Number.parseInt($('#whisper-threads').value, 10) || 0));
-    // Profile
-    settings.resumeText = $('#resume-text').value.trim();
-    settings.jobDescription = $('#job-description').value.trim();
-    settings.knowledgeBase = $('#knowledge-base').value.trim();
-    // Interview Prep
-    settings.starStories = $('#star-stories').value.trim();
-    settings.whyCompany = $('#why-company').value.trim();
-    settings.whyLeaving = $('#why-leaving').value.trim();
-    settings.workStyle = $('#work-style').value.trim();
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
     settings.includeScreen = $('#include-screen').value !== 'no';
     settings.warmUp = $('#warm-up').value !== 'off';
-    // Q&A
-    settings.salaryTarget = $('#salary-target').value.trim();
-    settings.questionsToAsk = $('#questions-to-ask').value.trim();
+    collectAboutMe();
+    collectSetupForm();
     try {
       settings = await cue.settingsSet(settings);
       if (messages.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed

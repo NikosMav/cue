@@ -999,3 +999,8 @@ button:focus { outline: none; }
 .cs-title { font-size: 15px; font-weight: 620; color: var(--tx-1); line-height: 1.35; }
 .cs-body { margin-top: 10px; color: var(--tx-mut); font-size: 12.5px; line-height: 1.5; white-space: pre-line; }
 .cs-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+
+/* Setups tab */
+.setup-bar { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.setup-bar .s-select { flex: 1; }
+.interview-only.hidden, .s-field.interview-only.hidden { display: none; }

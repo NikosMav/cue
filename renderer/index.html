@@ -155,7 +155,8 @@
       <div class="s-tabs">
         <button class="s-tab on" data-tab="keys">Keys</button>
         <button class="s-tab" data-tab="transcription">Audio</button>
-        <button class="s-tab" data-tab="profile">Prep</button>
+        <button class="s-tab" data-tab="about">About me</button>
+        <button class="s-tab" data-tab="setups">Setups</button>
         <button class="s-tab" data-tab="style">Style</button>
         <button class="s-tab" data-tab="shortcuts">Shortcuts</button>
       </div>
@@ -296,40 +297,57 @@
         <div class="s-status" id="whisper-status"></div>
       </div>
 
-      <!-- Tab: Prep — everything cue uses to answer as you, in one place -->
-      <div class="s-body s-tab-pane hidden" data-pane="profile">
-        <div class="s-section">You and the role</div>
-        <label class="s-label">Your resume <span class="s-hint">paste full resume, or import a PDF/DOCX</span></label>
+      <!-- Tab: About me — used by every setup -->
+      <div class="s-body s-tab-pane hidden" data-pane="about">
+        <div class="s-hint-block">Used in every setup. Saved locally and sent to your AI provider with each answer (never with coding solves).</div>
+        <label class="s-label">Your CV <span class="s-hint">paste it, or import a PDF/DOCX</span></label>
         <div class="s-field s-upload"><span class="s-filename" id="resume-filename"></span><button class="s-upload-btn" id="upload-resume-btn">Import PDF/DOCX</button></div>
-        <textarea id="resume-text" rows="7" spellcheck="false" placeholder="Paste your full resume here. cue will extract Name, Summary, Experience, Skills, Projects, and Education automatically."></textarea>
+        <textarea id="resume-text" rows="8" spellcheck="false" placeholder="Paste your CV or professional background."></textarea>
+        <label class="s-label">Your stories <span class="s-hint">real examples: the situation, what you did, the result</span></label>
+        <textarea id="star-stories" rows="8" spellcheck="false" placeholder="Story 1: At [Company], we faced [situation]. I did [actions]. The result was [outcome].&#10;&#10;Story 2: ..."></textarea>
+        <label class="s-label">Work style &amp; values</label>
+        <textarea id="work-style" rows="3" spellcheck="false" placeholder="e.g. I prefer data-driven decisions, direct feedback, calm incident handling."></textarea>
+      </div>
 
-        <label class="s-label">Target job description <span class="s-hint">optional — every answer gets tailored to this role</span></label>
-        <div class="s-field s-upload"><span class="s-filename" id="jd-filename"></span><button class="s-upload-btn" id="upload-jd-btn">Import PDF/DOCX</button></div>
-        <textarea id="job-description" rows="5" spellcheck="false" placeholder="Paste the job description for the role you're interviewing for. cue will highlight your most relevant experience."></textarea>
+      <!-- Tab: Setups — one per kind of conversation -->
+      <div class="s-body s-tab-pane hidden" data-pane="setups">
+        <div class="setup-bar">
+          <select id="setup-select" class="s-select"></select>
+          <button id="setup-new" class="s-action" type="button">New</button>
+          <button id="setup-duplicate" class="s-action" type="button">Duplicate</button>
+          <button id="setup-delete" class="s-action danger" type="button">Delete</button>
+        </div>
+        <label class="s-label" for="setup-name">Name</label>
+        <input id="setup-name" class="s-input" type="text" autocomplete="off" />
+        <label class="s-label">Kind</label>
+        <div class="s-seg" id="setup-kind-seg">
+          <button data-kind="interview" type="button">Job interview</button>
+          <button data-kind="general" type="button">General</button>
+        </div>
+        <div class="s-note" id="setup-kind-note"></div>
 
-        <label class="s-label" for="knowledge-base">Interview knowledge base <span class="s-hint">full prep pack and reference notes</span></label>
-        <textarea id="knowledge-base" rows="10" spellcheck="false" placeholder="Paste your interview prep pack here. Keep unknown details clearly marked; cue will not fill them in."></textarea>
-        <div class="s-hint-block">Saved locally. Everything on this tab is sent to your selected AI provider with each interview answer, follow-up or recap. Coding-only solves exclude it. Longer notes use more tokens and may slow responses.</div>
+        <label class="s-label" id="setup-conversation-label">Job description</label>
+        <div class="s-field s-upload interview-only"><span class="s-filename" id="jd-filename"></span><button class="s-upload-btn" id="upload-jd-btn">Import PDF/DOCX</button></div>
+        <textarea id="job-description" rows="5" spellcheck="false"></textarea>
 
-        <div class="s-section">Prepared answers</div>
-        <label class="s-label">Your STAR stories <span class="s-hint">write 3–5 real behavioral stories — used for "tell me about a time…" questions</span></label>
-        <textarea id="star-stories" rows="8" spellcheck="false" placeholder="Story 1: At [Company], we faced [situation]. I was responsible for [task]. I did [specific actions]. The result was [outcome with metrics if possible].&#10;&#10;Story 2: ..."></textarea>
+        <label class="s-label" for="knowledge-base">Notes <span class="s-hint">reference material for this conversation</span></label>
+        <textarea id="knowledge-base" rows="8" spellcheck="false" placeholder="Facts, figures, prepared points. Mark anything unconfirmed; cue will not fill it in."></textarea>
 
-        <label class="s-label">Why this company <span class="s-hint">used for motivation questions</span></label>
-        <textarea id="why-company" rows="3" spellcheck="false" placeholder="e.g. I admire how [company] has [specific thing]. Their work on [X] aligns with my experience in [Y]..."></textarea>
+        <div class="interview-only s-body">
+          <label class="s-label">Why this company <span class="s-hint">used for motivation questions</span></label>
+          <textarea id="why-company" rows="3" spellcheck="false"></textarea>
+          <label class="s-label">Why leaving current role <span class="s-hint">keep it positive</span></label>
+          <textarea id="why-leaving" rows="2" spellcheck="false"></textarea>
+          <label class="s-label">Salary and start date <span class="s-hint">used when asked about compensation or availability</span></label>
+          <input id="salary-target" class="s-input" type="text" autocomplete="off" placeholder="e.g. Prefer to discuss the package later; notice period 1 month" />
+          <label class="s-label">Questions to ask the interviewer</label>
+          <textarea id="questions-to-ask" rows="5" spellcheck="false"></textarea>
+        </div>
 
-        <label class="s-label">Why leaving current role <span class="s-hint">keep it positive</span></label>
-        <textarea id="why-leaving" rows="2" spellcheck="false" placeholder="e.g. I've grown a lot at [company] and I'm looking for [next challenge]..."></textarea>
-
-        <label class="s-label">Work style &amp; values <span class="s-hint">used for culture fit and situational questions</span></label>
-        <textarea id="work-style" rows="3" spellcheck="false" placeholder="e.g. I prefer data-driven decisions, work well with autonomy, value direct feedback, thrive in fast-paced environments..."></textarea>
-
-        <div class="s-section">Closing the interview</div>
-        <label class="s-label">Salary and start date <span class="s-hint">used when asked about compensation or availability</span></label>
-        <input id="salary-target" class="s-input" type="text" placeholder="e.g. Prefer to discuss the package later; notice period 1 month" autocomplete="off" />
-
-        <label class="s-label">Questions to ask the interviewer <span class="s-hint">cue will suggest these at the end</span></label>
-        <textarea id="questions-to-ask" rows="6" spellcheck="false" placeholder="e.g.&#10;- What does success look like in the first 90 days?&#10;- How does the team handle technical debt?&#10;- What's the biggest challenge the team is facing right now?&#10;- How does feedback and mentorship work here?"></textarea>
+        <label class="s-label" for="setup-instructions">Instructions <span class="s-hint">how cue should answer in this setup</span></label>
+        <textarea id="setup-instructions" rows="5" spellcheck="false" maxlength="2000" placeholder="e.g. Answer as the team's API lead. Keep numbers exact."></textarea>
+        <label class="sess-toggle"><input type="checkbox" id="setup-save" /> Save transcripts of conversations with this setup</label>
+        <button id="setup-activate" class="s-action primary" type="button">Use this setup now</button>
       </div>
 
       <!-- Tab: Shortcuts -->
