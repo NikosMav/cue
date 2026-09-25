@@ -2136,10 +2136,23 @@
     // this, `settings.provider` stays on its default ('openai') forever and
     // cue keeps reporting itself unconfigured even though a valid key was
     // saved for the provider the user actually meant to use.
-    if (!settings.apiKeys[settings.provider]) {
+    // Providers that work without a key (Ollama, a Custom endpoint, publik) are
+    // a deliberate choice and never switched away from.
+    const keylessProviders = ['ollama', 'custom', 'publik'];
+    if (!keylessProviders.includes(settings.provider) && !settings.apiKeys[settings.provider]) {
       const keyedProviders = ['openai', 'anthropic', 'gemini', 'groq', 'minimax', 'azure'];
       const justFilled = keyedProviders.find((p) => settings.apiKeys[p]);
-      if (justFilled) settings.provider = justFilled;
+      if (justFilled && justFilled !== settings.provider) {
+        settings.provider = justFilled;
+        // Keep the form in step with the switch: the next save (switching tabs
+        // saves) reads the model boxes into settings.models[settings.provider],
+        // and stale boxes wrote the previous provider's models (e.g. Ollama's
+        // llama3.2) into OpenAI's.
+        document.querySelectorAll('#provider-seg button').forEach((x) => x.classList.toggle('on', x.dataset.provider === justFilled));
+        const m = settings.models[justFilled] || { fast: '', smart: '' };
+        $('#model-fast').value = m.fast; $('#model-smart').value = m.smart;
+        updateCustomProviderFields();
+      }
     }
     // Transcription
     if (!settings.localWhisper) settings.localWhisper = {};
