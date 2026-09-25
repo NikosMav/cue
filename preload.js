@@ -1,10 +1,12 @@
 const { contextBridge, ipcRenderer, clipboard } = require('electron');
 const { isLikelyCompleteQuestion } = require('./src/question-detector');
 const { acceleratorFromEvent, acceleratorParts, formatAccelerator } = require('./src/accelerator');
+const { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./src/setups');
 const platform = process.platform;
 
 contextBridge.exposeInMainWorld('cue', {
   platform,
+  setupsModel: { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS },
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch),
   whisperModels: () => ipcRenderer.invoke('whisper:models'),
