@@ -128,6 +128,14 @@ function effectiveSettings(settings) {
 // with (by id, else by name), not whichever setup is active now. When that
 // setup is gone, an empty setup of the session's kind stands in, so only
 // About me is used. Practice and sessions from before setups are interviews.
+//
+// A session with no setup metadata at all (no setupId, setupName or
+// setupKind) predates setups: it was recorded by a build that always kept
+// one interview's worth of material, migrated into the 'interview' setup if
+// there was any. Prefer that migrated setup, then whichever setup is active
+// now if it is an interview, and only then fall back to an empty stand-in --
+// otherwise a session with real prep material saved before this update would
+// debrief with only About me.
 function settingsForSession(settings, session) {
   const s = migrateSettings(settings || {}).settings;
   const meta = session || {};
@@ -138,6 +146,13 @@ function settingsForSession(settings, session) {
   if (found) {
     const e = effectiveSettings({ ...s, activeSetupId: found.id });
     return practice ? { ...e, setupKind: 'interview' } : e;
+  }
+  const noMetaAtAll = !str(meta.setupId) && !name && !meta.setupKind;
+  if (noMetaAtAll) {
+    const migratedInterview = s.setups.find((x) => x.id === 'interview');
+    if (migratedInterview) return effectiveSettings({ ...s, activeSetupId: migratedInterview.id });
+    const current = s.setups.find((x) => x.id === s.activeSetupId) || s.setups.find((x) => x.id === BUILTIN_SETUP_ID);
+    if (current && current.kind === 'interview') return effectiveSettings({ ...s, activeSetupId: current.id });
   }
   const kind = practice || meta.setupKind !== 'general' ? 'interview' : 'general';
   const stand = makeSetup({ kind, name: str(meta.setupName).trim() || undefined });

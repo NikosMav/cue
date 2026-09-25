@@ -187,6 +187,31 @@ test('a legacy session without setup metadata is debriefed as an interview', () 
   assert.equal(e.resumeText, 'Synthetic CV');
 });
 
+test('a legacy session with no setup metadata at all uses the migrated "interview" setup, even if a general setup is now active', () => {
+  const { settingsForSession } = require('../src/setups');
+  const migrated = migrateSettings(legacy).settings; // has an 'interview' setup with real prep material
+  const withGeneralActive = normalizeSetups({ ...migrated, activeSetupId: BUILTIN_SETUP_ID });
+  const e = settingsForSession(withGeneralActive, { kind: 'interview', transcript: [], answers: [] });
+  assert.equal(e.setupKind, 'interview');
+  assert.equal(e.jobDescription, 'Backend role');
+  assert.equal(e.knowledgeBase, 'Notes K');
+  assert.equal(e.whyCompany, 'Mission');
+});
+
+test('a legacy session with no setup metadata at all falls back to an active custom interview setup when nothing was migrated', () => {
+  const { settingsForSession } = require('../src/setups');
+  const s = normalizeSetups({
+    setupsVersion: 1,
+    aboutMe: { resumeText: 'Synthetic CV' },
+    setups: [{ id: 'custom', name: 'Acme interview', kind: 'interview', conversation: 'Custom role', whyCompany: 'Custom co' }],
+    activeSetupId: 'custom'
+  });
+  const e = settingsForSession(s, { kind: 'interview', transcript: [], answers: [] });
+  assert.equal(e.setupKind, 'interview');
+  assert.equal(e.jobDescription, 'Custom role');
+  assert.equal(e.whyCompany, 'Custom co');
+});
+
 test('updateSetup patches one setup and returns a new array', () => {
   const s = migrateSettings(legacy).settings;
   const next = updateSetup(s, 'interview', { saveSessions: false });
