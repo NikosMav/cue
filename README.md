@@ -179,7 +179,7 @@ default for interview setups and off for general ones; "● saving" under the in
 box shows when the current conversation is being saved.
 
 Transcribing other people can require their consent, and your employer may have
-rules for meetings; check before using cue in a conversation you do not control. You can clear any field anytime.
+rules for meetings; check before using cue in a conversation you do not control.
 
 A setup's **Notes** field accepts longer reference notes.
 The complete notes are stored locally and sent to the selected chat provider with
@@ -187,9 +187,7 @@ each non-coding request. Longer notes increase request size; keep them focused a
 mark unknown or conditional personal details clearly. Clearing the field removes
 the saved reference.
 
-Every non-coding request includes all of your prep material (résumé, job
-description, STAR stories, motivation, work style, compensation preference,
-questions to ask and the knowledge base), so the model always has the facts it
+Every non-coding request includes About me and the active setup's material—its conversation description (or job description for interviews), notes, and for interview setups the prepared answers, compensation preference and questions to ask—so the model always has the facts it
 needs. Each field is bounded generously (the résumé at 12,000 characters) and
 anything cut is marked as truncated. With Anthropic, this block is marked for
 prompt caching so repeated questions start answering faster. Names and
@@ -254,7 +252,7 @@ The panel is see-through and click-through — the empty space around it never b
 
 Open **Sessions** (the archive icon next to the history button).
 
-- **Save sessions on this computer** (on by default; untick it to stop) keeps every conversation: the interviewer's questions, your answers, and cue's suggestions. A session is saved as it goes, and closed when you **Clear History**, start practice, or quit. Audio is never saved.
+- Each setup decides whether its conversations are saved (on by default for Job interview setups, off for General ones). The checkbox in the Sessions panel, labelled **Save conversations with "<setup name>"**, switches it for the active setup. A session is saved as it goes, and closed when you **Clear History**, start practice, or quit. Audio is never saved.
 - **Markdown copy:** choose a folder and cue keeps a readable `.md` copy of each session there, which works with Obsidian, VS Code, Notion import, Google Docs or any synced folder. Any session can also be exported with **Export .md**.
 - **Search** across questions, answers and debriefs, and open a session to read the whole conversation.
 - **Debrief** asks your chat model for a review of a session: a summary, the questions asked and how you answered, what went well, what to improve (with stronger versions of the weakest answers, using only your real facts), follow-ups for a thank-you note, and notes to add to your prep material. It is saved with the session.
@@ -386,7 +384,7 @@ silently substituting empty settings. Only one instance uses a given data direct
 - When Custom is selected, its API key and LLM request data are sent to the Base URL you configured.
 - Your optional résumé and prep notes also live in `cue-data.json` and are sent with each non-coding model request to your selected AI provider. They are stored as plain text; clear them in Settings to remove them. Names and technologies extracted from them are sent to your cloud speech provider as vocabulary hints.
 - In Local transcription mode, microphone and meeting audio stay on your computer. In cloud transcription modes, audio is sent only to the selected speech provider.
-- Cue never writes captured audio to disk. By default each conversation's transcript and cue's answers are saved as plain JSON under cue's user-data folder (and, if you choose a folder, as a Markdown copy there), so you can review and debrief them later. Turn this off under **Sessions → Save sessions on this computer** to keep transcripts in memory only; sessions already saved can be deleted one by one. Downloaded local model files remain on disk until you delete them.
+- Cue never writes captured audio to disk. Transcripts and cue's answers are saved as plain JSON for setups whose saving is on (by default Job interview setups; General setups start with saving off), and stored under cue's user-data folder (and, if you choose a folder, as a Markdown copy there), so you can review and debrief them later. Turn this on or off per setup in **Settings → Setups** or with the Sessions panel checkbox. Sessions already saved can be deleted one by one. Downloaded local model files remain on disk until you delete them.
 - A debrief sends that session's transcript and your prep notes to your selected chat provider, the same as any other request.
 - Screenshots are sent to your selected chat provider only when a feature needs the screen.
 
