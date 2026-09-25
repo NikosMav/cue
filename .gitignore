@@ -31,3 +31,7 @@ test-resume.js
 
 # Electron dist cache
 node_modules/electron/dist/electron.exe.bak
+
+# Agent worktrees and progress ledgers
+.claude/worktrees/
+.superpowers/
