@@ -1,6 +1,6 @@
 // Imports a prep profile (JSON) into About me and one setup, keeping keys,
 // models and every other setup as they are.
-const { migrateSettings, makeSetup, BUILTIN_SETUP_ID } = require('./setups');
+const { migrateSettings, makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./setups');
 
 const IMPORTED_INTERVIEW_NAME = 'Imported interview';
 
@@ -16,7 +16,7 @@ const SETUP_KEYS = {
 const INTERVIEW_HINTS = ['jobDescription', 'whyCompany', 'whyLeaving', 'salaryTarget', 'questionsToAsk'];
 const PROFILE_FIELDS = [...new Set([...Object.keys(GLOBAL_FIELDS), ...Object.keys(ABOUT_ME_KEYS), ...Object.keys(SETUP_KEYS), 'kind'])];
 
-function mergeProfile(settings, profile, { setupName } = {}) {
+function mergeProfile(settings, profile, { setupName, warnings } = {}) {
   if (!profile || typeof profile !== 'object' || Array.isArray(profile)) throw new Error('Profile must be a JSON object.');
   const next = migrateSettings(settings || {}).settings;
 
@@ -55,6 +55,14 @@ function mergeProfile(settings, profile, { setupName } = {}) {
     if (!setup) {
       setup = makeSetup({ name: name || 'Imported setup', kind });
       next.setups = [...next.setups, setup];
+    }
+    // Importing without --setup into an active general setup that isn't the
+    // built-in one silently writes interview-only fields where effectiveSettings
+    // hides them (see settingsForSession / effectiveSettings). Warn instead of
+    // failing the import.
+    if (!setupName && setup.kind === 'general' && setup.id !== BUILTIN_SETUP_ID &&
+        INTERVIEW_ONLY_FIELDS.some((field) => Object.hasOwn(profile, field)) && Array.isArray(warnings)) {
+      warnings.push(`Interview-only fields were imported into the general setup "${setup.name}", where they are not used. Use --setup to import into an interview setup.`);
     }
     next.setups = next.setups.map((s) => (s.id === setup.id ? { ...s, ...setupPatch } : s));
     next.activeSetupId = setup.id;

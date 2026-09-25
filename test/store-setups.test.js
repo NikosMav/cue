@@ -109,6 +109,7 @@ test('a failed migrateFile throws, leaves the file as it was and blocks later sa
   const original = fs.readFileSync(file, 'utf8');
   assert.throws(() => store.migrateFile());
   assert.equal(fs.readFileSync(file, 'utf8'), original);
+  assert.equal(store.migrationBlocked(), true, 'migrationBlocked() reflects the failed migration');
   store.setSettings({ smart: true });
   assert.equal(fs.readFileSync(file, 'utf8'), original, 'a routine save does not write the new layout without a backup');
   assert.equal(store.getSettings().smart, true);
@@ -117,6 +118,7 @@ test('a failed migrateFile throws, leaves the file as it was and blocks later sa
 test('after a successful migrateFile, saves write normally', () => {
   const { store, read } = loadStore(legacy);
   assert.equal(store.migrateFile(), true);
+  assert.equal(store.migrationBlocked(), false, 'migrationBlocked() clears after a successful migration');
   store.setSettings({ smart: true });
   assert.equal(read().smart, true);
   assert.equal(read().setupsVersion, 1);

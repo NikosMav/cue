@@ -115,6 +115,43 @@ test('a general profile imported without --setup still fills the active built-in
   assert.equal(s.setups.length, 1);
 });
 
+test('mergeProfile warns when interview-only fields land in a general setup with no --setup given', () => {
+  const settings = {
+    setupsVersion: 1,
+    setups: [{ id: 'g', name: 'Team sync', kind: 'general' }],
+    activeSetupId: 'g'
+  };
+  const warnings = [];
+  const result = mergeProfile(settings, { whyCompany: 'Mission' }, { warnings });
+  assert.equal(result.setups.find((s) => s.id === 'g').whyCompany, 'Mission', 'the field is still imported');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Team sync/);
+  assert.match(warnings[0], /general setup/);
+  assert.match(warnings[0], /--setup/);
+});
+
+test('mergeProfile does not warn when the target setup is an interview setup', () => {
+  const settings = {
+    setupsVersion: 1,
+    setups: [{ id: 'i', name: 'Acme interview', kind: 'interview' }],
+    activeSetupId: 'i'
+  };
+  const warnings = [];
+  mergeProfile(settings, { whyCompany: 'Mission' }, { warnings });
+  assert.equal(warnings.length, 0);
+});
+
+test('mergeProfile does not warn when --setup is given, even for a general target', () => {
+  const settings = {
+    setupsVersion: 1,
+    setups: [{ id: 'g', name: 'Team sync', kind: 'general' }],
+    activeSetupId: 'g'
+  };
+  const warnings = [];
+  mergeProfile(settings, { whyCompany: 'Mission' }, { setupName: 'Team sync', warnings });
+  assert.equal(warnings.length, 0);
+});
+
 test('import-profile refuses a --setup flag without a name and changes nothing', t => {
   const { root, data } = fixture(t);
   const file = path.join(data, 'cue-data.json');

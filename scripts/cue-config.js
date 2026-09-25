@@ -29,7 +29,8 @@ try {
       if (!nextArg || nextArg.startsWith('--')) throw new Error('--setup needs a setup name. Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
       setupName = nextArg;
     }
-    settings = mergeProfile(settings, profile, { setupName });
+    const warnings = [];
+    settings = mergeProfile(settings, profile, { setupName, warnings });
     const backups = path.join(directory, 'backups');
     fs.mkdirSync(backups, { recursive: true });
     fs.writeFileSync(path.join(backups, `before-profile-${crypto.randomUUID()}.json`), raw, { mode: 0o600, flag: 'wx' });
@@ -42,6 +43,8 @@ try {
     } finally {
       if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
     }
+    // Printed after the import has actually landed; stdout stays the JSON status.
+    for (const warning of warnings) console.error(warning);
   } else if (command !== 'status') throw new Error('Commands: status, import-profile <profile.json>');
   const view = effectiveSettings(settings);
   console.log(JSON.stringify({

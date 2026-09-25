@@ -235,7 +235,7 @@ function migrateFile() {
     let raw;
     try { raw = fs.readFileSync(FILE, 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') return false; throw error; }
-    const saved = JSON.parse(raw.replace(/^﻿/, ''));
+    const saved = JSON.parse(raw.replace(/^\uFEFF/, ''));
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
     if (Number(saved.setupsVersion) >= SETUPS_VERSION) return false;
     const backups = path.join(path.dirname(FILE), 'backups');
@@ -263,6 +263,9 @@ module.exports = {
   migrateFile,
   settingsFile: FILE,
   getSettings() { return load(); },
+  // True while save() is keeping changes in memory only (see migrationBlocked
+  // above): the renderer/main process can use this to warn the user.
+  migrationBlocked() { return migrationBlocked; },
   // Main-process only: the provisioning flow writes the key and its state here.
   setPublik(patch) {
     load();

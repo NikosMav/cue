@@ -392,6 +392,13 @@ function createWindow() {
         message: 'Heads up: screen-share hiding is off for this session (remote desktop / cloud PC / VM sessions can render the window invisible to you as well when it is on). The window will be visible in screen shares here.'
       });
     }
+    // The setups migration didn't complete (see store.js migrationBlocked):
+    // save() is keeping changes in memory only until cue restarts.
+    if (store.migrationBlocked()) {
+      send('status', {
+        message: 'Settings could not be updated to the new setups layout, so changes are kept only until cue restarts. Your previous settings file is unchanged.'
+      });
+    }
   });
   win.webContents.on('render-process-gone', (_e, d) => {
     console.log('[cue] renderer gone', JSON.stringify(d));
