@@ -41,13 +41,13 @@ It's a copilot for **live meetings** ("what do I say to that?") and **coding pro
 
 ### Platform support
 
-|  | macOS | Windows 11 / 10 2004+ |
-|---|---|---|
-| Screen + coding help | ✅ | ✅ |
-| Your mic (the **You** channel) | ✅ | ✅ |
-| Meeting audio (the **Them** channel) | ✅ macOS 14.4+ | ✅ |
-| Hidden from screen shares | ⚠️ best-effort, weaker on macOS 15.4+ | ✅ `WDA_EXCLUDEFROMCAPTURE` |
-| Permissions to grant | Microphone **and** Screen Recording | Microphone only |
+|  | macOS | Windows 11 / 10 2004+ | Linux (AppImage, experimental) |
+|---|---|---|---|
+| Screen + coding help | ✅ | ✅ | ✅ |
+| Your mic (the **You** channel) | ✅ | ✅ | ✅ |
+| Meeting audio (the **Them** channel) | ✅ macOS 14.4+ | ✅ | ⚠️ often silent ([#58](https://github.com/Blueturboguy07/cue/issues/58)) |
+| Hidden from screen shares | ⚠️ best-effort, weaker on macOS 15.4+ | ✅ `WDA_EXCLUDEFROMCAPTURE` | ❌ no OS support; cue skips it |
+| Permissions to grant | Microphone **and** Screen Recording | Microphone only | Microphone, plus the desktop portal's screen picker |
 
 > [!NOTE]
 > **Meeting audio needs macOS 14.4+.** Capturing the *other* person — what powers **What should I say?**, **Follow-up questions**, and **Recap** — uses system-audio loopback. On Windows that works out of the box. On macOS it relies on ScreenCaptureKit, which cue enables through Chromium's `MacLoopbackAudioForScreenShare` and `MacSckSystemAudioLoopbackOverride` switches; on older macOS the *Them* channel stays silent while your screen and the **You** channel keep working.
