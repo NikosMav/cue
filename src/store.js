@@ -79,6 +79,9 @@ const DEFAULTS = {
   shortcuts: {},    // Answer the interviewer's question as soon as they finish, without a key press.
   // Overlay opacity (1 = fully opaque). Clamped so the window never vanishes.
   opacity: 1,
+  // How opaque the panel, toolbar and history backgrounds are (Settings → Style).
+  // Text stays fully opaque. 0.72 is the original glass look.
+  panelOpacity: 0.72,
   // Slides: opt-in auto slide tracking (memory-only, forwarded, never written to disk).
   slides: {
     enabled: false,
@@ -357,6 +360,7 @@ module.exports = {
     const nextSettings = migrateSettings(deepMerge(data, patch || {})).settings;
     nextSettings.baseUrl = normalizeBaseUrl(nextSettings.baseUrl);
     nextSettings.opacity = clampOpacity(nextSettings.opacity);
+    nextSettings.panelOpacity = clampOpacity(nextSettings.panelOpacity);
     data = nextSettings;
     save();
     return data;

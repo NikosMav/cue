@@ -1444,6 +1444,18 @@
     await stopRecording();
     if (await saveSettings()) scrim.classList.add('hidden');
   }
+  // Background opacity: the panel, toolbar and history fills (styles.css --panel-alpha).
+  // Dragging the slider previews it; the value is saved with the other settings.
+  function applyPanelOpacity(value) {
+    const n = Number(value);
+    const alpha = Number.isFinite(n) ? Math.min(1, Math.max(0.2, n)) : 0.72;
+    const percent = Math.round(alpha * 100);
+    document.documentElement.style.setProperty('--panel-alpha', String(alpha));
+    $('#panel-opacity').value = String(percent);
+    $('#panel-opacity-value').textContent = percent + '%';
+  }
+  $('#panel-opacity').addEventListener('input', (e) => applyPanelOpacity(Number(e.target.value) / 100));
+
   async function openSettings() {
     settingsFormReady = false;
     $('#s-close').disabled = true;
@@ -1743,6 +1755,7 @@
     // Style tab
     $('#ai-rules').value = settings.aiRules || '';
     $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
+    applyPanelOpacity(settings.panelOpacity);
     $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
     $('#warm-up').value = settings.warmUp === false ? 'off' : 'on';
     updateAiRulesCounter();
@@ -2211,6 +2224,7 @@
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
+    settings.panelOpacity = Number($('#panel-opacity').value) / 100;
     settings.includeScreen = $('#include-screen').value !== 'no';
     settings.warmUp = $('#warm-up').value !== 'off';
     collectAboutMe();
@@ -2720,6 +2734,7 @@
   // ---- boot --------------------------------------------------------------
   (async function boot() {
     settings = await cue.settingsGet();
+    applyPanelOpacity(settings.panelOpacity);
     const platformInfo = await cue.platformInfo();
     publikState = await cue.publikState();
     // A build with no app token never shows the option, and keeps the BYO

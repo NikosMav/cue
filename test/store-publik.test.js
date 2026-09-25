@@ -287,3 +287,14 @@ test('a deleted data directory is recreated on the next save', () => {
   assert.equal(read().smart, true);
   assert.equal(store.lastSaveError(), null);
 });
+
+test('background opacity defaults to the original glass look and is clamped', () => {
+  const { store, read } = loadStore();
+  assert.equal(store.getSettings().panelOpacity, 0.72);
+  store.setSettings({ panelOpacity: 0.05 });
+  assert.equal(store.getSettings().panelOpacity, 0.2);
+  store.setSettings({ panelOpacity: 1.5 });
+  assert.equal(read().panelOpacity, 1);
+  store.setSettings({ panelOpacity: 0.9 });
+  assert.equal(store.getSettings().panelOpacity, 0.9);
+});

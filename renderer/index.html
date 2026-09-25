@@ -389,6 +389,9 @@
           <option value="off">Off</option>
         </select>
         <div class="s-hint-block">Sends one tiny request with your prep notes so the first real answer starts in about a second instead of several. It costs a fraction of a cent, runs at most every 4 minutes, and is never sent on publik API.</div>
+        <label class="s-label" for="panel-opacity">Background opacity</label>
+        <div class="s-range-row"><input id="panel-opacity" type="range" min="20" max="100" step="1" value="72" /><span id="panel-opacity-value">72%</span></div>
+        <div class="s-hint-block">How much of your screen shows through the panel, toolbar and history. Text always stays solid.</div>
         <label class="s-label">AI rules <span class="s-hint">how the AI should write its responses</span></label>
         <textarea id="ai-rules" rows="10" spellcheck="false" maxlength="2000" placeholder="e.g.
 - Never use em-dashes.
