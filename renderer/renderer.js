@@ -2071,6 +2071,11 @@
   }
 
   $('#setup-select').addEventListener('change', (e) => { collectSetupForm(); fillSetupForm(e.target.value); });
+  // The list follows the name as it is typed.
+  $('#setup-name').addEventListener('input', () => {
+    const option = $('#setup-select').selectedOptions[0];
+    if (option) option.textContent = ($('#setup-name').value.trim() || 'Untitled setup') + (editingSetupId === settings.activeSetupId ? ' (active)' : '');
+  });
   document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.addEventListener('click', () => {
     applyKindToForm(b.dataset.kind);
     // A new kind brings its default save switch only for a setup that never had content.
