@@ -164,15 +164,24 @@ Local mode is independent from the chat provider, so you can use local speech-to
 
 ### Optional — tailor answers to your background
 
-All prep material lives on one tab, **Settings → Prep**, in three sections: you and
-the role (résumé, job description, knowledge base), prepared answers (STAR stories,
-why this company, why leaving, work style) and closing the interview (salary and
-start date, questions to ask). The Resume / JD / Stories / Salary / KB indicators
-under the input box show what is loaded; click them to open the tab. cue uses the
-résumé as the factual reference for career-related answers and says when it does
-not provide a detail. You can clear any field anytime.
+cue keeps **setups**: saved preparation for a kind of conversation, one active at
+a time. Pick the active setup from the switcher under the input box. A **Job
+interview** setup answers as the candidate and offers practice interviews; a
+**General** setup works in any conversation (meetings, calls, lectures): cue works
+out the situation from what it hears and answers for your role. The built-in
+"Any conversation" setup needs no preparation.
 
-The **Interview knowledge base** field accepts longer reference notes.
+**Settings → About me** holds what is true in every setup (CV, stories, work
+style). **Settings → Setups** holds each setup's conversation description (the job
+description for interviews), notes, instructions for how cue should answer, the
+interview-only fields, and whether its conversations are saved. Saving is on by
+default for interview setups and off for general ones; "● saving" under the input
+box shows when the current conversation is being saved.
+
+Transcribing other people can require their consent, and your employer may have
+rules for meetings; check before using cue in a conversation you do not control. You can clear any field anytime.
+
+A setup's **Notes** field accepts longer reference notes.
 The complete notes are stored locally and sent to the selected chat provider with
 each non-coding request. Longer notes increase request size; keep them focused and
 mark unknown or conditional personal details clearly. Clearing the field removes
