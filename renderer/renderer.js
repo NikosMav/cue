@@ -575,7 +575,8 @@
   smartBtn.addEventListener('click', async () => {
     settings.smart = !settings.smart;
     smartBtn.classList.toggle('on', settings.smart);
-    await cue.settingsSet({ smart: settings.smart });
+    // Keep this copy (and its revision) current for the next save.
+    settings = await cue.settingsSet({ smart: settings.smart });
   });
 
   // Auto-answer toggle: answer the interviewer as soon as they finish asking
@@ -583,13 +584,13 @@
   function syncAutoButton() {
     autoBtn.classList.toggle('on', !!settings.autoAnswer);
     autoBtn.title = settings.autoAnswer
-      ? 'Auto-answer is on: cue answers each interviewer question when they finish asking (while listening)'
+      ? 'Auto-answer is on: cue answers a question from the other side when they finish asking (while listening)'
       : 'Auto-answer is off: press Enter or the shortcut to answer';
   }
   autoBtn.addEventListener('click', async () => {
     settings.autoAnswer = !settings.autoAnswer;
     syncAutoButton();
-    await cue.settingsSet({ autoAnswer: settings.autoAnswer });
+    settings = await cue.settingsSet({ autoAnswer: settings.autoAnswer });
     showToast(settings.autoAnswer ? 'Auto-answer on' : 'Auto-answer off', 1500);
   });
 
@@ -612,6 +613,7 @@
     if (!settings) return;
     Object.assign(settings, patch);
     if ('autoAnswer' in patch) syncAutoButton();
+    if ('setups' in patch) updatePrepStatus();
   });
 
   // Stop = start/stop listening. Kick off system-audio capture straight from the click so
@@ -1314,6 +1316,7 @@
   }
 
   const setupMenu = $('#setup-menu');
+  const setupSwitchTitle = $('#setup-switch').title;
   function closeSetupMenu() { setupMenu.classList.add('hidden'); }
   function renderSetupMenu() {
     setupMenu.innerHTML = '';
@@ -1330,7 +1333,9 @@
           updatePrepStatus();
           if (messages.querySelector('.empty-state')) showEmptyState();
           showToast('Setup: ' + s.name, 1500);
-        } catch (err) { showToast(err.message || String(err), 3000); }
+        } catch (err) {
+          showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3000);
+        }
       });
       setupMenu.appendChild(item);
     }
@@ -1958,8 +1963,12 @@
   }
 
   // A small patch (for example the active setup) through the same queue as full saves.
+  // No settingsMeta: a one-field patch cannot clobber other fields, and writes
+  // that do not refresh this copy (Smart, Auto, the auto-answer shortcut, the
+  // export folder) would otherwise make its revision stale and get it rejected.
+  // The store repairs an active id that no longer exists.
   function queueSettingsPatch(patch) {
-    const run = saveQueue.then(() => cue.settingsSet({ ...patch, settingsMeta: settings.settingsMeta }));
+    const run = saveQueue.then(() => cue.settingsSet({ ...patch }));
     saveQueue = run.catch(() => {});
     return run;
   }
@@ -2090,7 +2099,11 @@
     if (setup.id === setupsModel.BUILTIN_SETUP_ID) return;
     if (!confirm(`Delete the setup "${setup.name}"? Saved sessions are kept.`)) return;
     settings.setups = settings.setups.filter((s) => s.id !== setup.id);
-    if (settings.activeSetupId === setup.id) settings.activeSetupId = setupsModel.BUILTIN_SETUP_ID;
+    if (settings.activeSetupId === setup.id) {
+      settings.activeSetupId = setupsModel.BUILTIN_SETUP_ID;
+      // Deleted here, on purpose: the "no longer exists" notice is for changes made elsewhere.
+      lastActiveSetupId = settings.activeSetupId;
+    }
     fillSetupForm(settings.activeSetupId);
   });
   $('#setup-activate').addEventListener('click', async () => {
@@ -2228,7 +2241,7 @@
       const empty = document.createElement('div');
       empty.className = 'sess-empty';
       empty.textContent = $('#sessions-search').value.trim() ? 'No sessions match.'
-        : v.enabled ? 'No saved sessions yet. They appear here as you use cue.' : 'Saving is off. Turn it on above to keep your interviews.';
+        : v.enabled ? 'No saved sessions yet. They appear here as you use cue.' : 'Saving is off. Turn it on above to keep your conversations.';
       host.appendChild(empty);
       return;
     }
@@ -2345,6 +2358,11 @@
     practiceActive = active;
     $('#practice-row').classList.toggle('hidden', !active);
     $('#action-row').classList.toggle('hidden', active);
+    // Practice is an interview: a general setup mid-run would mix the prompts.
+    const setupSwitch = $('#setup-switch');
+    setupSwitch.disabled = active;
+    setupSwitch.title = active ? 'Switch setups after ending practice' : setupSwitchTitle;
+    if (active) closeSetupMenu();
     if (!active && 'speechSynthesis' in window) speechSynthesis.cancel();
     syncPracticeVoice();
     updateSavingIndicator();

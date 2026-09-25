@@ -1114,8 +1114,8 @@ ipcMain.handle('sessions:get', (_e, id) => {
 });
 ipcMain.handle('sessions:set-enabled', (_e, enabled) => {
   const saved = store.getSettings();
-  store.setSettings({ setups: updateSetup(saved, saved.activeSetupId, { saveSessions: !!enabled }) });
-  send('settings:changed', { saveSessions: !!enabled });
+  const next = store.setSettings({ setups: updateSetup(saved, saved.activeSetupId, { saveSessions: !!enabled }) });
+  send('settings:changed', { setups: next.setups });
   if (enabled && sessionRecorder && !sessionRecorder.current()) {
     // Keep the conversation so far, not only what follows.
     for (const turn of transcript) sessionRecorder.addTurn(turn);
