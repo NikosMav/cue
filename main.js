@@ -1566,6 +1566,7 @@ app.whenReady().then(async () => {
   try {
     if (store.migrateFile()) console.log('[cue] settings migrated to setups');
   } catch (error) {
+    console.error('[cue] settings migration to setups failed; the settings file was left unchanged:', error.message);
     recordEvent({ level: 'error', event: 'setups_migration_failed', msg: error.message, frame: 'migrateFile', context: {} });
   }
   app.setName('cue');
