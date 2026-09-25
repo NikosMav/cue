@@ -47,6 +47,13 @@ test('the general layer carries the situation instruction and the setup descript
   assert.match(system, /Notes for this conversation/);
 });
 
+test('general grounding forbids inventing the status of the user\'s work', () => {
+  const { system } = buildPromptRequest(generalSettings(), 'say', [{ channel: 'them', text: 'Where are we on the API migration?', ts: 1 }]);
+  assert.match(system, /Never invent[^.]*status or progress of work/);
+  assert.match(system, /A REQUEST FOR STATUS: give the update from the notes or the conversation\. When they do not cover it/);
+  assert.match(system, /describe no progress that is not written down/);
+});
+
 test('general recap lists decisions and action items; follow-up targets the other participants', () => {
   const settings = generalSettings();
   assert.match(buildPromptRequest(settings, 'recap', []).system, /Decisions made[\s\S]*Action items/);
