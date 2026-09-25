@@ -88,3 +88,20 @@ test('re-importing into an existing setup updates it instead of adding a second 
   assert.equal(matches.length, 1);
   assert.equal(matches[0].conversation, 'v2');
 });
+
+test('import-profile refuses a --setup flag without a name and changes nothing', t => {
+  const { root, data } = fixture(t);
+  const file = path.join(data, 'cue-data.json');
+  fs.writeFileSync(file, JSON.stringify({ apiKeys: { openai: 'k' }, provider: 'openai' }));
+  const before = fs.readFileSync(file, 'utf8');
+  const profile = path.join(root, 'profile.json');
+  fs.writeFileSync(profile, JSON.stringify({ jobDescription: 'Backend role' }));
+  const run = (args) => { try { execFileSync(process.execPath, [path.join(__dirname, '../scripts/cue-config.js'), ...args], { env: { ...process.env, CUE_DATA_DIR: data }, encoding: 'utf8', stdio: 'pipe' }); return null; } catch (e) { return e; } };
+  const missingName = run(['import-profile', profile, '--setup']);
+  assert.ok(missingName, 'must fail');
+  assert.match(String(missingName.stderr), /--setup needs a setup name/);
+  const flagFirst = run(['import-profile', '--setup', 'Acme', profile]);
+  assert.ok(flagFirst, 'must fail');
+  assert.match(String(flagFirst.stderr), /Usage: node scripts\/cue-config\.js import-profile/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+});

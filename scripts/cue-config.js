@@ -20,10 +20,15 @@ try {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Invalid settings file.');
   const command = process.argv[2] || 'status';
   if (command === 'import-profile') {
-    if (!process.argv[3]) throw new Error('Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
+    if (!process.argv[3] || process.argv[3].startsWith('--')) throw new Error('Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
     const profile = JSON.parse(fs.readFileSync(path.resolve(process.argv[3]), 'utf8').replace(/^\uFEFF/, ''));
     const setupFlag = process.argv.indexOf('--setup');
-    const setupName = setupFlag > 0 ? process.argv[setupFlag + 1] : '';
+    let setupName = '';
+    if (setupFlag > 0) {
+      const nextArg = process.argv[setupFlag + 1];
+      if (!nextArg || nextArg.startsWith('--')) throw new Error('--setup needs a setup name. Usage: node scripts/cue-config.js import-profile <profile.json> [--setup <name>]');
+      setupName = nextArg;
+    }
     settings = mergeProfile(settings, profile, { setupName });
     const backups = path.join(directory, 'backups');
     fs.mkdirSync(backups, { recursive: true });
