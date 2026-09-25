@@ -29,12 +29,13 @@ const UNAVAILABLE = { available: false, appToken: '', disclosureVersion: 1 };
 
 test('external profile import is seen without restart; an old settings window cannot erase it', () => {
   const { store, file, read } = loadStore({ apiKeys: { openai: 'test-only-key' }, resumeText: 'Original' });
+  store.setSettings({});  // Write initial state to disk in migrated format
   const oldWindow = store.redactForRenderer(store.getSettings());
-  const imported = { ...read(), resumeText: 'Updated profile' };
+  const imported = { ...read(), aboutMe: { ...read().aboutMe, resumeText: 'Updated profile' } };
   fs.writeFileSync(file, JSON.stringify(imported));
-  assert.equal(store.getSettings().resumeText, 'Updated profile');
+  assert.equal(store.getSettings().aboutMe.resumeText, 'Updated profile');
   assert.throws(() => store.setRendererSettings(oldWindow), /Settings changed outside/);
-  assert.equal(read().resumeText, 'Updated profile');
+  assert.equal(read().aboutMe.resumeText, 'Updated profile');
   assert.equal(read().apiKeys.openai, 'test-only-key');
   const refreshed = store.redactForRenderer(store.getSettings());
   refreshed.answerLength = 'balanced';
@@ -91,12 +92,16 @@ test('old settings default to brief answers; style and screen preferences surviv
 test('full interview KB persists across reloads and can be cleared without changing credentials', () => {
   const fixture = loadStore({ apiKeys: { openai: 'test-only-key' } });
   const knowledgeBase = 'Reference notes\n'.repeat(1600) + 'Final unknown detail: [X].';
-  fixture.store.setSettings({ knowledgeBase });
-  assert.equal(fixture.read().knowledgeBase, knowledgeBase);
+  const setup = { id: 'interview', name: 'Interview', kind: 'interview', conversation: '', notes: knowledgeBase, whyCompany: '', whyLeaving: '', salaryTarget: '', questionsToAsk: '', instructions: '', saveSessions: true };
+  fixture.store.setSettings({ setups: [setup], activeSetupId: 'interview' });
+  const activeSetup = fixture.read().setups.find((s) => s.id === fixture.read().activeSetupId);
+  assert.equal(activeSetup.notes, knowledgeBase);
   const reloaded = loadStore(fixture.read());
-  assert.equal(reloaded.store.getSettings().knowledgeBase, knowledgeBase);
-  reloaded.store.setSettings({ knowledgeBase: '' });
-  assert.equal(reloaded.read().knowledgeBase, '');
+  const activeSetupReloaded = reloaded.store.getSettings().setups.find((s) => s.id === reloaded.store.getSettings().activeSetupId);
+  assert.equal(activeSetupReloaded.notes, knowledgeBase);
+  reloaded.store.setSettings({ setups: reloaded.store.getSettings().setups.map((s) => s.id === 'interview' ? { ...s, notes: '' } : s) });
+  const activeSetupCleared = reloaded.read().setups.find((s) => s.id === reloaded.read().activeSetupId);
+  assert.equal(activeSetupCleared.notes, '');
   assert.equal(reloaded.read().apiKeys.openai, 'test-only-key');
 });
 

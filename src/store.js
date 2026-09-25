@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('node:crypto');
 const { app } = require('electron');
 const { normalizeBaseUrl } = require('./openai-compatible');
+const { migrateSettings, SETUPS_VERSION } = require('./setups');
 
 const FILE = path.join(app.getPath('userData'), 'cue-data.json');
 
@@ -50,18 +51,8 @@ const DEFAULTS = {
     cardShown: false,         // the first-run card (CONTRACT §12.1) was shown for the current starter grant
     lastError: ''
   },
-  // Tab 2: Profile
-  resumeText: '',
-  jobDescription: '',
-  knowledgeBase: '',     // Full interview reference; never clipped like resume sections.
-  // Tab 3: Interview Prep
-  starStories: '',       // 3-5 behavioral STAR stories in plain English
-  whyCompany: '',        // Why do you want to work here?
-  whyLeaving: '',        // Why are you leaving your current job?
-  workStyle: '',         // How you work, decision-making style, values
-  // Tab 4: Q&A
-  salaryTarget: '',      // e.g. "$150k-$180k base + equity"
-  questionsToAsk: '',    // Questions to ask the interviewer
+  // Prep material lives in aboutMe and setups (src/setups.js). They are not
+  // defaulted here: a legacy file without setupsVersion must still migrate.
   // Tab 5: Style — custom response rules
   // The user writes how the AI should write: e.g. "no em-dashes", "use bullet
   // points", "casual tone". Applied to every LLM mode EXCEPT LeetCode (kept
@@ -74,7 +65,6 @@ const DEFAULTS = {
   // Saved sessions (transcript + answers per interview), on by default and
   // switched off in the Sessions panel; sessionsExportDir optionally keeps a
   // Markdown copy of each.
-  saveSessions: true,
   sessionsExportDir: '',
   practiceVoice: true,  // Read practice questions aloud with the system voice.
   // Global shortcut overrides by action id (src/shortcuts.js); '' clears one.
@@ -110,7 +100,7 @@ const DEFAULTS = {
 
 // Fields the renderer may never write. settings:set passes patches through
 // stripRendererPatch; settings:get hands out redactForRenderer's view.
-const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY'];
+const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY', 'setupsVersion'];
 
 let data = null;
 let hasSavedFile = false;
@@ -136,10 +126,12 @@ function load() {
   try {
     const saved = JSON.parse(fs.readFileSync(FILE, 'utf8').replace(/^\uFEFF/, ''));
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
-    data = deepMerge(DEFAULTS, saved);
+    // Legacy single-profile files are read in the setups layout without being
+    // rewritten; migrateFile() writes the new layout once, after a backup.
+    data = migrateSettings(deepMerge(DEFAULTS, saved)).settings;
     hasSavedFile = true;
   } catch (error) {
-    if (error.code === 'ENOENT' && !hasSavedFile) data = deepMerge(DEFAULTS, {});
+    if (error.code === 'ENOENT' && !hasSavedFile) data = migrateSettings(deepMerge(DEFAULTS, {})).settings;
     else throw new Error(`Cannot read Cue settings at ${FILE}. Existing settings were not replaced.`);
   }
   return data;
@@ -213,6 +205,23 @@ function redactForRenderer(s) {
   };
 }
 
+// One-time move to setups (src/setups.js). Backs up the file first; a file
+// that cannot be read or parsed is left exactly as it was.
+function migrateFile() {
+  let raw;
+  try { raw = fs.readFileSync(FILE, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  const saved = JSON.parse(raw.replace(/^﻿/, ''));
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
+  if (Number(saved.setupsVersion) >= SETUPS_VERSION) return false;
+  const backups = path.join(path.dirname(FILE), 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  fs.writeFileSync(path.join(backups, `before-setups-${Date.now()}.json`), raw, { mode: 0o600, flag: 'wx' });
+  data = migrateSettings(saved).settings;
+  save();
+  return true;
+}
+
 module.exports = {
   MAX_AI_RULES_CHARS,
   RENDERER_READ_ONLY,
@@ -220,6 +229,7 @@ module.exports = {
   stripRendererPatch,
   redactForRenderer,
   setRendererSettings,
+  migrateFile,
   settingsFile: FILE,
   getSettings() { return load(); },
   // Main-process only: the provisioning flow writes the key and its state here.
@@ -241,7 +251,7 @@ module.exports = {
   },
   setSettings(patch) {
     load();
-    const nextSettings = deepMerge(data, patch || {});
+    const nextSettings = migrateSettings(deepMerge(data, patch || {})).settings;
     nextSettings.baseUrl = normalizeBaseUrl(nextSettings.baseUrl);
     data = nextSettings;
     save();
