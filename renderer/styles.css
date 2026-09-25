@@ -531,7 +531,7 @@ button:focus { outline: none; }
 /* Wraps to a second row instead of scrolling sideways behind a scrollbar. */
 .s-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; flex-shrink: 0; }
 .s-tab {
-  flex: 1 1 auto; min-width: 72px; padding: 7px 10px; border-radius: var(--r-8);
+  flex: 1 1 auto; min-width: 0; padding: 7px 8px; border-radius: var(--r-8);
   border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03);
   color: var(--tx-mut); font-size: 12px; font-weight: 500; font-family: var(--font);
   cursor: pointer; transition: all 140ms ease; white-space: nowrap;
