@@ -1277,30 +1277,91 @@
   }
   const aiRulesEl = document.getElementById('ai-rules');
   if (aiRulesEl) aiRulesEl.addEventListener('input', updateAiRulesCounter);
+  let capturing = false;
+  function updateSavingIndicator() {
+    const setup = settings && activeSetupOf(settings);
+    const on = !!(setup && setup.saveSessions && (capturing || practiceActive));
+    $('#setup-saving').classList.toggle('hidden', !on);
+  }
+
+  let lastActiveSetupId = null;
   function updatePrepStatus() {
     if (!settings) return;
-    const fields = {
-      resume:  !!(settings.resumeText && settings.resumeText.trim()),
-      jd:      !!(settings.jobDescription && settings.jobDescription.trim()),
-      stories: !!(settings.starStories && settings.starStories.trim()),
-      salary:  !!(settings.salaryTarget && settings.salaryTarget.trim()),
-      kb:      !!(settings.knowledgeBase && settings.knowledgeBase.trim())
+    const setup = activeSetupOf(settings);
+    if (!setup) return;
+    // The store falls back to "Any conversation" when the active setup is
+    // gone (deleted in another window, a bad import); say so once.
+    if (lastActiveSetupId && lastActiveSetupId !== setup.id && !(settings.setups || []).some((s) => s.id === lastActiveSetupId)) {
+      showToast('The active setup no longer exists; using “' + setup.name + '”.', 3000);
+    }
+    lastActiveSetupId = setup.id;
+    $('#setup-switch-name').textContent = setup.name;
+    const about = settings.aboutMe || {};
+    const loaded = {
+      about: !!((about.resumeText || '').trim() || (about.stories || '').trim()),
+      conversation: !!(setup.conversation || '').trim(),
+      notes: !!(setup.notes || '').trim()
     };
+    const labels = { about: 'About me', conversation: setup.kind === 'interview' ? 'Role' : 'Context', notes: 'Notes' };
     document.querySelectorAll('#prep-status .prep-item').forEach((el) => {
-      const loaded = fields[el.dataset.field];
-      el.classList.toggle('loaded', loaded);
-      el.classList.toggle('missing', !loaded);
-      el.title = loaded
-        ? el.textContent.trim() + ' loaded — click to edit'
-        : el.textContent.trim() + ' not set — click to add';
+      const field = el.dataset.field;
+      el.textContent = labels[field];
+      el.classList.toggle('loaded', loaded[field]);
+      el.classList.toggle('missing', !loaded[field]);
+      el.title = labels[field] + (loaded[field] ? ' loaded — click to edit' : ' not set — click to add');
     });
+    updateSavingIndicator();
   }
-  // The indicators open the tab where that material is edited.
-  $('#prep-status').addEventListener('click', async () => {
-    await openSettings();
-    const tab = document.querySelector('.s-tab[data-tab="profile"]');
-    if (tab) tab.click();
+
+  const setupMenu = $('#setup-menu');
+  function closeSetupMenu() { setupMenu.classList.add('hidden'); }
+  function renderSetupMenu() {
+    setupMenu.innerHTML = '';
+    for (const s of settings.setups || []) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = s.name;
+      item.classList.toggle('on', s.id === settings.activeSetupId);
+      item.addEventListener('click', async () => {
+        closeSetupMenu();
+        if (s.id === settings.activeSetupId) return;
+        try {
+          settings = await queueSettingsPatch({ activeSetupId: s.id });
+          updatePrepStatus();
+          if (messages.querySelector('.empty-state')) showEmptyState();
+          showToast('Setup: ' + s.name, 1500);
+        } catch (err) { showToast(err.message || String(err), 3000); }
+      });
+      setupMenu.appendChild(item);
+    }
+    setupMenu.appendChild(document.createElement('hr'));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = 'New setup…';
+    add.addEventListener('click', async () => { closeSetupMenu(); await openSetupsTab(); $('#setup-new').click(); });
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.textContent = 'Manage setups…';
+    manage.addEventListener('click', () => { closeSetupMenu(); openSetupsTab(); });
+    setupMenu.append(add, manage);
+  }
+  $('#setup-switch').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (setupMenu.classList.contains('hidden')) { renderSetupMenu(); setupMenu.classList.remove('hidden'); }
+    else closeSetupMenu();
   });
+  document.addEventListener('click', (e) => { if (!setupMenu.contains(e.target)) closeSetupMenu(); });
+  // Indicators open where that material is edited.
+  document.querySelectorAll('#prep-status .prep-item').forEach((el) => el.addEventListener('click', async () => {
+    if (el.dataset.field === 'about') {
+      await openSettings();
+      const tab = document.querySelector('.s-tab[data-tab="about"]');
+      if (tab) tab.click();
+    } else {
+      openSetupsTab(settings.activeSetupId);
+    }
+  }));
+  cue.on('capture:state', (st) => { capturing = !!(st && st.active); updateSavingIndicator(); });
 
   function updateSmartTooltip() {
     if (!settings) return;
@@ -1896,6 +1957,13 @@
     return run;
   }
 
+  // A small patch (for example the active setup) through the same queue as full saves.
+  function queueSettingsPatch(patch) {
+    const run = saveQueue.then(() => cue.settingsSet({ ...patch, settingsMeta: settings.settingsMeta }));
+    saveQueue = run.catch(() => {});
+    return run;
+  }
+
   // ---- About me and setups (data model: src/setups.js) --------------------
   const setupsModel = cue.setupsModel;
   let editingSetupId = null;
@@ -2110,8 +2178,10 @@
       box.appendChild(document.createElement('br'));
       box.appendChild(open);
     } else {
-      box.innerHTML = '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> ' +
-        'when the interviewer asks a question. You can also type a question below.';
+      const setup = activeSetupOf(settings);
+      box.innerHTML = setup && setup.kind === 'interview'
+        ? '<strong>Ready for your interview.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when you\'re asked something.'
+        : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
     }
     messages.appendChild(box);
   }
@@ -2143,6 +2213,11 @@
     const v = sessionsView;
     if (!v) return;
     $('#sessions-enabled').checked = v.enabled;
+    const label = $('#sessions-enabled').parentElement;
+    label.lastChild.textContent = ' Save conversations with “' + (sessionsView.setupName || 'this setup') + '”';
+    const practice = $('#practice-start');
+    practice.disabled = sessionsView.setupKind !== 'interview';
+    practice.title = practice.disabled ? 'Practice needs a Job interview setup' : 'Cue asks interview questions and rates your answers';
     $('#sessions-hint').classList.toggle('hidden', v.enabled && v.sessions.length > 0);
     $('#sessions-export-dir').textContent = v.exportDir || 'off';
     $('#sessions-export-dir').title = v.exportDir || '';
@@ -2211,6 +2286,8 @@
   $('#sessions-enabled').addEventListener('change', async (e) => {
     sessionsView = await cue.sessionsSetEnabled(e.target.checked);
     renderSessionsList();
+    settings = await cue.settingsGet();
+    updatePrepStatus();
     showToast(e.target.checked ? 'Sessions will be saved on this computer' : 'Saving off · sessions already saved are kept', 2500);
   });
   $('#sessions-choose-dir').addEventListener('click', async () => { sessionsView = await cue.sessionsChooseExportDir(); renderSessionsList(); });
@@ -2270,6 +2347,7 @@
     $('#action-row').classList.toggle('hidden', active);
     if (!active && 'speechSynthesis' in window) speechSynthesis.cancel();
     syncPracticeVoice();
+    updateSavingIndicator();
   }
   function practiceVoiceOn() { return !settings || settings.practiceVoice !== false; }
   function syncPracticeVoice() { $('#practice-voice').textContent = 'Voice: ' + (practiceVoiceOn() ? 'on' : 'off'); }
@@ -2288,7 +2366,12 @@
   }
 
   $('#practice-start').addEventListener('click', async () => {
-    const r = await cue.practiceStart();
+    let r;
+    try { r = await cue.practiceStart(); }
+    catch (err) {
+      showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3500);
+      return;
+    }
     closeSessions();
     clearConversationUI();
     setPracticeUI(true);

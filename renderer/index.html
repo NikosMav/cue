@@ -78,12 +78,13 @@
             </div>
 
             <div id="prep-status" class="prep-status">
-              <span class="prep-item" data-field="resume">📄 Resume</span>
-              <span class="prep-item" data-field="jd">💼 JD</span>
-              <span class="prep-item" data-field="stories">🎯 Stories</span>
-              <span class="prep-item" data-field="salary">💰 Salary</span>
-              <span class="prep-item" data-field="kb">📚 KB</span>
+              <button id="setup-switch" class="setup-switch" type="button" title="Choose the setup for this conversation"><span id="setup-switch-name">Any conversation</span> ▾</button>
+              <span id="setup-saving" class="setup-saving hidden" title="This conversation is saved on this computer (see Sessions). Audio is never saved.">● saving</span>
+              <span class="prep-item" data-field="about">About me</span>
+              <span class="prep-item" data-field="conversation">Context</span>
+              <span class="prep-item" data-field="notes">Notes</span>
             </div>
+            <div id="setup-menu" class="setup-menu hidden" role="menu"></div>
           </div>
 
         </div><!-- /panel-columns -->
