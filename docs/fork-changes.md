@@ -194,5 +194,8 @@ in public issues, examples and test fixtures.
   meeting memory (Sessions already save transcripts, per setup, and "Any
   conversation" saves nothing); the wider window with the left-side history
   and upstream's drag (the fork's click-through and multi-monitor placement
-  assume the 700px window); swapped Assist/Say shortcuts; the opacity control
-  (its toolbar popover needs the click-through controller to know about it).
+  assume the 700px window); swapped Assist/Say shortcuts. Adapted instead of
+  taken: the opacity control became Settings → Style → Background opacity
+  (fills only, text stays solid, no toolbar popover), and meeting memory's
+  resume-after-restart became crash recovery in Sessions (unended sessions of a
+  saving setup are picked back up within 30 minutes).
