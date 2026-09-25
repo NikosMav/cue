@@ -104,6 +104,14 @@ const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'w
 
 let data = null;
 let hasSavedFile = false;
+// Set while the file on disk is still in the single-profile layout (or
+// migrateFile failed) and migrateFile has not succeeded in this process.
+// save() then keeps changes in memory only: writing the new layout without
+// the backup migrateFile makes would lose the old file. The next launch retries.
+let migrationBlocked = false;
+let migrationDone = false;
+let unsavedWhileBlocked = false;
+let warnedBlocked = false;
 
 function deepMerge(base, over) {
   const out = Array.isArray(base) ? base.slice() : { ...base };
@@ -122,12 +130,16 @@ function deepMerge(base, over) {
 }
 
 function load() {
+  // Changes that could not be written are newer than the file.
+  if (migrationBlocked && unsavedWhileBlocked && data) return data;
   // Read the current file: profile tools and another process may have changed it.
   try {
     const saved = JSON.parse(fs.readFileSync(FILE, 'utf8').replace(/^\uFEFF/, ''));
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
     // Legacy single-profile files are read in the setups layout without being
     // rewritten; migrateFile() writes the new layout once, after a backup.
+    // Another tool may have written the new layout (with its own backup) since.
+    migrationBlocked = !(Number(saved.setupsVersion) >= SETUPS_VERSION) && !migrationDone;
     data = migrateSettings(deepMerge(DEFAULTS, saved)).settings;
     hasSavedFile = true;
   } catch (error) {
@@ -138,6 +150,15 @@ function load() {
 }
 // 0600: the file holds every BYO key and now a publik key. A no-op on Windows.
 function save() {
+  if (migrationBlocked) {
+    // Callers such as the window "moved" handler must not throw here.
+    unsavedWhileBlocked = true;
+    if (!warnedBlocked) {
+      warnedBlocked = true;
+      console.warn('[cue] settings not saved: migration to setups has not completed; changes apply until restart');
+    }
+    return;
+  }
   const temporary = `${FILE}.${crypto.randomUUID()}.tmp`;
   try {
     fs.mkdirSync(path.dirname(FILE), { recursive: true });
@@ -207,19 +228,29 @@ function redactForRenderer(s) {
 
 // One-time move to setups (src/setups.js). Backs up the file first; a file
 // that cannot be read or parsed is left exactly as it was.
+// A failure leaves the file as it was and blocks later saves (see
+// migrationBlocked) until a migrateFile call succeeds.
 function migrateFile() {
-  let raw;
-  try { raw = fs.readFileSync(FILE, 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
-  const saved = JSON.parse(raw.replace(/^﻿/, ''));
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
-  if (Number(saved.setupsVersion) >= SETUPS_VERSION) return false;
-  const backups = path.join(path.dirname(FILE), 'backups');
-  fs.mkdirSync(backups, { recursive: true });
-  fs.writeFileSync(path.join(backups, `before-setups-${Date.now()}.json`), raw, { mode: 0o600, flag: 'wx' });
-  data = migrateSettings(saved).settings;
-  save();
-  return true;
+  try {
+    let raw;
+    try { raw = fs.readFileSync(FILE, 'utf8'); }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+    const saved = JSON.parse(raw.replace(/^﻿/, ''));
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings object');
+    if (Number(saved.setupsVersion) >= SETUPS_VERSION) return false;
+    const backups = path.join(path.dirname(FILE), 'backups');
+    fs.mkdirSync(backups, { recursive: true });
+    fs.writeFileSync(path.join(backups, `before-setups-${Date.now()}.json`), raw, { mode: 0o600, flag: 'wx' });
+    data = migrateSettings(saved).settings;
+    migrationBlocked = false;
+    save();
+    migrationDone = true;
+    unsavedWhileBlocked = false;
+    return true;
+  } catch (error) {
+    migrationBlocked = true;
+    throw error;
+  }
 }
 
 module.exports = {

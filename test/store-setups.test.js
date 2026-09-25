@@ -74,3 +74,50 @@ test('saving from the renderer normalizes setups and cannot drop the built-in on
   assert.deepEqual(saved.setups.map((x) => x.id), ['any', 'interview']);
   assert.equal(saved.apiKeys.openai, 'test-only-key');
 });
+
+test('a one-field patch without settingsMeta switches the setup after another write made the renderer copy stale', () => {
+  const { store, read } = loadStore(legacy);
+  store.migrateFile();
+  const staleView = store.redactForRenderer(store.getSettings());
+  // The Smart pill writes through a fresh copy; the panel's copy is now one revision behind.
+  store.setRendererSettings({ ...store.redactForRenderer(store.getSettings()), smart: true });
+  assert.throws(() => store.setRendererSettings({ activeSetupId: 'any', settingsMeta: staleView.settingsMeta }), /Settings changed outside/);
+  const before = read();
+  store.setRendererSettings({ activeSetupId: 'any' });
+  const after = read();
+  assert.equal(after.activeSetupId, 'any');
+  assert.equal(after.smart, true);
+  assert.deepEqual({ ...after, activeSetupId: before.activeSetupId }, before, 'only activeSetupId changed');
+});
+
+test('without a completed migration, a legacy file is never overwritten; changes stay in memory', (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { store, file } = loadStore(legacy);
+  const original = fs.readFileSync(file, 'utf8');
+  store.setSettings({ smart: true });
+  store.setSettings({ answerLength: 'detailed' });
+  assert.equal(fs.readFileSync(file, 'utf8'), original, 'file on disk unchanged');
+  assert.equal(store.getSettings().smart, true, 'change kept in memory');
+  assert.equal(store.getSettings().answerLength, 'detailed');
+  assert.equal(warn.mock.callCount(), 1, 'one warning per process');
+});
+
+test('a failed migrateFile throws, leaves the file as it was and blocks later saves', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { store, file, dir } = loadStore(legacy);
+  fs.writeFileSync(path.join(dir, 'backups'), 'not a folder');
+  const original = fs.readFileSync(file, 'utf8');
+  assert.throws(() => store.migrateFile());
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
+  store.setSettings({ smart: true });
+  assert.equal(fs.readFileSync(file, 'utf8'), original, 'a routine save does not write the new layout without a backup');
+  assert.equal(store.getSettings().smart, true);
+});
+
+test('after a successful migrateFile, saves write normally', () => {
+  const { store, read } = loadStore(legacy);
+  assert.equal(store.migrateFile(), true);
+  store.setSettings({ smart: true });
+  assert.equal(read().smart, true);
+  assert.equal(read().setupsVersion, 1);
+});

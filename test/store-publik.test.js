@@ -29,7 +29,7 @@ const UNAVAILABLE = { available: false, appToken: '', disclosureVersion: 1 };
 
 test('external profile import is seen without restart; an old settings window cannot erase it', () => {
   const { store, file, read } = loadStore({ apiKeys: { openai: 'test-only-key' }, resumeText: 'Original' });
-  store.setSettings({});  // Write initial state to disk in migrated format
+  store.migrateFile();  // As main.js does at launch: back up, then write the setups layout
   const oldWindow = store.redactForRenderer(store.getSettings());
   const imported = { ...read(), aboutMe: { ...read().aboutMe, resumeText: 'Updated profile' } };
   fs.writeFileSync(file, JSON.stringify(imported));
@@ -46,6 +46,7 @@ test('external profile import is seen without restart; an old settings window ca
 
 test('window movement and gateway updates do not invalidate a settings editor', () => {
   const { store, read } = loadStore({ apiKeys: { openai: 'test-only' } });
+  store.migrateFile();
   const view = store.redactForRenderer(store.getSettings());
   store.setSettings({ windowX: 23 });
   store.setPublik({ balanceMicros: 50, apiKey: 'test-gateway-key' });
@@ -69,6 +70,7 @@ test('Windows UTF-8 BOM is accepted without losing saved credentials', () => {
 
 test('a failed atomic replacement reports an error and keeps the original file', () => {
   const { store, file, read } = loadStore({ apiKeys: { openai: 'test-only' }, answerLength: 'brief' });
+  store.migrateFile();
   const original = fs.readFileSync(file, 'utf8');
   const rename = fs.renameSync;
   fs.renameSync = () => { throw Object.assign(new Error('test failure'), { code: 'EACCES' }); };
@@ -81,6 +83,7 @@ test('a failed atomic replacement reports an error and keeps the original file',
 
 test('old settings default to brief answers; style and screen preferences survive reload', () => {
   const { store, read } = loadStore({ provider: 'openai' });
+  store.migrateFile();
   assert.equal(store.getSettings().answerLength, 'brief');
   assert.equal(store.getSettings().includeScreen, true);
   store.setSettings({ answerLength: 'detailed', includeScreen: false });
@@ -91,6 +94,7 @@ test('old settings default to brief answers; style and screen preferences surviv
 
 test('full interview KB persists across reloads and can be cleared without changing credentials', () => {
   const fixture = loadStore({ apiKeys: { openai: 'test-only-key' } });
+  fixture.store.migrateFile();
   const knowledgeBase = 'Reference notes\n'.repeat(1600) + 'Final unknown detail: [X].';
   const setup = { id: 'interview', name: 'Interview', kind: 'interview', conversation: '', notes: knowledgeBase, whyCompany: '', whyLeaving: '', salaryTarget: '', questionsToAsk: '', instructions: '', saveSessions: true };
   fixture.store.setSettings({ setups: [setup], activeSetupId: 'interview' });
@@ -108,6 +112,7 @@ test('full interview KB persists across reloads and can be cleared without chang
 test('never overwrites a user key: an OpenAI user stays on OpenAI, file otherwise unchanged', () => {
   const fixture = { provider: 'openai', apiKeys: { openai: 'sk-proj-user-typed-this' }, models: { openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' } }, onboarded: true, aiRules: 'no em-dashes' };
   const { store, read } = loadStore(fixture);
+  store.migrateFile();
 
   assert.equal(store.applyPublikDefault(AVAILABLE), false);
 
@@ -139,6 +144,7 @@ test('first run (no file) with a token switches to publik; without a token it st
 
 test('a Custom provider with a base URL is untouched', () => {
   const { store, read } = loadStore({ provider: 'custom', baseUrl: 'http://127.0.0.1:18789/v1', apiKeys: { custom: '' } });
+  store.migrateFile();
   assert.equal(store.applyPublikDefault(AVAILABLE), false);
   assert.equal(read().provider, 'custom');
   assert.equal(read().baseUrl, 'http://127.0.0.1:18789/v1');
@@ -146,12 +152,14 @@ test('a Custom provider with a base URL is untouched', () => {
 
 test('an Ollama user (URL in the key slot) is untouched', () => {
   const { store, read } = loadStore({ provider: 'ollama', apiKeys: { ollama: 'http://localhost:11434' } });
+  store.migrateFile();
   assert.equal(store.applyPublikDefault(AVAILABLE), false);
   assert.equal(read().provider, 'ollama');
 });
 
 test('the switch happens once per settings file, even if the user later clears their key', () => {
   const { store, read } = loadStore({ provider: 'openai', apiKeys: { openai: 'sk-1' } });
+  store.migrateFile();
   assert.equal(store.applyPublikDefault(AVAILABLE), false);
   store.setSettings({ apiKeys: { openai: '' } });
   assert.equal(store.applyPublikDefault(AVAILABLE), false);
@@ -185,6 +193,7 @@ test('redactForRenderer never returns the publik key, and reports connected', ()
 
 test('setPublik writes only apiKeys.publik and publik.*', () => {
   const { store, read } = loadStore({ provider: 'openai', apiKeys: { openai: 'sk-keep' } });
+  store.migrateFile();
   store.setPublik({ apiKey: 'pk_test_key', installId: 'u-1', balanceMicros: 250000, wallet: { claimState: 'anonymous', balanceMicros: 250000 } });
   const after = read();
   assert.equal(after.apiKeys.openai, 'sk-keep');
