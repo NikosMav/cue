@@ -60,6 +60,36 @@ test('general debrief reviews decisions, action items and the user\'s contributi
   assert.match(turns[0].text, /^Conversation transcript:/);
 });
 
+test('a long general debrief marks the omitted middle as part of the conversation, interviews keep their wording', () => {
+  const long = Array.from({ length: 2400 },(_, i) => ({ channel: i % 2 ? 'you' : 'them', text: 'Point number ' + i + ' about the release plan.', ts: i }));
+  const general = buildDebriefRequest(generalSettings(), { kind: 'interview', setupKind: 'general', transcript: long, answers: [] });
+  assert.match(general.turns[0].text, /\[… middle of the conversation omitted for length …\]/);
+  assert.doesNotMatch(general.turns[0].text, INTERVIEW_WORDS);
+  assert.doesNotMatch(general.turns[0].text, /middle of the interview/);
+  const interview = buildDebriefRequest(effectiveSettings(migrateSettings(golden.profile).settings), { kind: 'interview', transcript: long, answers: [] });
+  assert.match(interview.turns[0].text, /\[… middle of the interview omitted for length …\]/);
+});
+
+test('coding requests under a general setup carry no personal reference material and no interview wording', () => {
+  const settings = generalSettings();
+  const leetcode = buildPromptRequest(settings, 'leetcode', []);
+  const followup = buildPromptRequest(settings, 'ask', [], 'Make it O(n).', { answers: [{ mode: 'leetcode', prompt: '', text: 'def f(): pass' }] });
+  assert.equal(followup.mode, 'codeFollowup');
+  for (const request of [leetcode, followup]) {
+    const all = request.system + '\n' + request.turns.map((t) => t.text).join('\n');
+    assert.doesNotMatch(all, /Synthetic CV|Weekly platform sync|Release is Friday/, request.mode + ' carries no reference material');
+    assert.doesNotMatch(all, INTERVIEW_WORDS, request.mode + ' has no interview wording');
+    assert.equal(request.cachePrefix, '');
+  }
+});
+
+test('"What should I say?" before anything was heard has no interview wording under a general setup', () => {
+  const { system, turns } = buildPromptRequest(generalSettings(), 'say', []);
+  assert.doesNotMatch(system, INTERVIEW_WORDS);
+  assert.doesNotMatch(turns[0].text, INTERVIEW_WORDS);
+  assert.match(turns[0].text, /\(listening not started yet\)/);
+});
+
 test('general answers get a situation-neutral label', () => {
   const at = (text) => [{ channel: 'them', text, ts: 1 }];
   assert.equal(detectGeneralCategory(at('Should we go with option B?')), 'decision');

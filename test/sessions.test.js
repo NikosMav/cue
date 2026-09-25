@@ -121,6 +121,22 @@ test('sessions from a general setup are titled "Conversation" and record the set
   assert.match(sessionToMarkdown(s), /\*\*Setup:\*\* Team sync/);
 });
 
+test('sessions record the id of their setup so a debrief can find it after a rename', () => {
+  assert.equal(newSession({ now: 1 }).setupId, '');
+  assert.equal(newSession({ now: 1, setupId: 'sync', setupName: 'Team sync', setupKind: 'general' }).setupId, 'sync');
+});
+
+test('exported general conversations label the other side "Them", interviews keep "Interviewer"', () => {
+  const general = newSession({ now: 1, setupName: 'Team sync', setupKind: 'general' });
+  general.transcript.push({ channel: 'them', text: 'Where are we on the release?', ts: 2 });
+  const md = sessionToMarkdown(general);
+  assert.match(md, /\*\*Them\*\* \(/);
+  assert.doesNotMatch(md, /Interviewer/);
+  const interview = newSession({ now: 1 });
+  interview.transcript.push({ channel: 'them', text: 'Why us?', ts: 2 });
+  assert.match(sessionToMarkdown(interview), /\*\*Interviewer\*\* \(/);
+});
+
 test('sessions without setup metadata keep their old titles', () => {
   const { summarize } = require('../src/sessions');
   const s = newSession({ now: 1 });

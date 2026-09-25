@@ -16,7 +16,7 @@ const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
 const { createClickThrough, placeOnDisplay } = require('./src/click-through');
-const { effectiveSettings, updateSetup } = require('./src/setups');
+const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
 
 // Settings as every feature reads them: About me + the active setup projected
 // onto the flat prep fields (src/setups.js).
@@ -1177,7 +1177,8 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
   if (debriefInFlight) debriefInFlight.abort();
   const controller = new AbortController();
   debriefInFlight = controller;
-  const request = buildDebriefRequest(settings, session);
+  // Reviewed against the setup the session was recorded with, not the active one.
+  const request = buildDebriefRequest(settingsForSession(store.getSettings(), session), session);
   try {
     const text = await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
@@ -1490,7 +1491,7 @@ function launchApp() {
     store: sessionStore,
     isEnabled: () => currentSettings().saveSessions,
     exportDir: () => store.getSettings().sessionsExportDir || '',
-    meta: () => { const s = currentSettings(); return { setupName: s.setupName, setupKind: s.setupKind }; },
+    meta: () => { const s = currentSettings(); return { setupId: s.setupId, setupName: s.setupName, setupKind: s.setupKind }; },
     onSaved: (summary) => send('sessions:saved', summary),
     onError: (error) => {
       recordEvent({ level: 'error', event: 'session_save_failed', msg: error.message, frame: 'SessionRecorder', context: {} });

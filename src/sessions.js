@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const SESSION_VERSION = 1;
 const ID_RE = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
 const SPEAKER = { them: 'Interviewer', you: 'You' };
+const SPEAKER_GENERAL = { them: 'Them', you: 'You' };
 const MODE_LABELS = {
   assist: 'Assist', say: 'What should I say?', ask: 'Ask', answerThis: 'Answer this',
   followup: 'Follow-up questions', recap: 'Recap', leetcode: 'Coding solution',
@@ -24,12 +25,13 @@ function stamp(ms) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function newSession({ kind = 'interview', now = Date.now(), setupName = '', setupKind = 'interview' } = {}) {
+function newSession({ kind = 'interview', now = Date.now(), setupId = '', setupName = '', setupKind = 'interview' } = {}) {
   return {
     version: SESSION_VERSION,
     id: stamp(now) + '-' + crypto.randomBytes(3).toString('hex'),
     kind,                 // 'interview' | 'practice'
-    setupName,            // the setup active when the session started
+    setupId,              // the setup active when the session started (debriefs use it)
+    setupName,            // its name then, shown in the list and searched
     setupKind,            // 'interview' | 'general'
     title: '',
     startedAt: now,
@@ -127,9 +129,10 @@ function sessionToMarkdown(session) {
     ...(session.answers || []).map((a) => ({ ts: a.ts, kind: 'answer', a }))
   ].sort((x, y) => (x.ts || 0) - (y.ts || 0));
   if (!events.length) out.push('_Nothing was captured._', '');
+  const speaker = session.setupKind === 'general' ? SPEAKER_GENERAL : SPEAKER;
   for (const event of events) {
     if (event.kind === 'turn') {
-      out.push(`**${SPEAKER[event.t.channel] || event.t.channel}** (${formatClock(event.t.ts)}): ${event.t.text.trim()}`, '');
+      out.push(`**${speaker[event.t.channel] || event.t.channel}** (${formatClock(event.t.ts)}): ${event.t.text.trim()}`, '');
     } else {
       const label = MODE_LABELS[event.a.mode] || event.a.mode;
       const prompt = event.a.prompt ? ` — "${event.a.prompt.trim().slice(0, 120)}"` : '';

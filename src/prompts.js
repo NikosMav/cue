@@ -6,13 +6,15 @@
 const { appendAiRules } = require('./profile-context');
 const { buildInterviewContext, detectCategory, detectGeneralCategory, currentQuestionTurns } = require('./interview-context');
 
+// Length targets shared by the interview and general spoken styles.
+const ANSWER_SIZES = {
+  brief: 'Default to 2–3 short sentences, roughly 40–70 words. A shorter complete answer is welcome.',
+  balanced: 'Default to 3–5 sentences, roughly 70–110 words.',
+  detailed: 'Give a fuller answer when useful, roughly 120–180 words, without repeating yourself.'
+};
+
 function answerStyle(length = 'brief') {
-  const sizes = {
-    brief: 'Default to 2–3 short sentences, roughly 40–70 words. A shorter complete answer is welcome.',
-    balanced: 'Default to 3–5 sentences, roughly 70–110 words.',
-    detailed: 'Give a fuller answer when useful, roughly 120–180 words, without repeating yourself.'
-  };
-  return '\n\nSpoken answer style: ' + (sizes[length] || sizes.brief) + ' ' +
+  return '\n\nSpoken answer style: ' + (ANSWER_SIZES[length] || ANSWER_SIZES.brief) + ' ' +
     'Answer the current question in the first sentence, add one relevant reason or concrete example, then stop. ' +
     'Treat career changes, future goals, decisions and past bugs as a conversation, not an oral exam. ' +
     'Use natural first-person language, one paragraph, no headings or numbered frameworks. ' +
@@ -29,12 +31,7 @@ function answerStyle(length = 'brief') {
 // Spoken style for general setups: the same length targets and "answer
 // first, one detail, stop", without the interview-specific clauses.
 function answerStyleGeneral(length = 'brief') {
-  const sizes = {
-    brief: 'Default to 2–3 short sentences, roughly 40–70 words. A shorter complete answer is welcome.',
-    balanced: 'Default to 3–5 sentences, roughly 70–110 words.',
-    detailed: 'Give a fuller answer when useful, roughly 120–180 words, without repeating yourself.'
-  };
-  return '\n\nSpoken answer style: ' + (sizes[length] || sizes.brief) + ' ' +
+  return '\n\nSpoken answer style: ' + (ANSWER_SIZES[length] || ANSWER_SIZES.brief) + ' ' +
     'Respond to the current point in the first sentence, add one relevant reason, fact or example, then stop. ' +
     'Use natural first-person language, one paragraph, no headings or numbered frameworks. ' +
     'Do not append a second example, a generic lesson, or a summary that repeats the opening. ' +
@@ -519,7 +516,7 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
 // context and the end holds the latest answers.
 const DEBRIEF_MAX_TRANSCRIPT_CHARS = 60000;
 
-function sessionTranscriptText(session) {
+function sessionTranscriptText(session, what = 'interview') {
   const lines = [];
   const events = [
     ...(session.transcript || []).map(t => ({ ts: t.ts, line: (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text.trim() })),
@@ -530,7 +527,7 @@ function sessionTranscriptText(session) {
   let text = lines.join('\n');
   if (text.length > DEBRIEF_MAX_TRANSCRIPT_CHARS) {
     const half = DEBRIEF_MAX_TRANSCRIPT_CHARS / 2;
-    text = text.slice(0, half) + '\n[… middle of the interview omitted for length …]\n' + text.slice(-half);
+    text = text.slice(0, half) + '\n[… middle of the ' + what + ' omitted for length …]\n' + text.slice(-half);
   }
   return text;
 }
@@ -559,7 +556,7 @@ function buildGeneralDebriefRequest(settings, session) {
     cachePrefix: context && system.startsWith(context) ? context : '',
     maxTokens: 2500,
     effort: 'medium',
-    turns: [{ role: 'user', text: 'Conversation transcript:\n' + (sessionTranscriptText(session) || '(empty)') + '\n\nWrite the debrief.' }]
+    turns: [{ role: 'user', text: 'Conversation transcript:\n' + (sessionTranscriptText(session, 'conversation') || '(empty)') + '\n\nWrite the debrief.' }]
   };
 }
 

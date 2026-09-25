@@ -124,6 +124,26 @@ function effectiveSettings(settings) {
   };
 }
 
+// The flat view for a saved session's debrief: the setup it was recorded
+// with (by id, else by name), not whichever setup is active now. When that
+// setup is gone, an empty setup of the session's kind stands in, so only
+// About me is used. Practice and sessions from before setups are interviews.
+function settingsForSession(settings, session) {
+  const s = migrateSettings(settings || {}).settings;
+  const meta = session || {};
+  const name = str(meta.setupName).trim().toLowerCase();
+  const found = (str(meta.setupId) && s.setups.find((x) => x.id === meta.setupId)) ||
+    (name && s.setups.find((x) => x.name.toLowerCase() === name));
+  const practice = meta.kind === 'practice';
+  if (found) {
+    const e = effectiveSettings({ ...s, activeSetupId: found.id });
+    return practice ? { ...e, setupKind: 'interview' } : e;
+  }
+  const kind = practice || meta.setupKind !== 'general' ? 'interview' : 'general';
+  const stand = makeSetup({ kind, name: str(meta.setupName).trim() || undefined });
+  return effectiveSettings({ ...s, setups: [...s.setups, stand], activeSetupId: stand.id });
+}
+
 function updateSetup(settings, id, patch) {
   const s = migrateSettings(settings || {}).settings;
   if (!s.setups.some((x) => x.id === id)) return s.setups;
@@ -132,5 +152,5 @@ function updateSetup(settings, id, patch) {
 
 module.exports = {
   BUILTIN_SETUP_ID, SETUPS_VERSION, KINDS, ABOUT_ME_FIELDS, SETUP_TEXT_FIELDS, INTERVIEW_ONLY_FIELDS,
-  makeSetup, normalizeSetups, migrateSettings, activeSetup, effectiveSettings, updateSetup
+  makeSetup, normalizeSetups, migrateSettings, activeSetup, effectiveSettings, settingsForSession, updateSetup
 };

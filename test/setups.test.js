@@ -127,6 +127,66 @@ test('activeSetup falls back to the built-in setup', () => {
   assert.equal(activeSetup({ setupsVersion: 1, setups: [], activeSetupId: 'x' }).id, BUILTIN_SETUP_ID);
 });
 
+function twoSetups(activeSetupId) {
+  return normalizeSetups({
+    setupsVersion: 1,
+    aboutMe: { resumeText: 'Synthetic CV' },
+    setups: [
+      { id: 'job', name: 'Acme interview', kind: 'interview', conversation: 'Backend role', whyCompany: 'Mission' },
+      { id: 'sync', name: 'Team sync', kind: 'general', conversation: 'Weekly sync' }
+    ],
+    activeSetupId
+  });
+}
+
+test('a debrief uses the setup the session was recorded with, not the active one', () => {
+  const { settingsForSession } = require('../src/setups');
+  const interview = settingsForSession(twoSetups('sync'), { kind: 'interview', setupId: 'job', setupName: 'Acme interview', setupKind: 'interview' });
+  assert.equal(interview.setupKind, 'interview');
+  assert.equal(interview.jobDescription, 'Backend role');
+  assert.equal(interview.whyCompany, 'Mission');
+  const general = settingsForSession(twoSetups('job'), { kind: 'interview', setupId: 'sync', setupName: 'Team sync', setupKind: 'general' });
+  assert.equal(general.setupKind, 'general');
+  assert.equal(general.jobDescription, 'Weekly sync');
+});
+
+test('settingsForSession finds a setup by name when the session has no id, and never mutates its input', () => {
+  const { settingsForSession } = require('../src/setups');
+  const s = twoSetups('job');
+  const copy = JSON.parse(JSON.stringify(s));
+  const e = settingsForSession(s, { kind: 'interview', setupName: 'team SYNC', setupKind: 'general' });
+  assert.equal(e.setupId, 'sync');
+  assert.deepEqual(s, copy);
+});
+
+test('a practice session is always debriefed as an interview', () => {
+  const { settingsForSession } = require('../src/setups');
+  const e = settingsForSession(twoSetups('sync'), { kind: 'practice', setupName: 'Gone', setupKind: 'general' });
+  assert.equal(e.setupKind, 'interview');
+  assert.equal(settingsForSession(twoSetups('job'), { kind: 'practice', setupId: 'sync', setupKind: 'general' }).setupKind, 'interview');
+  assert.equal(settingsForSession(twoSetups('sync'), { kind: 'practice', setupId: 'job', setupKind: 'interview' }).jobDescription, 'Backend role');
+});
+
+test('a session whose setup was deleted keeps its kind, with empty setup fields but About me kept', () => {
+  const { settingsForSession } = require('../src/setups');
+  const general = settingsForSession(twoSetups('job'), { kind: 'interview', setupId: 'deleted', setupName: 'Deleted call', setupKind: 'general' });
+  assert.equal(general.setupKind, 'general');
+  assert.equal(general.jobDescription, '');
+  assert.equal(general.resumeText, 'Synthetic CV');
+  const interview = settingsForSession(twoSetups('sync'), { kind: 'interview', setupName: 'Deleted interview', setupKind: 'interview' });
+  assert.equal(interview.setupKind, 'interview');
+  assert.equal(interview.jobDescription, '');
+  assert.equal(interview.whyCompany, '');
+  assert.equal(interview.resumeText, 'Synthetic CV');
+});
+
+test('a legacy session without setup metadata is debriefed as an interview', () => {
+  const { settingsForSession } = require('../src/setups');
+  const e = settingsForSession(twoSetups('sync'), { kind: 'interview' });
+  assert.equal(e.setupKind, 'interview');
+  assert.equal(e.resumeText, 'Synthetic CV');
+});
+
 test('updateSetup patches one setup and returns a new array', () => {
   const s = migrateSettings(legacy).settings;
   const next = updateSetup(s, 'interview', { saveSessions: false });
