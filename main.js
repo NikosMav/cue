@@ -475,6 +475,8 @@ function handleSttError(err, settings) {
 
 // -------- streaming STT setup --------
 function initStreamingSTT() {
+  // Vocabulary (Deepgram keyterms) comes from the active setup and is fixed
+  // when listening starts; a setup switch applies from the next start.
   const settings = currentSettings();
   streamingMode = false;
 

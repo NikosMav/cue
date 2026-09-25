@@ -1,6 +1,8 @@
 // Imports a prep profile (JSON) into About me and one setup, keeping keys,
 // models and every other setup as they are.
-const { migrateSettings, makeSetup } = require('./setups');
+const { migrateSettings, makeSetup, BUILTIN_SETUP_ID } = require('./setups');
+
+const IMPORTED_INTERVIEW_NAME = 'Imported interview';
 
 const GLOBAL_FIELDS = { answerLength: 'string', includeScreen: 'boolean', autoAnswer: 'boolean' };
 // Profile key -> About me field. Old single-profile names are accepted.
@@ -41,13 +43,16 @@ function mergeProfile(settings, profile, { setupName } = {}) {
   if ((setupPatch.instructions || '').length > 2000) throw new Error('Setup instructions exceed 2000 characters.');
 
   if (Object.keys(setupPatch).length || setupName) {
-    const name = (setupName || '').trim();
+    const kind = ['interview', 'general'].includes(profile.kind) ? profile.kind
+      : INTERVIEW_HINTS.some((k) => Object.hasOwn(profile, k)) ? 'interview' : 'general';
+    let name = (setupName || '').trim();
+    // Interview material never goes into the built-in "Any conversation"
+    // setup: it lands in (or updates) a setup of its own.
+    if (!name && next.activeSetupId === BUILTIN_SETUP_ID && kind === 'interview') name = IMPORTED_INTERVIEW_NAME;
     let setup = name
       ? next.setups.find((s) => s.name.toLowerCase() === name.toLowerCase())
       : next.setups.find((s) => s.id === next.activeSetupId);
     if (!setup) {
-      const kind = ['interview', 'general'].includes(profile.kind) ? profile.kind
-        : INTERVIEW_HINTS.some((k) => Object.hasOwn(profile, k)) ? 'interview' : 'general';
       setup = makeSetup({ name: name || 'Imported setup', kind });
       next.setups = [...next.setups, setup];
     }

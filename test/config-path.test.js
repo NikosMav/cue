@@ -89,6 +89,32 @@ test('re-importing into an existing setup updates it instead of adding a second 
   assert.equal(matches[0].conversation, 'v2');
 });
 
+test('an interview profile imported without --setup never lands in the built-in "Any conversation" setup', () => {
+  const settings = { setupsVersion: 1, setups: [], activeSetupId: 'any' };
+  let s = mergeProfile(settings, { resumeText: 'Synthetic CV', jobDescription: 'Backend role', whyCompany: 'Mission' });
+  const builtin = s.setups.find((x) => x.id === 'any');
+  assert.equal(builtin.conversation, '');
+  assert.equal(builtin.whyCompany, '');
+  const imported = s.setups.filter((x) => x.name === 'Imported interview');
+  assert.equal(imported.length, 1);
+  assert.equal(imported[0].kind, 'interview');
+  assert.equal(imported[0].conversation, 'Backend role');
+  assert.equal(imported[0].whyCompany, 'Mission');
+  assert.equal(s.activeSetupId, imported[0].id);
+  assert.equal(s.aboutMe.resumeText, 'Synthetic CV');
+  // A second import reuses that setup, even after switching back to the built-in one.
+  s = mergeProfile({ ...s, activeSetupId: 'any' }, { jobDescription: 'Platform role' });
+  assert.equal(s.setups.filter((x) => x.name === 'Imported interview').length, 1);
+  assert.equal(s.setups.find((x) => x.name === 'Imported interview').conversation, 'Platform role');
+  assert.equal(s.setups.find((x) => x.id === 'any').conversation, '');
+});
+
+test('a general profile imported without --setup still fills the active built-in setup', () => {
+  const s = mergeProfile({ setupsVersion: 1, setups: [], activeSetupId: 'any' }, { notes: 'Team notes' });
+  assert.equal(s.setups.find((x) => x.id === 'any').notes, 'Team notes');
+  assert.equal(s.setups.length, 1);
+});
+
 test('import-profile refuses a --setup flag without a name and changes nothing', t => {
   const { root, data } = fixture(t);
   const file = path.join(data, 'cue-data.json');

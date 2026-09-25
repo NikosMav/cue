@@ -149,7 +149,9 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   items); Job interview setups keep the previous prompts byte for byte (golden
   test). Saving is a per-setup switch, off by default for general setups.
   Existing settings migrate once, after a backup, into About me and an
-  "Interview" setup.
+  "Interview" setup. Migrated AI rules become the "Interview" setup's
+  instructions, so they no longer apply in "Any conversation"; copy them to
+  Settings → Style → AI rules to apply them everywhere.
 
 ## Validation and limits
 
