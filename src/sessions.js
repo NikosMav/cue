@@ -184,6 +184,21 @@ class SessionStore {
     try { fs.unlinkSync(this._file(id)); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   }
 
+  /** Full sessions that were never marked ended: cue stopped while they ran. */
+  unended() {
+    let names = [];
+    try { names = fs.readdirSync(this.dir); } catch { return []; }
+    const out = [];
+    for (const name of names) {
+      if (!name.endsWith('.json') || !isValidId(name.slice(0, -5))) continue;
+      try {
+        const session = JSON.parse(fs.readFileSync(path.join(this.dir, name), 'utf8'));
+        if (!session.endedAt) out.push(session);
+      } catch { /* an unreadable file is skipped, as in list() */ }
+    }
+    return out;
+  }
+
   /** Summaries, newest first. A query matches title, transcript, answers or debrief. */
   list(query = '') {
     let names = [];
@@ -207,6 +222,25 @@ function matches(session, needle) {
     session.debrief,
     ...(session.transcript || []).map((t) => t.text), ...(session.answers || []).map((a) => a.text)];
   return fields.some((f) => typeof f === 'string' && f.toLowerCase().includes(needle));
+}
+
+// How long after cue stopped a conversation is still picked back up.
+const RESUME_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * What to do at launch with sessions left unended (cue crashed, was killed, or
+ * the computer lost power; a normal quit or Clear marks a session ended).
+ * Resumes the most recent one when it belongs to the active setup, that setup
+ * still saves, it is not a practice run and it stopped within the window. Every
+ * other unended session with content is closed. Pure: the caller writes.
+ */
+function planResume(sessions, { now = Date.now(), setupId = '', saving = false, maxAgeMs = RESUME_WINDOW_MS } = {}) {
+  const open = (sessions || []).filter((s) => s && !s.endedAt && hasContent(s))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const newest = open[0];
+  const resume = newest && saving && newest.kind !== 'practice' && newest.setupId === setupId &&
+    now - (newest.updatedAt || 0) <= maxAgeMs ? newest : null;
+  return { resume, close: open.filter((s) => s !== resume) };
 }
 
 /**
@@ -249,6 +283,14 @@ class SessionRecorder {
     if (!this.isEnabled() || !text || !text.trim()) return;
     this._ensure().answers.push({ mode, prompt: prompt || '', text: text.trim(), ts: ts || this.now() });
     this._schedule();
+  }
+
+  /** Continue a session cue was recording when it stopped (see planResume). */
+  resume(session) {
+    if (!this.isEnabled() || !hasContent(session) || session.endedAt) return false;
+    this._cancel();
+    this.session = session;
+    return true;
   }
 
   /** The kind of the next session ('interview' or 'practice'). */
@@ -305,5 +347,5 @@ class SessionRecorder {
 
 module.exports = {
   SessionStore, SessionRecorder, newSession, sessionTitle, summarize, sessionToMarkdown,
-  exportFileName, isValidId, hasContent, writeFileAtomic
+  exportFileName, isValidId, hasContent, writeFileAtomic, planResume, RESUME_WINDOW_MS
 };

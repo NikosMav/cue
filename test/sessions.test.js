@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  SessionStore, SessionRecorder, newSession, sessionTitle, sessionToMarkdown, exportFileName, isValidId
+  SessionStore, SessionRecorder, newSession, sessionTitle, sessionToMarkdown, exportFileName, isValidId, planResume
 } = require('../src/sessions');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cue-sessions-'));
@@ -155,4 +155,64 @@ test('the recorder stamps each new session with the setup active when it starts'
   recorder.end();
   recorder.addTurn({ channel: 'them', text: 'Hello', ts: 2 });
   assert.equal(recorder.current().setupName, 'Team sync');
+});
+
+// Crash recovery: the recorder saves while a conversation runs and only a normal
+// quit or Clear marks it ended, so an unended session means cue stopped mid-call.
+function unended({ now, updatedAt, setupId = 'interview', kind = 'interview', turns = 1 }) {
+  const s = newSession({ kind, now: updatedAt - 60000, setupId, setupName: 'Interview' });
+  for (let i = 0; i < turns; i++) s.transcript.push({ channel: 'them', text: 'Question ' + i, ts: updatedAt - 1000 });
+  s.updatedAt = updatedAt;
+  return s;
+}
+
+test('planResume picks the newest recent unended session of the active setup and closes the rest', () => {
+  const now = Date.UTC(2026, 8, 25, 12);
+  const recent = unended({ now, updatedAt: now - 5 * 60000 });
+  const older = unended({ now, updatedAt: now - 20 * 60000 });
+  const stale = unended({ now, updatedAt: now - 3 * 3600000 });
+  const ended = unended({ now, updatedAt: now - 60000 }); ended.endedAt = now - 60000;
+  const plan = planResume([older, ended, stale, recent], { now, setupId: 'interview', saving: true });
+  assert.equal(plan.resume.id, recent.id);
+  assert.deepEqual(plan.close.map((s) => s.id).sort(), [older.id, stale.id].sort(), 'ended sessions are left alone');
+});
+
+test('planResume never resumes practice, another setup, a stale or empty session, or when saving is off', () => {
+  const now = Date.UTC(2026, 8, 25, 12);
+  const cases = [
+    [unended({ now, updatedAt: now - 60000, kind: 'practice' }), { setupId: 'interview', saving: true }],
+    [unended({ now, updatedAt: now - 60000, setupId: 'team-sync' }), { setupId: 'interview', saving: true }],
+    [unended({ now, updatedAt: now - 31 * 60000 }), { setupId: 'interview', saving: true }],
+    [unended({ now, updatedAt: now - 60000, turns: 0 }), { setupId: 'interview', saving: true }],
+    [unended({ now, updatedAt: now - 60000 }), { setupId: 'interview', saving: false }]
+  ];
+  for (const [session, opts] of cases) {
+    const plan = planResume([session], { now, ...opts });
+    assert.equal(plan.resume, null);
+    assert.deepEqual(plan.close.map((s) => s.id), hasTurns(session) ? [session.id] : []);
+  }
+});
+function hasTurns(s) { return s.transcript.length > 0 || s.answers.length > 0; }
+
+test('store lists unended sessions in full; a resumed recorder keeps writing the same session', () => {
+  const store = new SessionStore({ dir: tmp() });
+  const now = Date.UTC(2026, 8, 25, 12);
+  const open = unended({ now, updatedAt: now - 60000 });
+  const done = unended({ now, updatedAt: now - 60000 }); done.endedAt = now;
+  store.save(open); store.save(done);
+  const found = store.unended();
+  assert.deepEqual(found.map((s) => s.id), [open.id]);
+  assert.equal(found[0].transcript[0].text, 'Question 0');
+
+  const timers = manualTimers();
+  const recorder = new SessionRecorder({ store, isEnabled: () => true, timers, now: () => now });
+  assert.equal(recorder.resume(found[0]), true);
+  recorder.addTurn({ channel: 'you', text: 'My answer', ts: now });
+  timers.fire();
+  const saved = store.get(open.id);
+  assert.deepEqual(saved.transcript.map((t) => t.text), ['Question 0', 'My answer']);
+  assert.equal(saved.endedAt, null);
+  assert.equal(recorder.end(), open.id);
+  assert.equal(store.get(open.id).endedAt, now);
+  assert.equal(new SessionRecorder({ store, isEnabled: () => false }).resume(open), false, 'nothing resumes while saving is off');
 });

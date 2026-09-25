@@ -11,7 +11,7 @@ const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
-const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic } = require('./src/sessions');
+const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
@@ -157,6 +157,8 @@ let screenshotQueue = [];
 const MAX_QUEUED_SCREENSHOTS = 4;
 // Saved sessions (created at launch, once the user-data path is known).
 let sessionStore = null;
+// A conversation cue was recording when it stopped, put back at launch; sent to the renderer once it loads.
+let resumedConversation = null;
 let sessionRecorder = null;
 // Practice mode: cue asks the questions and the mic carries the answers.
 const practice = { active: false, speaking: false, quietUntil: 0 };
@@ -414,6 +416,13 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     win.showInactive();
     win.setTitle('Cue');
+    if (resumedConversation) {
+      const { turns, updatedAt, setupName } = resumedConversation;
+      resumedConversation = null;
+      send('transcript:restore', { turns });
+      const minutes = Math.max(1, Math.round((Date.now() - updatedAt) / 60000));
+      send('status', { message: `cue stopped unexpectedly. Resumed your ${setupName ? setupName + ' ' : ''}conversation from ${minutes} min ago (${turns.length} turns). Clear starts a new one.` });
+    }
     // Warn about missing content protection on old Windows builds
     if (isWindows && shouldProtect && !WIN_SUPPORTS_CONTENT_PROTECTION) {
       send('status', {
@@ -1236,6 +1245,33 @@ ipcMain.handle('platform:info', () => ({
   winBuild: WIN_BUILD,
   winSupportsContentProtection: WIN_SUPPORTS_CONTENT_PROTECTION
 }));
+// Crash recovery. The recorder saves a running conversation every few seconds
+// and a normal quit or Clear marks it ended, so a session left unended means
+// cue stopped mid-call (crash, kill, power loss). Pick the recent one back up:
+// its transcript and answers return to memory, so What should I say?, Recap and
+// follow-ups carry on, and recording continues in the same session. Only setups
+// that save are affected; "Any conversation" never writes anything to resume.
+function resumeInterruptedConversation() {
+  let plan;
+  try {
+    const s = currentSettings();
+    plan = planResume(sessionStore.unended(), { now: Date.now(), setupId: s.setupId, saving: s.saveSessions });
+  } catch (error) {
+    console.error('[sessions] could not look for an interrupted conversation:', error.message);
+    return;
+  }
+  for (const old of plan.close) {
+    try { old.endedAt = old.updatedAt || old.startedAt; sessionStore.save(old); } catch { /* retried at the next launch */ }
+  }
+  const session = plan.resume;
+  if (!session || !sessionRecorder.resume(session)) return;
+  const turns = session.transcript.slice(-MAX_TRANSCRIPT_TURNS).map(({ channel, text, ts }) => ({ channel, text, ts }));
+  transcript.push(...turns);
+  sessionAnswers.push(...(session.answers || []).slice(-MAX_SESSION_ANSWERS));
+  resumedConversation = { turns, updatedAt: session.updatedAt, setupName: session.setupName || '' };
+  console.log(`[sessions] resumed ${session.id} (${turns.length} turns)`);
+}
+
 // Clearing starts a new conversation: the current one is saved as a session
 // (when saving is on) and forgotten here.
 function resetConversation() {
@@ -1741,7 +1777,7 @@ function launchApp() {
       send('status', { message: 'Could not save this session: ' + error.message });
     }
   });
-
+  resumeInterruptedConversation();
 
   const allowMedia = (permission) => permission === 'media' || permission === 'microphone' || permission === 'audioCapture' || permission === 'display-capture' || permission === 'screen';
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowMedia(permission)));

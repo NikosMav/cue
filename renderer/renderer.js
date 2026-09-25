@@ -1237,6 +1237,13 @@
     if (action && action.kind === 'card') { showPublikCard(); return; }
     if (action && action.kind) showStatus(message, publikActionButton(action));
   });
+  // A conversation resumed after cue stopped unexpectedly: back into the history,
+  // without auto-filling the question box from an old turn.
+  cue.on('transcript:restore', ({ turns }) => {
+    for (const { channel, text } of turns || []) {
+      if (text && text.trim().length >= 2) appendTranscriptHistoryTurn(channel, text, false);
+    }
+  });
   cue.on('transcript', ({ channel, text }) => {
     if (!text || text.trim().length < 2 || /^[?!.,;:\-…]+$/.test(text.trim())) return;
     appendTranscriptHistoryTurn(channel, text, false);
