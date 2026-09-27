@@ -166,9 +166,11 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
 - No UI animations. Every running animation repainted the whole glass window,
   blur included, at the display refresh rate (35–50% of a core on the GPU
   process while listening); state is shown by colour instead.
-- Audio reaches the main process in 60 ms chunks instead of 256 ms, and the
-  VAD carries partial frames between chunks, so live words and final lines
-  arrive sooner. `scripts/dev/bench-audio-path.cjs` and
+- Audio reaches the main process in 60 ms chunks instead of 256 ms, the VAD
+  carries partial frames between chunks, and OpenAI realtime closes a sentence
+  after 450 ms: the final line arrives about 0.5 s sooner (1.5 s to 1.0 s after
+  the speaker stops). First live words are bound by OpenAI's own delay and did
+  not change. `scripts/dev/bench-audio-path.cjs` and
   `scripts/dev/bench-transcription.cjs` measure both; results are in
   `docs/superpowers/specs/2026-09-27-faster-transcript-lines-design.md`.
 

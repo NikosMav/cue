@@ -121,10 +121,12 @@ Measured with `scripts/dev/bench-audio-path.cjs` and
 `scripts/dev/bench-transcription.cjs` (Windows TTS sentence, 5 trials, real
 OpenAI API, medians).
 
-| Build | Chunk | First live word | Sentence closed | Final line | Audio path CPU / channel |
+| Build | Chunk | First live word* | Sentence closed | Final line | Audio path CPU / channel |
 |---|---|---|---|---|---|
 | Before (600 ms close) | 4096 samples | 1134 ms | 882 ms | 1505 ms | 0.072% |
 | After (450 ms close) | 960 samples | 1319 ms | 486 ms | 1021 ms | 0.072% |
+
+\* Counted from when the first chunk was sent; see the corrected comparison below.
 
 The first-word column above counted from when the first chunk was sent,
 which hides one chunk of capture time (256 ms before, 60 ms after) and made
