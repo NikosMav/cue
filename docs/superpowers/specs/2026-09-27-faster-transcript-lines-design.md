@@ -125,3 +125,16 @@ OpenAI API, medians).
 |---|---|---|---|---|---|
 | Before (600 ms close) | 4096 samples | 1134 ms | 882 ms | 1505 ms | 0.072% |
 | After (450 ms close) | 960 samples | 1319 ms | 486 ms | 1021 ms | 0.072% |
+
+The first-word column above counted from when the first chunk was sent,
+which hides one chunk of capture time (256 ms before, 60 ms after) and made
+the two builds incomparable. Counted from when the audio was captured, on
+the same build:
+
+| Chunk | First live word | Final line |
+|---|---|---|
+| 4096 samples | 1378 ms | 1240 ms |
+| 960 samples | 1352 ms | 1097 ms |
+
+First live words are bound by OpenAI's own delay (about 1.3–1.4 s); the gain
+from smaller chunks is in the final line.

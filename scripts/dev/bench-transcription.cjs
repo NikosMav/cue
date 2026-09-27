@@ -1,7 +1,7 @@
 // Transcription latency through cue's OpenAI realtime client against the real
 // API, paced like the app. Per trial:
 //   connectMs          socket opened -> session ready
-//   firstWordMs        first audio sent -> first live word
+//   firstWordMs        first audio captured -> first live word
 //   commitAfterSpeech  speaker stops -> sentence closed by the client
 //   finalAfterSpeech   speaker stops -> final transcript line
 // Usage: node scripts/dev/bench-transcription.cjs <speech.wav> [--trials 5] [--chunk-samples 960]
@@ -61,7 +61,9 @@ function trial() {
       if (event.type !== 'session.updated' || timer) return;
       result.connectMs = Date.now() - connectStart;
       let offset = 0, silentChunks = 0;
-      speechStart = Date.now();
+      // The first chunk leaves once its last sample is captured, so its audio
+      // began one chunk earlier; first-word latency counts from there.
+      speechStart = Date.now() - CHUNK_MS;
       const tick = () => {
         if (offset < speech.length) {
           const end = Math.min(offset + CHUNK_BYTES, speech.length);
