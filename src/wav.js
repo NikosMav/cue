@@ -21,4 +21,13 @@ function pcmToWav(pcm, sampleRate = 16000, channels = 1) {
   return buf;
 }
 
-module.exports = { pcmToWav };
+// Root-mean-square level of Int16LE mono PCM (0 for an empty buffer).
+function rms16(pcm) {
+  if (pcm.length < 2) return 0;
+  let sum = 0;
+  const n = pcm.length / 2;
+  for (let i = 0; i < pcm.length; i += 2) { const s = pcm.readInt16LE(i); sum += s * s; }
+  return Math.sqrt(sum / n);
+}
+
+module.exports = { pcmToWav, rms16 };

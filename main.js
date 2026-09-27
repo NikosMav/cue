@@ -29,6 +29,7 @@ const { AutoAnswer } = require('./src/auto-answer');
 const { currentQuestion } = require('./src/interview-context');
 const { ACTIONS: SHORTCUT_ACTIONS, resolveShortcuts, findConflicts, isValid: isValidAccelerator } = require('./src/shortcuts');
 const { AdaptiveVAD } = require('./src/vad');
+const { rms16 } = require('./src/wav');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
 const publik = require('./src/publik');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
@@ -723,7 +724,7 @@ function noteAudioLevel(channel, buf) {
   if (now - audioLevels.lastLog < AUDIO_LEVEL_LOG_MS) return;
   audioLevels.lastLog = now;
   const fmt = (c) => `${c}: chunks=${audioLevels[c].chunks} peakRms=${Math.round(audioLevels[c].peakRms)}`;
-  console.log(`[audio] ${fmt('you')} | ${fmt('them')} (gate=${RMS_GATE}, mode=${localWhisperTranscriber ? 'local' : streamingMode ? 'streaming' : 'batch'})`);
+  console.log(`[audio] ${fmt('you')} | ${fmt('them')} (mode=${localWhisperTranscriber ? 'local' : streamingMode ? 'streaming' : 'batch'})`);
   audioLevels.you = { chunks: 0, peakRms: 0 };
   audioLevels.them = { chunks: 0, peakRms: 0 };
 }
