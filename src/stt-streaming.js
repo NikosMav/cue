@@ -8,6 +8,13 @@
 const { looksLikeHallucination, extractProfileTerms, transcribeGemini, buildVocabPrompt } = require('./stt');
 const { pcmToWav } = require('./wav');
 const { GEMINI_TRANSCRIBE_LIVE_MODEL } = require('./llm');
+const { AdaptiveVAD } = require('./vad');
+
+// gpt-realtime-whisper streams words but rejects server turn detection, so
+// the client decides where an utterance ends: after this much silence, or
+// after this much uncommitted audio when the speaker never pauses.
+const OPENAI_COMMIT_SILENCE_FRAMES = 20; // 30 ms frames: 600 ms
+const OPENAI_MAX_TURN_MS = 15000;
 
 // Deepgram caps keyterm prompting at roughly 500 tokens and recommends a
 // focused list; 40 short terms stays well inside that and the URL limit.
@@ -36,11 +43,19 @@ class OpenAIRealtimeSTT {
     this._pendingAudio = [];
     this._sessionReady = false;
     this._closedByUs = false; // disconnect() was called: ignore the socket's dying breaths, never reconnect
+    this._partials = new Map(); // item_id -> text streamed so far, until its completed event
+    this._uncommittedMs = 0; // audio sent since the last commit
+    this._vad = new AdaptiveVAD({
+      silenceFrames: OPENAI_COMMIT_SILENCE_FRAMES,
+      onSpeechEnd: () => this._commit()
+    });
   }
 
   async connect() {
     if (this.ws && this.connected) return;
     this._closedByUs = false;
+    this._uncommittedMs = 0; // a new socket starts with an empty input buffer
+    this._vad.reset();
 
     try {
       const WebSocket = require('ws');
@@ -93,6 +108,7 @@ class OpenAIRealtimeSTT {
         if (this.ws !== ws) return;
         this.connected = false;
         this._sessionReady = false;
+        this._flushPartialsAsFinal();
         this.onStatusChange('disconnected');
         if (code !== 1000 && !this.reconnecting && !this._closedByUs) {
           this._attemptReconnect();
@@ -121,15 +137,20 @@ class OpenAIRealtimeSTT {
         break;
 
       case 'conversation.item.input_audio_transcription.delta':
+        // Each delta is only the next word or two; the interim line shows the
+        // whole utterance so far.
         if (event.delta) {
-          this.onInterim(event.delta);
+          this._partials.set(event.item_id, (this._partials.get(event.item_id) || '') + event.delta);
+          this.onInterim(this._interimText());
         }
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
-        if (event.transcript && event.transcript.trim()) {
+        this._partials.delete(event.item_id);
+        if (event.transcript && event.transcript.trim() && !looksLikeHallucination(event.transcript.trim())) {
           this.onTranscript(event.transcript.trim());
         }
+        this.onInterim(this._interimText());
         break;
 
       case 'input_audio_buffer.speech_started':
@@ -142,6 +163,8 @@ class OpenAIRealtimeSTT {
         break;
 
       case 'error':
+        // A commit that raced an already-empty buffer; nothing was lost.
+        if (event.error?.code === 'input_audio_buffer_commit_empty') break;
         this.onError({
           provider: 'openai-realtime',
           message: event.error?.message || 'Unknown realtime error',
@@ -159,13 +182,48 @@ class OpenAIRealtimeSTT {
       return;
     }
 
+    this._append(Buffer.from(pcmBuffer));
+  }
+
+  _append(pcm16kHz) {
     // Resample 16kHz -> 24kHz (linear interpolation) since the API requires 24kHz
-    const resampled = this._resample16to24(Buffer.from(pcmBuffer));
-    const b64 = resampled.toString('base64');
+    const resampled = this._resample16to24(pcm16kHz);
     this._sendEvent({
       type: 'input_audio_buffer.append',
-      audio: b64
+      audio: resampled.toString('base64')
     });
+    this._uncommittedMs += (pcm16kHz.length / 2) / 16;
+    this._vad.processChunk(pcm16kHz); // may commit at the end of an utterance
+    if (this._uncommittedMs >= OPENAI_MAX_TURN_MS) {
+      if (this._partials.size > 0) {
+        this._commit(); // a speaker who never pauses
+      } else {
+        // Nothing recognised: drop the silence instead of transcribing it.
+        this._uncommittedMs = 0;
+        this._sendEvent({ type: 'input_audio_buffer.clear' });
+      }
+    }
+  }
+
+  // Close the current utterance so the server sends its completed transcript.
+  _commit() {
+    if (this._uncommittedMs === 0) return;
+    this._uncommittedMs = 0;
+    this._sendEvent({ type: 'input_audio_buffer.commit' });
+  }
+
+  _interimText() {
+    return [...this._partials.values()].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // The socket is going away before any completed event can arrive: keep the
+  // words already streamed for the utterance that was cut off.
+  _flushPartialsAsFinal() {
+    const cutOff = this._interimText();
+    this._partials.clear();
+    if (!cutOff) return;
+    if (!looksLikeHallucination(cutOff)) this.onTranscript(cutOff);
+    this.onInterim('');
   }
 
   _resample16to24(pcm16kHz) {
@@ -187,13 +245,7 @@ class OpenAIRealtimeSTT {
 
   _flushPendingAudio() {
     while (this._pendingAudio.length > 0) {
-      const chunk = this._pendingAudio.shift();
-      const resampled = this._resample16to24(Buffer.from(chunk));
-      const b64 = resampled.toString('base64');
-      this._sendEvent({
-        type: 'input_audio_buffer.append',
-        audio: b64
-      });
+      this._append(Buffer.from(this._pendingAudio.shift()));
     }
   }
 
@@ -224,6 +276,7 @@ class OpenAIRealtimeSTT {
     this.reconnecting = false;
     this._sessionReady = false;
     this._pendingAudio = [];
+    this._flushPartialsAsFinal();
     if (this.ws) {
       const ws = this.ws;
       this.ws = null; // detach first so the resulting close/error events are ignored
