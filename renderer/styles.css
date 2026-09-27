@@ -120,7 +120,6 @@ html, body {
   border-radius: 12px;
   background: rgba(255,170,50,0.12);
   border: 1px solid rgba(255,170,50,0.30);
-  animation: fadeUp 200ms ease both;
 }
 #mic-perm-banner.show { display: block; }
 .mic-perm-text {
@@ -167,9 +166,8 @@ button:focus { outline: none; }
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--live);
   box-shadow: 0 0 0 3px rgba(34,197,94,0.25), 0 0 8px rgba(34,197,94,0.6);
-  animation: pulse 2s infinite;
 }
-#live-dot.off { background: rgba(255,255,255,0.28); box-shadow: none; animation: none; }
+#live-dot.off { background: rgba(255,255,255,0.28); box-shadow: none; }
 
 .glass {
   background: rgba(20,22,28,0.72);
@@ -182,7 +180,7 @@ button:focus { outline: none; }
 /* 30px top padding keeps the absolutely placed #stt-status label off the text. */
 /* Background opacity (Settings → Style) applies to the panel; dialogs keep theirs. */
 #panel.glass { background: rgba(20,22,28,var(--panel-alpha, 0.72)); }
-#panel { padding: 30px 22px 20px; display: flex; flex-direction: column; min-height: 0; animation: overlayIn 260ms cubic-bezier(0.22,1,0.36,1); }
+#panel { padding: 30px 22px 20px; display: flex; flex-direction: column; min-height: 0; }
 #panel.collapsed { display: none; }
 /* Hidden panel: no orphaned status label or dot floating on the desktop.
    The toolbar's stop button still shows whether cue is listening. */
@@ -210,7 +208,6 @@ button:focus { outline: none; }
   padding: 9px 14px;
   font-size: 15px; font-weight: 500; line-height: 1.35;
   box-shadow: 0 2px 8px rgba(60,131,245,0.35);
-  animation: fadeUp 200ms ease both;
 }
 .ai-text {
   color: var(--tx-1);
@@ -219,7 +216,7 @@ button:focus { outline: none; }
   -webkit-user-select: text; user-select: text;
 }
 .ai-text.small { font-size: 16px; line-height: 1.55; }
-.ai-text .w { display: inline; opacity: 0; animation: fadeUp 180ms ease forwards; }
+.ai-text .w { display: inline; }
 .ai-text ul { margin: 8px 0; padding-left: 20px; }
 .ai-text li { margin: 4px 0; }
 .ai-text pre {
@@ -249,12 +246,12 @@ button:focus { outline: none; }
 .copy-code { min-height: 24px; }
 .response-group:hover .copy-answer { opacity: 1; }
 .ai-text p code { background: rgba(255,255,255,0.10); padding: 1px 5px; border-radius: 5px; }
-.ai-caret { display:inline-block; width:7px; height:1.05em; vertical-align:-2px; background: var(--accent); border-radius:1px; animation: blink 1s step-end infinite; margin-left: 2px; }
+.ai-caret { display:inline-block; width:7px; height:1.05em; vertical-align:-2px; background: var(--accent); border-radius:1px; margin-left: 2px; }
 .status-line { color: var(--tx-mut); font-size: 13px; margin: 10px 0 2px; }
 #cue-status { display: none; margin: 8px 0 2px; padding: 8px 12px; border-radius: 10px;
   background: rgba(60,131,245,0.12); border: 1px solid rgba(60,131,245,0.30);
   color: #bcd4fb; font-size: 12.5px; line-height: 1.45; -webkit-user-select: text; user-select: text; }
-#cue-status.show { display: block; animation: fadeUp 200ms ease both; }
+#cue-status.show { display: block; }
 
 /* Interim / live transcript */
 .interim-transcript {
@@ -264,17 +261,12 @@ button:focus { outline: none; }
   font-style: italic; transition: opacity 200ms ease;
   -webkit-user-select: text; user-select: text;
 }
-.interim-transcript.show { display: block; animation: fadeUp 150ms ease both; }
+.interim-transcript.show { display: block; }
 
 /* VAD speaking indicator on live dot */
 #live-dot.speaking {
   background: #22ff7a;
   box-shadow: 0 0 0 4px rgba(34,255,122,0.30), 0 0 16px rgba(34,255,122,0.7);
-  animation: speakPulse 0.6s infinite;
-}
-@keyframes speakPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.3); }
 }
 
 /* ============================ Action row ============================ */
@@ -325,7 +317,6 @@ button:focus { outline: none; }
   height: 6px;
   border-radius: 50%;
   background: var(--live);
-  animation: pulse 2s infinite;
   pointer-events: none;
 }
 
@@ -389,11 +380,10 @@ button:focus { outline: none; }
 }
 #composer.stt-filling #input { color: rgba(200,255,220,0.95); }
 
-/* Accumulating state: pulsing border to show text is still coming in */
+/* Accumulating state: green border while text is still coming in */
 #composer.stt-accumulating {
   border-color: rgba(34,197,94,0.35);
   box-shadow: 0 0 0 2px rgba(34,197,94,0.08);
-  animation: stt-pulse 1.5s ease-in-out infinite;
 }
 
 /* Ready state: solid green, question looks complete */
@@ -426,16 +416,6 @@ button:focus { outline: none; }
 }
 #composer.stt-dimmed #input { color: rgba(255,255,255,0.5); }
 
-@keyframes stt-pulse {
-  0%, 100% { 
-    border-color: rgba(34,197,94,0.35);
-    box-shadow: 0 0 0 2px rgba(34,197,94,0.08);
-  }
-  50% { 
-    border-color: rgba(34,197,94,0.55);
-    box-shadow: 0 0 0 3px rgba(34,197,94,0.15);
-  }
-}
 #composer {
   position: relative; /* for ::after indicator */
   margin-top: 14px;
@@ -718,7 +698,7 @@ button:focus { outline: none; }
 /* ============================ Onboarding / tutorial ============================ */
 #onboard-scrim { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0,0,0,0.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 #onboard-scrim.hidden { display: none; }
-#onboard { width: min(470px, 93vw); padding: 26px 28px 18px; text-align: center; -webkit-app-region: no-drag; animation: overlayIn 240ms cubic-bezier(0.22,1,0.36,1); }
+#onboard { width: min(470px, 93vw); padding: 26px 28px 18px; text-align: center; -webkit-app-region: no-drag; }
 .ob-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 20px; }
 .ob-dots span { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.20); transition: all 220ms ease; }
 .ob-dots span.on { background: var(--accent); width: 20px; border-radius: 4px; }
@@ -781,16 +761,11 @@ button:focus { outline: none; }
   
   z-index: 10;
   pointer-events: auto;
-  animation: slideInRight 200ms cubic-bezier(0.22,1,0.36,1);
 }
 .transcript-sidebar.hidden { 
   display: none; 
 }
 
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(12px); }
-  to { opacity: 1; transform: none; }
-}
 
 .ts-header {
   display: flex;
@@ -917,7 +892,7 @@ button:focus { outline: none; }
   color: #a7f3c8; font-size: 12.5px; padding: 7px 16px; border-radius: var(--r-pill);
   z-index: 50; white-space: nowrap; pointer-events: none;
 }
-#toast.show { display: block; animation: fadeUp 200ms ease both; }
+#toast.show { display: block; }
 .act-clear:hover { color: #fca5a5 !important; background: rgba(239,68,68,0.08) !important; }
 
 /* ============================ Prep status ============================ */
@@ -951,7 +926,7 @@ button:focus { outline: none; }
   background: rgba(60,131,245,0.15); border: 1px solid rgba(60,131,245,0.30);
   color: #8ab8f9; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em;
   text-transform: uppercase; padding: 2px 9px; border-radius: var(--r-pill);
-  margin: 6px 0 4px; animation: fadeUp 180ms ease both;
+  margin: 6px 0 4px;
 }
 
 /* ============================ STT status ============================ */
@@ -973,26 +948,14 @@ button:focus { outline: none; }
 #live-dot.idle {
   background: var(--live);
   box-shadow: 0 0 0 3px rgba(34,197,94,0.25), 0 0 8px rgba(34,197,94,0.6);
-  animation: pulse 2s infinite;
 }
 #live-dot.transcribing {
   background: #facc15;
   box-shadow: 0 0 0 3px rgba(250,204,21,0.25), 0 0 8px rgba(250,204,21,0.6);
-  animation: pulse 2s infinite;
 }
 
-/* ============================ Animations ============================ */
-@keyframes overlayIn { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: none; } }
-@keyframes pulse { 0%,100% { box-shadow: 0 0 0 3px rgba(34,197,94,0.25), 0 0 8px rgba(34,197,94,0.6); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0), 0 0 8px rgba(34,197,94,0.3); } }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
-@keyframes blink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
 
 .hidden { display: none !important; }
-
-@media (prefers-reduced-motion: reduce) {
-  #panel, .user-bubble, .ai-text .w { animation: none !important; opacity: 1 !important; transform: none !important; }
-  #live-dot { animation: none !important; }
-}
 
 /* ============================ Assistant access ============================ */
 /* Anything full-screen added here must ALSO be listed in the pointer-events
@@ -1000,7 +963,7 @@ button:focus { outline: none; }
    window stays transparent to the mouse and the buttons cannot be clicked. */
 #consent-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0,0,0,0.5); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 #consent-scrim.hidden { display: none; }
-#consent { width: min(430px, 92vw); padding: 24px 26px 16px; text-align: center; -webkit-app-region: no-drag; animation: overlayIn 240ms cubic-bezier(0.22,1,0.36,1); }
+#consent { width: min(430px, 92vw); padding: 24px 26px 16px; text-align: center; -webkit-app-region: no-drag; }
 .cs-title { font-size: 15px; font-weight: 620; color: var(--tx-1); line-height: 1.35; }
 .cs-body { margin-top: 10px; color: var(--tx-mut); font-size: 12.5px; line-height: 1.5; white-space: pre-line; }
 .cs-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
