@@ -1,4 +1,4 @@
-﻿const assert = require('node:assert/strict');
+const assert = require('node:assert/strict');
 const test = require('node:test');
 const { AdaptiveVAD } = require('../src/vad');
 
@@ -46,5 +46,12 @@ test('reset() drops a partial frame instead of joining it to new audio', () => {
   vad.processChunk(Buffer.alloc(1024 * 2)); // 2 frames, 64 samples left over
   vad.reset();
   vad.processChunk(Buffer.alloc(416 * 2)); // 64 + 416 would make a frame
+  assert.equal(vad.frames, 2);
+});
+
+test('processChunk accepts an ArrayBuffer (as IPC delivers audio) like a Buffer', () => {
+  const vad = new CountingVAD({});
+  const ab = new ArrayBuffer(960 * 2); // two whole frames
+  vad.processChunk(ab);
   assert.equal(vad.frames, 2);
 });

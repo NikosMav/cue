@@ -42,6 +42,7 @@ class AdaptiveVAD {
   // are kept and analysed with the next chunk, so the result does not depend
   // on how the audio is chunked.
   processChunk(pcmBuffer) {
+    if (!Buffer.isBuffer(pcmBuffer)) pcmBuffer = Buffer.from(pcmBuffer); // IPC delivers ArrayBuffers
     const frameBytes = this.frameSize * 2;
     const buf = this._leftover.length ? Buffer.concat([this._leftover, pcmBuffer]) : pcmBuffer;
     let offset = 0;

@@ -1,6 +1,6 @@
 # Faster transcript lines — design
 
-Date: 2026-09-27. Status: approved design, not yet implemented.
+Date: 2026-09-27. Status: implemented on branch perf/faster-transcript-lines (2026-09-27).
 
 ## Problem
 
@@ -82,6 +82,12 @@ Both become byte budgets computed from 16 kHz 16-bit mono audio: 5 s
 (160,000 bytes) and 10 s (320,000 bytes). The oldest chunks are dropped
 first, as today.
 
+With the 4096-sample chunks that actually shipped, the old limits held
+about 20 s (OpenAI) and 26 s (Gemini) of audio, not the 5 s and 10 s their
+comments claimed. The new limits are shorter in practice; audio older than
+that would only produce late lines, and 20 s of speech would already trip
+the 15 s longest-turn commit during the flush.
+
 ## 5. Unchanged
 
 Deepgram (sends each chunk as it comes), the batch transcriber and
@@ -126,12 +132,12 @@ OpenAI API, medians).
 | Before (600 ms close) | 4096 samples | 1134 ms | 882 ms | 1505 ms | 0.072% |
 | After (450 ms close) | 960 samples | 1319 ms | 486 ms | 1021 ms | 0.072% |
 
-\* Counted from when the first chunk was sent; see the corrected comparison below.
+\* Counted from when the first chunk was sent; see below. Every run in this section transcribed the sentence exactly (5 of 5).
 
 The first-word column above counted from when the first chunk was sent,
 which hides one chunk of capture time (256 ms before, 60 ms after) and made
 the two builds incomparable. Counted from when the audio was captured, on
-the same build:
+the after build (450 ms close), varying only the chunk size:
 
 | Chunk | First live word | Final line |
 |---|---|---|
