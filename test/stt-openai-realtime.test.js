@@ -99,3 +99,22 @@ test('OpenAI Realtime: words recognised before listening stops are kept', async 
   stt.disconnect();
   assert.deepEqual(events.finals, ['Almost done']);
 });
+
+test('OpenAI Realtime: audio sent while connecting keeps the newest 5 s, whatever the chunk size', async () => {
+  for (const samples of [960, 4096]) {
+    sockets.length = 0;
+    const stt = new OpenAIRealtimeSTT('key', {});
+    await stt.connect();
+    const bytes = samples * 2;
+    const total = Math.ceil((8 * 32000) / bytes); // 8 s spoken before the session is ready
+    for (let i = 0; i < total; i++) stt.sendAudio(Buffer.alloc(bytes, i % 256));
+    const ws = sockets[0];
+    ws.open();
+    ws.serverEvent({ type: 'session.updated' });
+    const appended = ws.sent.filter((e) => e.type === 'input_audio_buffer.append').map((e) => Buffer.from(e.audio, 'base64'));
+    const sourceBytes = (appended.reduce((n, b) => n + b.length, 0) * 2) / 3; // 16 -> 24 kHz is exactly 3/2 here
+    assert.ok(sourceBytes <= 5 * 32000 && sourceBytes > 5 * 32000 - bytes, `${samples}-sample chunks kept ${sourceBytes} bytes`);
+    assert.equal(appended.at(-1).readInt16LE(0), Buffer.alloc(2, (total - 1) % 256).readInt16LE(0), 'the newest audio is kept');
+    stt.disconnect();
+  }
+});

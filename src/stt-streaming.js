@@ -16,6 +16,19 @@ const { AdaptiveVAD } = require('./vad');
 const OPENAI_COMMIT_SILENCE_FRAMES = 20; // 30 ms frames: 600 ms
 const OPENAI_MAX_TURN_MS = 15000;
 
+// 16 kHz, 16-bit mono: what the renderer captures and every provider is sent.
+const PCM_BYTES_PER_SECOND = 32000;
+const OPENAI_MAX_PENDING_BYTES = 5 * PCM_BYTES_PER_SECOND;
+
+// Holds audio while a socket (re)connects, dropping the oldest chunks beyond
+// maxBytes. Sized in time, not chunks, so it does not depend on chunk size.
+function queueBounded(queue, chunk, maxBytes) {
+  queue.push(chunk);
+  let bytes = 0;
+  for (const c of queue) bytes += c.byteLength;
+  while (bytes > maxBytes && queue.length > 1) bytes -= queue.shift().byteLength;
+}
+
 // Deepgram caps keyterm prompting at roughly 500 tokens and recommends a
 // focused list; 40 short terms stays well inside that and the URL limit.
 const DEEPGRAM_MAX_KEYTERMS = 40;
@@ -176,9 +189,8 @@ class OpenAIRealtimeSTT {
 
   sendAudio(pcmBuffer) {
     if (!this.connected || !this._sessionReady) {
-      // Buffer audio until session is ready (max 5 seconds worth)
-      this._pendingAudio.push(pcmBuffer);
-      if (this._pendingAudio.length > 80) this._pendingAudio.shift();
+      // Buffer audio until the session is ready (the newest 5 s)
+      queueBounded(this._pendingAudio, pcmBuffer, OPENAI_MAX_PENDING_BYTES);
       return;
     }
 
@@ -472,7 +484,7 @@ class DeepgramStreamingSTT {
 // ============================================================================
 
 const GEMINI_LIVE_CONNECT_TIMEOUT_MS = 15000;
-const GEMINI_LIVE_MAX_PENDING_CHUNKS = 100; // ~10s of 100ms chunks while (re)connecting
+const GEMINI_LIVE_MAX_PENDING_BYTES = 10 * PCM_BYTES_PER_SECOND; // the newest 10 s while (re)connecting
 
 class GeminiLiveSTT {
   constructor(apiKey, options = {}) {
@@ -600,8 +612,7 @@ class GeminiLiveSTT {
     if (!this.connected || !this.session) {
       // Buffer audio until the session is (re)connected so the words spoken
       // across the 10-minute rollover are not lost.
-      this._pendingAudio.push(Buffer.from(pcmBuffer));
-      if (this._pendingAudio.length > GEMINI_LIVE_MAX_PENDING_CHUNKS) this._pendingAudio.shift();
+      queueBounded(this._pendingAudio, Buffer.from(pcmBuffer), GEMINI_LIVE_MAX_PENDING_BYTES);
       return;
     }
     this._send(Buffer.from(pcmBuffer));

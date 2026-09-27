@@ -185,3 +185,18 @@ test('createStreamingSTT uses Gemini Live only when Gemini is chosen explicitly'
   assert.deepEqual(createStreamingSTT({ sttProvider: 'auto', apiKeys: {} }, 'you', cb),
     { type: 'batch', provider: 'none', instance: null });
 });
+
+test('audio buffered while connecting keeps the newest 10 s, whatever the chunk size', async () => {
+  for (const samples of [960, 4096]) {
+    const { stt, genai } = make('ok');
+    const bytes = samples * 2;
+    const total = Math.ceil((14 * 32000) / bytes); // 14 s before the session is up
+    for (let i = 0; i < total; i++) stt.sendAudio(Buffer.alloc(bytes, i % 256));
+    await stt.connect();
+    const sent = genai.sessions[0].sent.filter((s) => s.audio).map((s) => Buffer.from(s.audio.data, 'base64'));
+    const sentBytes = sent.reduce((n, b) => n + b.length, 0);
+    assert.ok(sentBytes <= 10 * 32000 && sentBytes > 10 * 32000 - bytes, `${samples}-sample chunks kept ${sentBytes} bytes`);
+    assert.equal(sent.at(-1)[0], (total - 1) % 256, 'the newest audio is kept');
+    stt.disconnect();
+  }
+});
