@@ -124,3 +124,4 @@ OpenAI API, medians).
 | Build | Chunk | First live word | Sentence closed | Final line | Audio path CPU / channel |
 |---|---|---|---|---|---|
 | Before (600 ms close) | 4096 samples | 1134 ms | 882 ms | 1505 ms | 0.072% |
+| After (450 ms close) | 960 samples | 1319 ms | 486 ms | 1021 ms | 0.072% |

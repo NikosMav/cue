@@ -77,7 +77,7 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   hear itself.
 - Cleanup: removed modules and scripts nothing used (`context.js`, `meetings.js`,
   `notes.js`, `resume-context.js` with its regex résumé parser, the unused
-  résumé helper in `profile-context.js`, `rms16`, unused batch helpers in
+  résumé helper in `profile-context.js`, unused batch helpers in
   `stt-streaming.js`, the never-read pre-speech ring buffers in `main.js`, and
   the root `verify.js` / `probe-anthropic*.cjs` probes); duplicate `app:quit`,
   `will-quit` and `window-all-closed` handlers; "FIX #n" comment prefixes; and
@@ -152,6 +152,25 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   "Interview" setup. Migrated AI rules become the "Interview" setup's
   instructions, so they no longer apply in "Any conversation"; copy them to
   Settings → Style → AI rules to apply them everywhere.
+- Listening works again after the 2026-09-25 upstream sync: the merged audio
+  level log called `rms16`, which the fork had removed, so every audio chunk
+  threw in the main process and Electron's error dialog (hidden behind the
+  overlay) froze it — no transcript, an unresponsive listen button and a
+  laggy window. `rms16` is back in `src/wav.js`, with a test that `main.js`
+  imports only what `src/wav.js` exports.
+- OpenAI realtime transcription (`gpt-realtime-whisper`) rejects server turn
+  detection, so cue closes each sentence itself: its VAD commits the audio
+  after a 450 ms pause, or after 15 s of speech without one; long silences are
+  cleared instead of transcribed. The live line shows the whole sentence so
+  far, and words already heard are kept when listening stops.
+- No UI animations. Every running animation repainted the whole glass window,
+  blur included, at the display refresh rate (35–50% of a core on the GPU
+  process while listening); state is shown by colour instead.
+- Audio reaches the main process in 60 ms chunks instead of 256 ms, and the
+  VAD carries partial frames between chunks, so live words and final lines
+  arrive sooner. `scripts/dev/bench-audio-path.cjs` and
+  `scripts/dev/bench-transcription.cjs` measure both; results are in
+  `docs/superpowers/specs/2026-09-27-faster-transcript-lines-design.md`.
 
 ## Validation and limits
 
