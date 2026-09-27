@@ -30,6 +30,7 @@ class AdaptiveVAD {
     this.speechFrameCount = 0;
     this.silenceFrameCount = 0;
     this.totalSpeechFrames = 0;
+    this._leftover = Buffer.alloc(0); // samples short of a whole frame, analysed with the next chunk
 
     // Callbacks
     this.onSpeechStart = options.onSpeechStart || (() => {});
@@ -37,17 +38,18 @@ class AdaptiveVAD {
     this.onVADState = options.onVADState || (() => {});
   }
 
-  // Process a chunk of Int16 PCM audio
+  // Process a chunk of Int16 PCM audio. Samples that do not fill a whole frame
+  // are kept and analysed with the next chunk, so the result does not depend
+  // on how the audio is chunked.
   processChunk(pcmBuffer) {
-    const samples = pcmBuffer.length / 2;
+    const frameBytes = this.frameSize * 2;
+    const buf = this._leftover.length ? Buffer.concat([this._leftover, pcmBuffer]) : pcmBuffer;
     let offset = 0;
-
-    while (offset + this.frameSize * 2 <= pcmBuffer.length) {
-      const frame = pcmBuffer.slice(offset, offset + this.frameSize * 2);
-      const energy = this._computeRMS(frame);
-      this._processFrame(energy);
-      offset += this.frameSize * 2;
+    while (offset + frameBytes <= buf.length) {
+      this._processFrame(this._computeRMS(buf.subarray(offset, offset + frameBytes)));
+      offset += frameBytes;
     }
+    this._leftover = Buffer.from(buf.subarray(offset)); // a copy: callers may reuse their buffer
   }
 
   _computeRMS(frame) {
@@ -135,6 +137,7 @@ class AdaptiveVAD {
     this.silenceFrameCount = 0;
     this.totalSpeechFrames = 0;
     this.noiseFloor = 80;
+    this._leftover = Buffer.alloc(0);
   }
 }
 
