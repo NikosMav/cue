@@ -114,3 +114,13 @@ and is dropped on `reset()`, which main.js calls when listening stops.
 A 450 ms pause closes more sentences at hesitations. The question joiner
 merges consecutive interviewer lines within 20 s, so answers still see the
 whole question; the visible effect is more, shorter lines in the history.
+
+## Results
+
+Measured with `scripts/dev/bench-audio-path.cjs` and
+`scripts/dev/bench-transcription.cjs` (Windows TTS sentence, 5 trials, real
+OpenAI API, medians).
+
+| Build | Chunk | First live word | Sentence closed | Final line | Audio path CPU / channel |
+|---|---|---|---|---|---|
+| Before (600 ms close) | 4096 samples | 1134 ms | 882 ms | 1505 ms | 0.072% |
