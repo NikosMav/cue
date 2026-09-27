@@ -13,7 +13,7 @@ const { AdaptiveVAD } = require('./vad');
 // gpt-realtime-whisper streams words but rejects server turn detection, so
 // the client decides where an utterance ends: after this much silence, or
 // after this much uncommitted audio when the speaker never pauses.
-const OPENAI_COMMIT_SILENCE_FRAMES = 20; // 30 ms frames: 600 ms
+const OPENAI_COMMIT_SILENCE_FRAMES = 15; // 30 ms frames: 450 ms
 const OPENAI_MAX_TURN_MS = 15000;
 
 // 16 kHz, 16-bit mono: what the renderer captures and every provider is sent.

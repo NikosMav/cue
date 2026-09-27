@@ -721,7 +721,7 @@
         // Fallback to ScriptProcessor if AudioWorklet fails (shouldn't happen in Electron 33+)
         cue.log('AudioWorklet failed, falling back to ScriptProcessor: ' + workletErr.message);
         const micNode = audioCtx.createMediaStreamSource(micStream);
-        const micProc = audioCtx.createScriptProcessor(4096, 1, 1);
+        const micProc = audioCtx.createScriptProcessor(1024, 1, 1);
         const sink = audioCtx.createGain(); sink.gain.value = 0;
         micNode.connect(micProc); micProc.connect(sink); sink.connect(audioCtx.destination);
         micProc.onaudioprocess = (e) => {
@@ -819,7 +819,7 @@
         // Fallback to ScriptProcessor
         cue.log('system audio AudioWorklet failed, using ScriptProcessor: ' + workletErr.message);
         const sysNode = sysCtx.createMediaStreamSource(new MediaStream(tracks));
-        const sysProc = sysCtx.createScriptProcessor(4096, 1, 1);
+        const sysProc = sysCtx.createScriptProcessor(1024, 1, 1);
         const sink = sysCtx.createGain(); sink.gain.value = 0;
         sysNode.connect(sysProc); sysProc.connect(sink); sink.connect(sysCtx.destination);
         sysProc.onaudioprocess = (e) => {

@@ -118,3 +118,19 @@ test('OpenAI Realtime: audio sent while connecting keeps the newest 5 s, whateve
     stt.disconnect();
   }
 });
+
+// 60 ms of 16 kHz mono PCM, as the capture worklet sends it.
+function chunk60(speech) {
+  const buf = Buffer.alloc(1920);
+  if (speech) for (let i = 0; i < 960; i++) buf.writeInt16LE(Math.round(6000 * Math.sin(i / 3)), i * 2);
+  return buf;
+}
+
+test('OpenAI Realtime: a sentence closes after 450 ms of silence, not before', async () => {
+  const { stt, ws } = await openSession();
+  for (let i = 0; i < 10; i++) stt.sendAudio(chunk60(true));
+  for (let i = 0; i < 7; i++) stt.sendAudio(chunk60(false)); // 420 ms of silence
+  assert.ok(!ws.sentTypes().includes('input_audio_buffer.commit'), 'still inside the pause');
+  stt.sendAudio(chunk60(false)); // 480 ms: past 450 ms
+  assert.equal(ws.sentTypes().filter((t) => t === 'input_audio_buffer.commit').length, 1);
+});
