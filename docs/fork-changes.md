@@ -83,7 +83,7 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   `will-quit` and `window-all-closed` handlers; "FIX #n" comment prefixes; and
   duplicated or garbled README sections.
 - Default models for new installs: OpenAI `gpt-4.1-mini` / `gpt-4.1`,
-  Anthropic `claude-haiku-4-5` / `claude-opus-5`, Gemini `gemini-2.5-flash`
+  Anthropic `claude-haiku-4-5` / `claude-sonnet-5-5`, Gemini `gemini-2.5-flash`
   for both tiers. Existing settings keep the models already saved. Requests
   carry an effort hint (low for spoken answers, medium for coding and
   debriefs, one level higher with Smart). Claude models that think by default

@@ -117,6 +117,20 @@ test('Claude models that think by default get an effort level, thinking room and
   assert.equal(anthropicBody.max_tokens, 700);
 });
 
+test('Sonnet 5.5 gets refusal fallbacks; Sonnet 5 thinks but has none', async () => {
+  const ask = async (model) => {
+    const llm = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: { anthropic: { fast: model } } });
+    await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });
+  };
+  await ask('claude-sonnet-5-5');
+  assert.equal(anthropicBody.output_config.effort, 'low');
+  assert.equal(anthropicBody.fallbacks, 'default');
+  assert.equal(anthropicOptions.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  await ask('claude-sonnet-5');
+  assert.equal(anthropicBody.output_config.effort, 'low');
+  assert.equal(anthropicBody.fallbacks, undefined);
+});
+
 test('Smart raises the effort one level', async () => {
   const opus = createLLM({ provider: 'anthropic', smart: true, apiKeys: { anthropic: 'k' }, models: { anthropic: { smart: 'claude-opus-5' } } });
   await opus.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], effort: 'low', onToken: () => {} });

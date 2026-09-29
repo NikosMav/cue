@@ -107,7 +107,7 @@ const DEFAULTS = {
     // not src/llm.js's DEFAULT_MODELS, which only backstops a missing entry) —
     // llm.js's DEAD_ANTHROPIC_MODEL_RE self-heal additionally migrates any
     // settings file already saved with the old dead ids.
-    anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-opus-5' },
+    anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-sonnet-5-5' },
     // fast is kept in sync with CURRENT_GEMINI_DEFAULT in src/llm.js —
     // gemini-2.0-flash (the original default here) was retired by Google on
     // 2026-03-03 and 404s on every request. smart is the newest Pro release.

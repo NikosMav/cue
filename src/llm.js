@@ -23,11 +23,11 @@ const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe';
 const GEMINI_TRANSCRIBE_LIVE_MODEL = 'gemini-3.5-transcribe-live';
 // claude-3-5-haiku-latest / claude-3-5-sonnet-latest were retired by Anthropic
 // (every claude-2.x and claude-3.x id 404s with not_found_error). Fast is the
-// current Haiku, which answers without thinking; Smart is the current Opus,
+// current Haiku, which answers without thinking; Smart is the current Sonnet,
 // which thinks by default (see anthropicRequestShape for how that is kept
-// fast and untruncated).
+// fast and untruncated). Sonnet costs less than half as much as Opus 5.
 const CURRENT_ANTHROPIC_DEFAULT_FAST = 'claude-haiku-4-5';
-const CURRENT_ANTHROPIC_DEFAULT_SMART = 'claude-opus-5';
+const CURRENT_ANTHROPIC_DEFAULT_SMART = 'claude-sonnet-5-5';
 const DEFAULT_MODELS = {
   cerebras: 'qwen-3.8-27b',
   openai: 'gpt-4.1-mini',
@@ -436,11 +436,12 @@ const OUTPUT_BUDGET_EXHAUSTED = 'The model used its whole output budget before a
 
 // Claude models that think unless told otherwise (Opus 5 and later, Sonnet 5,
 // Fable, Mythos). They take an effort level; Haiku 4.5 and older models reject
-// it. Opus 5 and Fable also get server-side refusal fallbacks: when a safety
-// classifier declines a request, Anthropic re-runs it on its recommended
-// fallback model inside the same call.
+// it. Opus 5, Sonnet 5.5 and Fable also get server-side refusal fallbacks: when
+// a safety classifier declines a request, Anthropic re-runs it on its
+// recommended fallback model inside the same call. Sonnet 5 (before 5.5) has
+// no fallbacks.
 const ANTHROPIC_THINKS_BY_DEFAULT_RE = /^claude-(opus-5|sonnet-5|fable-5|mythos-5)/;
-const ANTHROPIC_FALLBACKS_RE = /^claude-(opus-5|fable-5)/;
+const ANTHROPIC_FALLBACKS_RE = /^claude-(opus-5|sonnet-5-5|fable-5)/;
 const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 function anthropicRequestShape(model, maxTokens, effort) {
