@@ -15,7 +15,7 @@ const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isVali
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
-const { createClickThrough, placeOnDisplay } = require('./src/click-through');
+const { createClickThrough, placeOnDisplay, clampToArea } = require('./src/click-through');
 const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
 
 // Settings as every feature reads them: About me + the active setup projected
@@ -1545,15 +1545,13 @@ function toggleAutoAnswer() {
 }
 
 const MOVE_STEP_PX = 80;
-// Keep at least this much of the panel on screen, like the saved position.
-const MIN_VISIBLE_PX = 100;
+// The panel stays wholly on its display, like the restored position.
 function moveWindow(dx, dy) {
   if (!win || win.isDestroyed()) return;
   const bounds = win.getBounds();
   const { workArea } = screen.getDisplayMatching(bounds);
-  const x = Math.max(workArea.x - bounds.width + MIN_VISIBLE_PX, Math.min(bounds.x + dx * MOVE_STEP_PX, workArea.x + workArea.width - MIN_VISIBLE_PX));
-  const y = Math.max(workArea.y, Math.min(bounds.y + dy * MOVE_STEP_PX, workArea.y + workArea.height - 40));
-  win.setPosition(Math.round(x), Math.round(y));
+  const { x, y } = clampToArea({ x: bounds.x + dx * MOVE_STEP_PX, y: bounds.y + dy * MOVE_STEP_PX }, bounds, workArea);
+  win.setPosition(x, y);
 }
 
 const SHORTCUT_HANDLERS = {

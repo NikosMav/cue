@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { interactiveAt, createClickThrough, placeOnDisplay } = require('../src/click-through');
+const { interactiveAt, createClickThrough, placeOnDisplay, clampToArea } = require('../src/click-through');
 
 const bounds = { x: 1000, y: 10, width: 700, height: 600 };
 const toolbar = { x: 215, y: 14, width: 270, height: 40 };
@@ -67,9 +67,25 @@ test('a position saved on a secondary monitor is restored there, not clamped to 
   assert.deepEqual(placeOnDisplay({ x: -1400, y: 100 }, size, [primary, laptop]), { x: -1400, y: 100 });
 });
 
-test('a position that is now off every screen is pulled back onto the nearest one', () => {
+test('a position that is now off every screen is pulled wholly onto the nearest one', () => {
   // The laptop was disconnected: -1400 is nowhere, so the primary takes it.
-  assert.deepEqual(placeOnDisplay({ x: -1400, y: 100 }, size, [primary]), { x: -600, y: 100 });
+  assert.deepEqual(placeOnDisplay({ x: -1400, y: 100 }, size, [primary]), { x: 0, y: 100 });
   // Below the bottom edge of the primary.
-  assert.deepEqual(placeOnDisplay({ x: 500, y: 5000 }, size, [primary, laptop]), { x: 500, y: 1352 });
+  assert.deepEqual(placeOnDisplay({ x: 500, y: 5000 }, size, [primary, laptop]), { x: 500, y: 792 });
+});
+
+test('a window saved mostly past the left edge opens with its toolbar on screen', () => {
+  // Reported case: saved at x -1127 on a single 1707 px display. Keeping only
+  // 100 px visible left the toolbar (top centre) off screen with nothing to drag.
+  const single = { workArea: { x: 0, y: 0, width: 1707, height: 1019 } };
+  assert.deepEqual(placeOnDisplay({ x: -1127, y: 0 }, size, [single]), { x: 0, y: 0 });
+  assert.deepEqual(placeOnDisplay({ x: 1600, y: 0 }, size, [single]), { x: 1007, y: 0 });
+});
+
+test('clampToArea keeps the whole window inside the work area', () => {
+  const area = { x: 0, y: 0, width: 1707, height: 1019 };
+  assert.deepEqual(clampToArea({ x: -80, y: -5 }, size, area), { x: 0, y: 0 });
+  assert.deepEqual(clampToArea({ x: 1100, y: 500 }, size, area), { x: 1007, y: 419 });
+  // A window larger than the area is pinned to its top-left corner.
+  assert.deepEqual(clampToArea({ x: 50, y: 50 }, { width: 2000, height: 1200 }, area), { x: 0, y: 0 });
 });

@@ -47,9 +47,16 @@ function createClickThrough({ getCursor, getBounds, setIgnore, isActive = () => 
   };
 }
 
-// Keep at least this much of the window on screen.
-const MIN_VISIBLE_PX = 100;
-const MIN_VISIBLE_TOP_PX = 40;
+// The whole window stays inside the work area. Keeping only a strip on screen
+// hid the toolbar (top centre), the one place the window can be dragged from,
+// and the window is not in the taskbar or Alt+Tab to recover it from there.
+// A window larger than the area is pinned to its top-left corner.
+function clampToArea(pos, size, area) {
+  return {
+    x: Math.round(Math.max(area.x, Math.min(pos.x, area.x + area.width - size.width))),
+    y: Math.round(Math.max(area.y, Math.min(pos.y, area.y + area.height - size.height)))
+  };
+}
 
 function distanceTo(point, area) {
   const dx = Math.max(area.x - point.x, 0, point.x - (area.x + area.width));
@@ -59,7 +66,7 @@ function distanceTo(point, area) {
 
 // Where to put the window for a saved top-left position: on the display that
 // holds the toolbar (top centre of the window), or the nearest one if that
-// monitor is gone, clamped so the toolbar stays reachable. Clamping against
+// monitor is gone, clamped wholly onto that display. Clamping against
 // the primary display alone pulled a window saved on a secondary monitor
 // back across to the primary at the next launch.
 function placeOnDisplay(saved, size, displays) {
@@ -68,10 +75,7 @@ function placeOnDisplay(saved, size, displays) {
   if (!areas.length) return { x: saved.x, y: saved.y };
   const area = areas.find((a) => inside(anchor, a)) ||
     areas.reduce((best, a) => (distanceTo(anchor, a) < distanceTo(anchor, best) ? a : best));
-  return {
-    x: Math.round(Math.max(area.x - size.width + MIN_VISIBLE_PX, Math.min(saved.x, area.x + area.width - MIN_VISIBLE_PX))),
-    y: Math.round(Math.max(area.y, Math.min(saved.y, area.y + area.height - MIN_VISIBLE_TOP_PX)))
-  };
+  return clampToArea(saved, size, area);
 }
 
-module.exports = { interactiveAt, createClickThrough, placeOnDisplay, POLL_MS };
+module.exports = { interactiveAt, createClickThrough, placeOnDisplay, clampToArea, POLL_MS };
