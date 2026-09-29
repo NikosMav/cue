@@ -173,6 +173,10 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   not change. `scripts/dev/bench-audio-path.cjs` and
   `scripts/dev/bench-transcription.cjs` measure both; results are in
   `docs/superpowers/specs/2026-09-27-faster-transcript-lines-design.md`.
+- `scripts/dev/bench-llm.cjs` compares first-token and total answer time across
+  the OpenAI and Anthropic models cue can use, through cue's own request path
+  with a synthetic profile. It reads saved keys, skips providers without one,
+  and never prints them.
 
 ## Validation and limits
 
