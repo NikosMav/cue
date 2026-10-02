@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, clipboard } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 const { isLikelyCompleteQuestion } = require('./src/question-detector');
 const { acceleratorFromEvent, acceleratorParts, formatAccelerator } = require('./src/accelerator');
 const { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./src/setups');
@@ -20,7 +20,9 @@ contextBridge.exposeInMainWorld('cue', {
   queueScreenshot: () => ipcRenderer.send('screenshot:queue'),
   // Same completeness test the main process uses for auto-answer.
   isLikelyCompleteQuestion: (text) => isLikelyCompleteQuestion(text),
-  copyText: (text) => clipboard.writeText(String(text || '')),
+  // Electron 44 removed the clipboard module from renderer processes, preload
+  // included, so the write happens in main.
+  copyText: (text) => ipcRenderer.invoke('clipboard:write-text', String(text || '')),
   sessionsList: (query) => ipcRenderer.invoke('sessions:list', query || ''),
   sessionsGet: (id) => ipcRenderer.invoke('sessions:get', id),
   sessionsSetEnabled: (enabled) => ipcRenderer.invoke('sessions:set-enabled', !!enabled),

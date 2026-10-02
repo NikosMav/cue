@@ -41,7 +41,7 @@ It's a copilot for **live meetings** ("what do I say to that?") and **coding pro
 
 ### Platform support
 
-|  | macOS | Windows 11 / 10 2004+ | Linux (AppImage, experimental) |
+|  | macOS 13+ | Windows 11 / 10 2004+ | Linux (AppImage, experimental) |
 |---|---|---|---|
 | Screen + coding help | ✅ | ✅ | ✅ |
 | Your mic (the **You** channel) | ✅ | ✅ | ✅ |

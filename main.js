@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1483,6 +1483,7 @@ ipcMain.on('mouse:rects', (_e, rects) => {
   const valid = rects.slice(0, 20).filter((r) => r && [r.x, r.y, r.width, r.height].every(Number.isFinite));
   clickThrough.setRects(valid);
 });
+ipcMain.handle('clipboard:write-text', (_e, text) => clipboard.writeText(String(text || '')));
 // Only OS settings panes; see src/system-settings-url.js.
 ipcMain.on('open-pane', (_e, url) => {
   if (!isSystemSettingsUrl(url)) { recordEvent({ level: 'warn', event: 'open_pane_dropped', msg: '', frame: 'open-pane', context: {} }); return; }
