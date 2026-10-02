@@ -40,8 +40,8 @@ const COPY = {
   dataPath: 'Your prompts and screenshots go through publik\'s servers to a shared model account. publik never trains on them and does not store them. You can switch to your own key at any time.',
   disclosure: {
     title: 'cue uses publik API',
-    intro: 'cue needs an AI model to work. By default it runs on publik API, so you can start right away without an account or a key.',
-    cost: 'Every request is priced per use at 50% of the model\'s published list price, from your publik balance. This computer starts with a small free balance. Most people spend under $2 a month. You can see every charge in the app and at publikhq.com.',
+    intro: 'cue needs an AI model to work. By default it runs on publik API, so you need no key of your own.',
+    cost: 'Every request is priced per use at 50% of the model\'s published list price, from your publik balance. A new computer starts at $0.00. Linking this computer to your publik account gives $0.05 of free use, once. Most people spend under $2 a month. You can see every charge in the app and at publikhq.com.',
     dataPath: 'Your prompts and screenshots go through publik\'s servers to a shared model account. publik never trains on them and does not store them. You can switch to your own key at any time in Settings.',
     accept: 'Continue with publik API',
     decline: 'Use my own key instead',
@@ -55,7 +55,7 @@ const COPY = {
   whyItCostsToggle: 'Why it costs money',
   cta: {
     cardTitle: 'publik API is set up',
-    starterSuffix: 'of free starter usage',      // "$0.25 of free starter usage" — the amount comes from the mint response
+    starterSuffix: 'of free starter usage',      // "$0.05 of free starter usage" — the amount comes from a linked-account mint response (an unlinked install's starter is $0.00)
     link: 'Link this computer & pick a plan',     // anonymous → claim_url
     pickPlan: 'Pick a plan',                      // claimed, no plan → dashboard
     managePlan: 'Manage plan',                    // claimed with a plan → dashboard
@@ -316,7 +316,7 @@ function describeGatewayError({ status, body, model, retryAfter } = {}) {
     const claimed = err.claim_state === 'claimed';
     const fallback = claimed
       ? `${PROVIDER_LABEL} balance is used up (${formatMicros(err.available_micros || 0)} left). Add a plan or a pack at the link below, ${BYO}`
-      : `${PROVIDER_LABEL}: your free starter usage is used up. Link this computer and pick a plan at the link below, ${BYO}`;
+      : `${PROVIDER_LABEL}: your balance is too low for this request. Link this computer to your publik account at the link below for $0.05 of free use, pick a plan there, ${BYO}`;
     const message = typeof err.message === 'string' && err.message.trim() ? err.message.trim() : fallback;
     return { message, action: link(claimed ? 'Add a plan or pack' : 'Link this computer & pick a plan', topUp), fromResponse: message !== fallback };
   }
@@ -374,7 +374,7 @@ function describeGatewayError({ status, body, model, retryAfter } = {}) {
 
 /**
  * The settings-panel status line (R21 §4.1).
- *   anonymous: "Ready · $0.18 left of $0.25 free credit"
+ *   anonymous, unlinked (starter is always $0.00): "Ready · $0.18 left"
  *   claimed:   "Linked to your publik account · $3.12 left · This week $1.20 of $4.62 · Resets Thu 12:04"
  *   claimed, no plan: "... · $3.12 left · $0.68 used this week"
  */
@@ -402,7 +402,7 @@ function balanceLine(p, now = Date.now()) {
 // renderer paints exactly what these return, so the copy and the link rules
 // are testable without a DOM.
 
-/** "$0.25 of free starter usage" — from the mint response, never hardcoded. */
+/** "$0.05 of free starter usage" — from a linked-account mint response, never hardcoded (an unlinked install's starter is $0.00). */
 function starterLine(p) {
   const starter = Number(p && p.starterMicros) || 0;
   const balance = p && p.balanceMicros !== null && p.balanceMicros !== undefined ? Number(p.balanceMicros) : null;
@@ -420,7 +420,7 @@ function starterLine(p) {
  * The first-run card, shown once right after POST /installs succeeds (§12.1):
  * (a) balance line, (b) the justification, (c) the primary button that opens
  * claim_url — only a publikhq.com link ever becomes a button — and "Later",
- * which keeps the free starter and changes nothing else.
+ * which keeps the key and the balance and changes nothing else.
  */
 function ctaView(p) {
   if (!p || !p.connected) return null;

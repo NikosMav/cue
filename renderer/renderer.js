@@ -1671,7 +1671,7 @@
     } else if (p.disconnected) {
       line = 'publik API is disconnected. This computer was removed from your publik account.'; note.classList.add('warn');
     } else if (!p.disclosureAccepted) {
-      line = 'Not set up yet — no account or key needed to start.';
+      line = 'Not set up yet — no key needed to set it up.';
     } else if (p.lastError) {
       line = p.lastError; note.classList.add('warn');
     } else {
@@ -2643,8 +2643,8 @@
   }
   // The first-run card (CONTRACT §12.1), in this order: (a) the balance line
   // from the mint response, (b) the one-sentence justification, (c) the
-  // primary button that opens claim_url — and "Later", which keeps the free
-  // starter. Everything is painted from publikState.card (src/publik.js
+  // primary button that opens claim_url — and "Later", which keeps the key
+  // and the balance. Everything is painted from publikState.card (src/publik.js
   // ctaView), so the copy has one source and the link rule is tested there.
   function publikCardStep() {
     const card = publikState.card;

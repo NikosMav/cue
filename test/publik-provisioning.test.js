@@ -64,8 +64,11 @@ function startFakeGateway() {
           base_url: `http://127.0.0.1:${server.address().port}/api/v1`,
           models: { fast: 'publik-fast', balanced: 'publik-balanced', smart: 'publik-smart' },
           claim_code: 'HK7F-2QWD', claim_url: 'https://publikhq.com/claim/HK7F-2QWD',
-          starter_micros: existing ? 0 : 250000, balance_micros: existing ? 0 : 250000, starting_credit_micros: existing ? 0 : 250000,
-          wallet: { claim_state: 'anonymous', balance_micros: existing ? 0 : 250000, starter: { remaining_micros: existing ? 0 : 250000 }, week: { used_micros: 0, budget_micros: null, resets_at: '2026-09-25T17:04:11Z' }, claim_url: 'https://publikhq.com/claim/HK7F-2QWD' }
+          // Policy 0059: an install is minted at $0.00. None of these fixtures
+          // mint an install already bound to a signed-in account, so starter
+          // stays 0 whether or not the install_id was seen before.
+          starter_micros: 0, balance_micros: 0, starting_credit_micros: 0,
+          wallet: { claim_state: 'anonymous', balance_micros: 0, starter: { remaining_micros: 0 }, week: { used_micros: 0, budget_micros: null, resets_at: '2026-09-25T17:04:11Z' }, claim_url: 'https://publikhq.com/claim/HK7F-2QWD' }
         });
       }
       if (req.method === 'GET' && req.url === '/api/v1/wallet') {
@@ -101,8 +104,8 @@ test('provisionInstall mints once, stores only apiKeys.publik + publik.*, then G
     assert.equal(store.data.publik.keyId, r.keyId);
     assert.equal(store.data.publik.baseUrl, gw.baseUrl);
     assert.equal(store.data.publik.claimUrl, 'https://publikhq.com/claim/HK7F-2QWD');
-    assert.equal(store.data.publik.starterMicros, 250000);
-    assert.equal(store.data.publik.balanceMicros, 250000);
+    assert.equal(store.data.publik.starterMicros, 0);
+    assert.equal(store.data.publik.balanceMicros, 0);
     assert.equal(store.data.publik.revoked, false);
     assert.deepEqual(store.data.models.publik, { fast: 'publik-fast', smart: 'publik-balanced' });
     // Never touched: the user's own key and the selected provider.

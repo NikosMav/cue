@@ -1178,7 +1178,7 @@ ipcMain.handle('publik:disconnect', async () => {
 });
 // "Later" or the primary button on the first-run card: the card was shown for
 // this starter grant. Touches publik.cardShown only — the key stays in place
-// and the free starter is kept (§12.1).
+// and the balance is kept (§12.1).
 ipcMain.handle('publik:card-seen', () => {
   try { publik.markCardSeen(store); } catch (e) { recordEvent({ level: 'error', event: 'publik_card_seen_failed', msg: e.message, frame: 'publik:card-seen', context: {} }); }
   publikPush();
