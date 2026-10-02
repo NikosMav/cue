@@ -31,6 +31,7 @@ const { ACTIONS: SHORTCUT_ACTIONS, resolveShortcuts, findConflicts, isValid: isV
 const { AdaptiveVAD } = require('./src/vad');
 const { rms16 } = require('./src/wav');
 const { startAppLink, stopAppLink, recordEvent, appLinkConsentState, revokeAppLinkCaller } = require('./src/applink');
+const { isSystemSettingsUrl } = require('./src/system-settings-url');
 const publik = require('./src/publik');
 // The app token release.yml baked into src/publik-build.json (empty in a dev
 // checkout → the publik option is simply absent from the provider picker).
@@ -1482,7 +1483,11 @@ ipcMain.on('mouse:rects', (_e, rects) => {
   const valid = rects.slice(0, 20).filter((r) => r && [r.x, r.y, r.width, r.height].every(Number.isFinite));
   clickThrough.setRects(valid);
 });
-ipcMain.on('open-pane', (_e, url) => { shell.openExternal(url).catch(() => {}); });
+// Only OS settings panes; see src/system-settings-url.js.
+ipcMain.on('open-pane', (_e, url) => {
+  if (!isSystemSettingsUrl(url)) { recordEvent({ level: 'warn', event: 'open_pane_dropped', msg: '', frame: 'open-pane', context: {} }); return; }
+  shell.openExternal(url).catch(() => {});
+});
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.on('log', (_e, msg) => console.log('[renderer]', msg));
 // -------- resume / job-description file import --------
