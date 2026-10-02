@@ -12,10 +12,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bugfix-lab-evidence
           path: |
@@ -70,8 +70,8 @@ name: bugfix-lab oracle (cue-mic-not-detected-gemini)
           pwsh -File tooling/scripts/bugfix-lab/cue-mic-not-detected-gemini.ps1 `
             -TargetDir "${{ github.workspace }}/target"
   reproduce:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
           cache: 'npm'
         run: pwsh -File scripts/bugfix-lab/cue-windows-overlay-not-visible-for-mic-grant.ps1
       - name: Upload desktop screenshot
