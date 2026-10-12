@@ -256,6 +256,10 @@
         </div>
         <div class="s-note">Local mode keeps microphone and meeting audio on this computer. It never silently falls back to a cloud transcription provider. Custom sends audio to the Base URL and Custom key set on the Keys tab (requires both).</div>
 
+        <label class="s-label" for="stt-language">Speech language <span class="s-hint">the language people speak in your calls</span></label>
+        <select id="stt-language" class="s-select"></select>
+        <div class="s-note">Choose the language when you know it: transcription is more accurate. Auto-detect lets OpenAI, Groq and Local work it out; Deepgram then transcribes English and the main European languages, but not Greek. Answers stay in English.</div>
+
         <label class="s-label">Meeting audio <span class="s-hint">transcribe the other side of a call</span></label>
         <div class="s-seg" id="meeting-audio-seg">
           <button data-meeting-audio="off">Off</button>
@@ -286,17 +290,10 @@
           </div>
 
           <div class="s-field">
-            <span>Language</span>
-            <select id="whisper-language" class="s-select compact">
-              <option value="auto">Auto-detect</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-          <div class="s-field">
             <span>CPU threads</span>
             <input id="whisper-threads" type="number" min="0" max="64" step="1" value="0" />
           </div>
-          <div class="s-note">Use 0 for whisper.cpp's default. English-only models always use English regardless of the language setting.</div>
+          <div class="s-note">Use 0 for whisper.cpp's default. English-only models (.en) always use English, whatever the speech language.</div>
         </div>
 
         <div class="s-status" id="whisper-status"></div>
@@ -309,7 +306,8 @@
 
       <!-- Tab: About me — used by every setup -->
       <div class="s-body s-tab-pane hidden" data-pane="about">
-        <div class="s-hint-block">Used in every setup. Saved locally and sent to your AI provider with each answer (never with coding solves).</div>
+        <div class="s-hint-block">Sent with <em>every</em> setup, so keep it to facts that are true for all of them. Put positioning for one conversation (relocation, a rate, why this company) in that setup's Notes. Saved locally and sent to your AI provider with each answer (never with coding solves).</div>
+        <div class="s-hint-block about-me-warning hidden" id="about-me-warning" role="status"></div>
         <label class="s-label">Your CV <span class="s-hint">paste it, or import a PDF/DOCX</span></label>
         <div class="s-field s-upload"><span class="s-filename" id="resume-filename"></span><button class="s-upload-btn" id="upload-resume-btn">Import PDF/DOCX</button></div>
         <textarea id="resume-text" rows="8" spellcheck="false" placeholder="Paste your CV or professional background."></textarea>

@@ -2,6 +2,7 @@
 // no audio API — we transcribe with whatever audio-capable key is available, and
 // fall back across providers. Returns { text, provider } or { text:'', error }.
 const { pcmToWav } = require('./wav');
+const { resolveSttLanguage, whisperLanguage, languageName } = require('./stt-language');
 const { formatProviderErrorMessage, isQuotaError, isRateLimitError, isNotFoundError, resolveGeminiModel, CURRENT_GEMINI_DEFAULT, GEMINI_TRANSCRIBE_MODEL } = require('./llm');
 
 // Generic interview/software vocabulary. The candidate's own terms (from the
@@ -84,7 +85,7 @@ function looksLikeHallucination(raw) {
   return artifacts.has(t);
 }
 
-async function transcribeOpenAI(apiKey, wav, model, baseURL, prompt) {
+async function transcribeOpenAI(apiKey, wav, model, baseURL, prompt, language = 'en') {
   const OpenAI = require('openai');
   const toFile = OpenAI.toFile || require('openai/uploads').toFile;
   const client = new OpenAI({ apiKey, baseURL });
@@ -92,7 +93,7 @@ async function transcribeOpenAI(apiKey, wav, model, baseURL, prompt) {
   const res = await client.audio.transcriptions.create({
     file,
     model: model || 'whisper-1',
-    language: 'en',
+    ...(whisperLanguage(language) ? { language: whisperLanguage(language) } : {}),
     temperature: 0,
     prompt: prompt || ''
   });
@@ -124,14 +125,17 @@ const TRANSCRIBE_MODEL_COOLDOWN_MS = 60000;
 let transcribeModelDownUntil = 0;
 
 // Split from transcribeGemini so tests can pass a fake client.
-async function transcribeGeminiWith(ai, wav, now = Date.now()) {
+async function transcribeGeminiWith(ai, wav, now = Date.now(), language = 'auto') {
   const audio = { inlineData: { mimeType: 'audio/wav', data: wav.toString('base64') } };
+  // Gemini takes no language parameter; a chosen language goes in as a hint.
+  const name = languageName(language);
+  const hint = name ? ' The speech is in ' + name + '; write it in that language.' : '';
   if (now >= transcribeModelDownUntil) {
     try {
       // The dedicated transcription model needs no instruction prompt.
       const res = await ai.models.generateContent({
         model: GEMINI_TRANSCRIBE_MODEL,
-        contents: [{ role: 'user', parts: [audio] }]
+        contents: [{ role: 'user', parts: hint ? [{ text: hint.trim() }, audio] : [audio] }]
       });
       return extractGeminiTranscript(res);
     } catch (e) {
@@ -145,32 +149,33 @@ async function transcribeGeminiWith(ai, wav, now = Date.now()) {
   const res = await ai.models.generateContent({
     model: CURRENT_GEMINI_DEFAULT,
     contents: [{ role: 'user', parts: [
-      { text: 'Transcribe this audio verbatim. Return only the spoken words with no commentary. If there is no clear speech, return an empty response.' },
+      { text: 'Transcribe this audio verbatim. Return only the spoken words with no commentary. If there is no clear speech, return an empty response.' + hint },
       audio
     ] }]
   });
   return extractGeminiTranscript(res);
 }
 
-async function transcribeGemini(apiKey, wav) {
+async function transcribeGemini(apiKey, wav, language) {
   const { GoogleGenAI } = require('@google/genai');
-  return transcribeGeminiWith(new GoogleGenAI({ apiKey }), wav);
+  return transcribeGeminiWith(new GoogleGenAI({ apiKey }), wav, Date.now(), language);
 }
 
 function createSTT(settings) {
   const keys = settings.apiKeys || {};
   const selectedProvider = settings.sttProvider || 'auto';
   const vocabPrompt = buildVocabPrompt(settings);
+  const language = resolveSttLanguage(settings);
   const chain = [];
   // Each entry carries the model id it actually sends, so a failure can name
   // that id back to the user instead of a hardcoded one they never picked.
   if ((selectedProvider === 'auto' || selectedProvider === 'openai') && keys.openai) {
     const model = settings.sttModel || 'whisper-1';
-    chain.push({ p: 'openai', m: model, fn: (wav) => transcribeOpenAI(keys.openai, wav, model, undefined, vocabPrompt) });
+    chain.push({ p: 'openai', m: model, fn: (wav) => transcribeOpenAI(keys.openai, wav, model, undefined, vocabPrompt, language) });
   }
   if ((selectedProvider === 'auto' || selectedProvider === 'groq') && keys.groq) {
     const model = 'whisper-large-v3-turbo';
-    chain.push({ p: 'groq', m: model, fn: (wav) => transcribeOpenAI(keys.groq, wav, model, 'https://api.groq.com/openai/v1', vocabPrompt) });
+    chain.push({ p: 'groq', m: model, fn: (wav) => transcribeOpenAI(keys.groq, wav, model, 'https://api.groq.com/openai/v1', vocabPrompt, language) });
   }
   if ((selectedProvider === 'auto' || selectedProvider === 'gemini') && keys.gemini) {
     // transcribeGemini always tries the dedicated GEMINI_TRANSCRIBE_MODEL first
@@ -178,7 +183,7 @@ function createSTT(settings) {
     // here is just what error messages/`stt.models` report, resolved the same
     // way the chat path picks a model.
     const model = resolveGeminiModel(settings);
-    chain.push({ p: 'gemini', m: model, fn: (wav) => transcribeGemini(keys.gemini, wav) });
+    chain.push({ p: 'gemini', m: model, fn: (wav) => transcribeGemini(keys.gemini, wav, language) });
   }
   // Custom (OpenAI-compatible) endpoint: same shape as the Groq branch above,
   // just pointed at the user's own Base URL. Deliberately NOT part of 'auto' —
@@ -186,7 +191,7 @@ function createSTT(settings) {
   // the audio-transcription API at all, so this only fires on an explicit
   // choice, and only once both the URL and the key it needs are actually set.
   if (selectedProvider === 'custom' && keys.custom && settings.baseUrl) {
-    chain.push({ p: 'custom', fn: (wav) => transcribeOpenAI(keys.custom, wav, settings.sttModel, settings.baseUrl, vocabPrompt) });
+    chain.push({ p: 'custom', fn: (wav) => transcribeOpenAI(keys.custom, wav, settings.sttModel, settings.baseUrl, vocabPrompt, language) });
   }
   if (keys.openai && chain.length > 1) chain.unshift(chain.splice(chain.findIndex((c) => c.p === 'openai'), 1)[0]);
 

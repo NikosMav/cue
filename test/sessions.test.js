@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  SessionStore, SessionRecorder, newSession, sessionTitle, sessionToMarkdown, exportFileName, isValidId, planResume
+  SessionStore, SessionRecorder, newSession, sessionTitle, sessionToMarkdown, exportFileName, isValidId, planResume, QUIT_WHILE_LISTENING
 } = require('../src/sessions');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cue-sessions-'));
@@ -215,4 +215,45 @@ test('store lists unended sessions in full; a resumed recorder keeps writing the
   assert.equal(recorder.end(), open.id);
   assert.equal(store.get(open.id).endedAt, now);
   assert.equal(new SessionRecorder({ store, isEnabled: () => false }).resume(open), false, 'nothing resumes while saving is off');
+});
+
+// A quit while still listening is usually an accident mid-call: that session is
+// picked back up like a crashed one. Any other quit or Clear ends it for good.
+test('a session quit while listening is resumable; other ended sessions are not', () => {
+  const store = new SessionStore({ dir: tmp() });
+  const now = Date.UTC(2026, 9, 12, 14);
+  const timers = manualTimers();
+  const recorder = new SessionRecorder({ store, isEnabled: () => true, timers, now: () => now - 60000 });
+  recorder.addTurn({ channel: 'them', text: 'So the day rates are', ts: now - 120000 });
+  const quitId = recorder.end(QUIT_WHILE_LISTENING);
+  const saved = store.get(quitId);
+  assert.equal(saved.endReason, QUIT_WHILE_LISTENING);
+  assert.equal(saved.endedAt, now - 60000);
+  const cleared = unended({ now, updatedAt: now - 30000 }); cleared.endedAt = now - 30000;
+  store.save(cleared);
+
+  const found = store.unended();
+  assert.deepEqual(found.map((s) => s.id), [quitId]);
+  const plan = planResume(found, { now, setupId: '', saving: true });
+  assert.equal(plan.resume.id, quitId);
+  assert.deepEqual(plan.close, [], 'an ended session is never rewritten as closed');
+
+  const next = new SessionRecorder({ store, isEnabled: () => true, timers, now: () => now });
+  assert.equal(next.resume(plan.resume), true);
+  next.addTurn({ channel: 'them', text: 'between 350 and 700 euros.', ts: now });
+  timers.fire();
+  const resumed = store.get(quitId);
+  assert.deepEqual(resumed.transcript.map((t) => t.text), ['So the day rates are', 'between 350 and 700 euros.']);
+  assert.equal(resumed.endedAt, null);
+  assert.equal(resumed.endReason, undefined);
+  assert.equal(new SessionRecorder({ store, isEnabled: () => true }).resume(cleared), false, 'a cleared session stays ended');
+});
+
+test('a session quit while listening is not resumed after the window', () => {
+  const now = Date.UTC(2026, 9, 12, 14);
+  const old = unended({ now, updatedAt: now - 31 * 60000 });
+  old.endedAt = old.updatedAt; old.endReason = QUIT_WHILE_LISTENING;
+  const plan = planResume([old], { now, setupId: 'interview', saving: true });
+  assert.equal(plan.resume, null);
+  assert.deepEqual(plan.close, []);
 });

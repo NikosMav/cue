@@ -112,10 +112,10 @@ test('say and assist restate a question joined from several segments', () => {
   const t = [at('them', 'Tell me about a time when', 1000), at('them', 'you missed a deadline.', 3000)];
   for (const mode of ['say', 'assist']) {
     const { turns } = buildPromptRequest({}, mode, t);
-    assert.match(turns[0].text, /current question.*"Tell me about a time when you missed a deadline\."/);
+    assert.match(turns[0].text, /latest turn.*"Tell me about a time when you missed a deadline\."/);
   }
   const single = buildPromptRequest({}, 'say', [at('them', 'Why us?', 1000)]);
-  assert.doesNotMatch(single.turns[0].text, /current question/);
+  assert.doesNotMatch(single.turns[0].text, /latest turn/);
 });
 
 test('the coding solver gets room for a complete solution', () => {

@@ -7,6 +7,7 @@
 
 const { looksLikeHallucination, extractProfileTerms, transcribeGemini, buildVocabPrompt } = require('./stt');
 const { pcmToWav } = require('./wav');
+const { resolveSttLanguage, whisperLanguage, deepgramLanguage } = require('./stt-language');
 const { GEMINI_TRANSCRIBE_LIVE_MODEL } = require('./llm');
 const { AdaptiveVAD } = require('./vad');
 
@@ -42,6 +43,8 @@ class OpenAIRealtimeSTT {
   constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
     this.model = options.model || 'gpt-realtime-whisper';
+    // Unset: the model detects the language itself.
+    this.language = whisperLanguage(options.language);
     this.ws = null;
     this.connected = false;
     this.reconnecting = false;
@@ -99,7 +102,7 @@ class OpenAIRealtimeSTT {
                 format: { type: 'audio/pcm', rate: 24000 },
                 transcription: {
                   model: this.model,
-                  language: 'en'
+                  ...(this.language ? { language: this.language } : {})
                 }
               }
             }
@@ -307,6 +310,7 @@ class DeepgramStreamingSTT {
   constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
     this.model = options.model || 'nova-3';
+    this.language = deepgramLanguage(options.language);
     // Nova-3 keyterm prompting: names and technologies from the candidate's
     // profile, so "Kubernetes" or a company name is not heard as a near miss.
     this.keyterms = Array.isArray(options.keyterms) ? options.keyterms : [];
@@ -333,7 +337,7 @@ class DeepgramStreamingSTT {
       const WebSocket = require('ws');
       const params = new URLSearchParams({
         model: this.model,
-        language: 'en',
+        language: this.language,
         smart_format: 'true',
         interim_results: 'true',
         utterance_end_ms: '1000',
@@ -660,7 +664,7 @@ class GeminiLiveSTT {
 // Supports Whisper and Gemini with better error handling
 // ============================================================================
 
-async function transcribeBatchOpenAI(apiKey, wav, model) {
+async function transcribeBatchOpenAI(apiKey, wav, model, language = 'en') {
   const OpenAI = require('openai');
   const toFile = OpenAI.toFile || require('openai/uploads').toFile;
   const client = new OpenAI({ apiKey });
@@ -669,7 +673,7 @@ async function transcribeBatchOpenAI(apiKey, wav, model) {
     file,
     model: model || 'whisper-1',
     response_format: 'text',
-    language: 'en'
+    ...(whisperLanguage(language) ? { language: whisperLanguage(language) } : {})
   });
   return (typeof res === 'string' ? res : res.text || '').trim();
 }
@@ -696,6 +700,7 @@ function createStreamingSTT(settings, channel, callbacks) {
   if ((selectedProvider === 'auto' || selectedProvider === 'deepgram') && keys.deepgram) {
     const stt = new DeepgramStreamingSTT(keys.deepgram, {
       model: 'nova-3',
+      language: resolveSttLanguage(settings),
       keyterms: extractProfileTerms(settings, DEEPGRAM_MAX_KEYTERMS),
       onTranscript: (text) => onTranscript(channel, text),
       onInterim: (text) => onInterim(channel, text),
@@ -709,6 +714,7 @@ function createStreamingSTT(settings, channel, callbacks) {
   if ((selectedProvider === 'auto' || selectedProvider === 'openai') && keys.openai) {
     const stt = new OpenAIRealtimeSTT(keys.openai, {
       model: 'gpt-realtime-whisper', // only this model gives true streaming deltas
+      language: resolveSttLanguage(settings),
       onTranscript: (text) => onTranscript(channel, text),
       onInterim: (text) => onInterim(channel, text),
       onError,

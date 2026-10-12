@@ -21,10 +21,12 @@ function answerStyle(length = 'brief') {
     'For a past event, compress the situation, your action and the supported outcome into one small story; do not label STAR sections. ' +
     'For future goals, describe only documented aspirations, without inventing a title or management ambition. ' +
     'Do not append a second example, a generic lesson, a sales pitch for the role, or a summary that repeats the opening. ' +
+    'Do not open by thanking them, praising what they said, or restating it. ' +
     'Use the reference selectively; having more notes is not a reason to include more facts. ' +
-    'Use earlier conversation only to resolve references in the current question, not to answer earlier questions again. ' +
+    'Use earlier conversation only to resolve references in the current question and to avoid asking what was already asked or answered, not to answer earlier questions again. ' +
     'For conceptual questions, give the direct explanation and at most one useful example. ' +
     'An explicit request for a walkthrough, more detail, or a complete coding solution takes precedence over the default length. ' +
+    'A length set in the user\'s rules replaces this default. ' +
     'Finish naturally; never pad an answer to reach the word target.';
 }
 
@@ -35,10 +37,12 @@ function answerStyleGeneral(length = 'brief') {
     'Respond to the current point in the first sentence, add one relevant reason, fact or example, then stop. ' +
     'Use natural first-person language, one paragraph, no headings or numbered frameworks. ' +
     'Do not append a second example, a generic lesson, or a summary that repeats the opening. ' +
+    'Do not open by thanking them, praising what they said, or restating it. ' +
     'Use the reference selectively; having more notes is not a reason to include more facts. ' +
-    'Use earlier conversation only to resolve references in the current point, not to answer earlier points again. ' +
+    'Use earlier conversation only to resolve references in the current point and to avoid asking what was already asked or answered, not to answer earlier points again. ' +
     'For conceptual questions, give the direct explanation and at most one useful example. ' +
     'An explicit request for a walkthrough, more detail, or a complete coding solution takes precedence over the default length. ' +
+    'A length set in the user\'s rules replaces this default. ' +
     'Finish naturally; never pad an answer to reach the word target.';
 }
 
@@ -55,24 +59,73 @@ const GENERAL_TYPES =
   '• A REQUEST FOR AN OPINION: give a short, concrete view, grounded in the notes where they apply.\n' +
   '• A DISAGREEMENT OR OBJECTION: acknowledge it, then respond with the strongest relevant point.\n' +
   '• A DECISION OR NEXT STEP: propose a clear next step, owner or question that moves it forward.\n' +
+  '• NO QUESTION (someone is explaining, telling a story or making small talk): do not invent a reply to a question nobody asked. ' +
+  'Give one short line that keeps the conversation going; add one useful question the conversation has not covered only if they paused or invited questions.\n' +
   '• TECHNICAL/CONCEPTUAL: explain clearly. For a coding problem on screen: short approach + solution + complexity.\n';
+
+function transcriptLine(t) {
+  return (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text;
+}
 
 function formatTranscript(turns, limit) {
   const recent = limit ? turns.slice(-limit) : turns;
-  return recent.map((t) => (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text).join('\n');
+  return recent.map(transcriptLine).join('\n');
+}
+
+// Speech-to-text splits speech into many short lines, including back-channels
+// such as "Hmm", so a fixed number of lines can be under a minute of a call.
+// These windows are measured in characters instead: the most recent lines
+// that fit, oldest first.
+const SPOKEN_TRANSCRIPT_CHARS = 24000;
+const ASK_TRANSCRIPT_CHARS = 12000;
+// Follow-up questions and recaps need the whole conversation. Keep the start
+// and the end of a very long one: the opening sets the context and the end
+// holds the latest points.
+const FULL_TRANSCRIPT_CHARS = 60000;
+
+function recentTranscript(turns, maxChars) {
+  const lines = [];
+  let chars = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const line = transcriptLine(turns[i]);
+    chars += line.length + 1;
+    if (chars > maxChars && lines.length) break;
+    lines.unshift(line);
+  }
+  return lines.join('\n');
+}
+
+function clipMiddle(text, maxChars, what) {
+  if (text.length <= maxChars) return text;
+  const half = maxChars / 2;
+  return text.slice(0, half) + '\n[… middle of the ' + what + ' omitted for length …]\n' + text.slice(-half);
+}
+
+function fullTranscript(turns, what = 'conversation') {
+  return clipMiddle(formatTranscript(turns, 0), FULL_TRANSCRIPT_CHARS, what);
+}
+
+// How long the conversation has been running, from the first transcribed
+// line, so time-based instructions ("near the end", "after 25 minutes") work.
+function callTimeLine(ctx) {
+  const first = (ctx.transcript || []).find(t => Number.isFinite(t.ts));
+  if (!first || !Number.isFinite(ctx.now) || ctx.now < first.ts) return '';
+  const minutes = Math.floor((ctx.now - first.ts) / 60000);
+  return '\n\nTime since the conversation started: ' + (minutes < 1 ? 'under a minute' : 'about ' + minutes + ' minute' + (minutes === 1 ? '' : 's')) + '.';
 }
 
 // Speech-to-text splits a question at pauses; restating the joined question
 // keeps the model from answering only its last fragment.
 function questionLine(ctx) {
-  return ctx.question ? '\n\nInterviewer\'s current question (joined from consecutive speech segments): ' + JSON.stringify(ctx.question) : '';
+  return ctx.question ? '\n\nInterviewer\'s latest turn (joined from consecutive speech segments; it may be a statement rather than a question): ' + JSON.stringify(ctx.question) : '';
 }
 
-// Earlier suggestions let the model stay consistent and resolve follow-ups
-// such as "tell me more about that". Coding answers are excluded: they have
-// their own thread (see codeFollowup) and would crowd out spoken answers.
-const MAX_EARLIER_ANSWERS = 3;
-const EARLIER_ANSWER_CHARS = 600;
+// Earlier suggestions let the model stay consistent, resolve follow-ups such
+// as "tell me more about that", and avoid suggesting the same question twice.
+// Coding answers are excluded: they have their own thread (see codeFollowup)
+// and would crowd out spoken answers.
+const MAX_EARLIER_ANSWERS = 6;
+const EARLIER_ANSWER_CHARS = 400;
 const SPOKEN_MODES = new Set(['assist', 'say', 'ask', 'answerThis']);
 
 function earlierAnswers(ctx) {
@@ -81,10 +134,28 @@ function earlierAnswers(ctx) {
     .slice(-MAX_EARLIER_ANSWERS);
   if (!answers.length) return '';
   const clip = text => text.length > EARLIER_ANSWER_CHARS ? text.slice(0, EARLIER_ANSWER_CHARS).trimEnd() + '…' : text;
-  return 'Answers cue suggested earlier in this session, oldest first. Use them to stay consistent and to resolve follow-ups such as "tell me more about that"; do not repeat them unless asked:\n' +
+  return 'Answers cue suggested earlier in this session, oldest first. Use them to stay consistent and to resolve follow-ups such as "tell me more about that"; ' +
+    'do not repeat them unless asked, and do not suggest again a question they or the conversation already asked:\n' +
     answers.map(a => '- ' + (a.prompt ? 'To ' + JSON.stringify(a.prompt) + ': ' : '') + JSON.stringify(clip(a.text.trim()))).join('\n') +
     '\n\n';
 }
+
+// Fast models weigh the end of the prompt most, and the rules above sit behind
+// a long reference block and transcript, so the checks they most often skip
+// are restated right before the request.
+function checklistLine() {
+  return '\n\nBefore you write: ' +
+    'If their latest words ask or request nothing, do not answer as if they did: give one short line, and add a question only if they paused or invited one. ' +
+    'Do not ask or suggest anything the conversation or the earlier suggestions already asked, answered or said, including a closing you already suggested; ' +
+    'an earlier suggestion the user did not use is not worth offering again unless the moment now calls for it. ' +
+    'Do not accept, endorse or agree to an offer, rate, price or date. ' +
+    'If the user\'s rules set a length, keep to it.';
+}
+
+// Names and product terms are the words speech-to-text gets wrong most often.
+const SPEECH_TO_TEXT_RULE =
+  'The transcript comes from speech-to-text and may mishear names and terms as similar-sounding words; ' +
+  'when a heard word plausibly matches a name or term in the reference, use the reference spelling and meaning. ';
 
 function buildSystem(base, contextBlock) {
   return (contextBlock ? contextBlock + '\n\n' : '') + base + '\n\n' +
@@ -97,6 +168,9 @@ function buildSystem(base, contextBlock) {
     'Before drafting a personal answer, check whether the requested fact is confirmed. A polished script in the reference does not confirm a claim if a nearby note makes it conditional. ' +
     'If a requested personal detail is unknown or contradictory, briefly flag it to the candidate as needing confirmation; do not fill the gap. ' +
     'Distinguish conceptual knowledge from hands-on experience. Follow a documented compensation preference, including deferring discussion, instead of inventing a range. ' +
+    'Never accept or agree to an offer, rate, price, date or other commitment on the candidate\'s behalf unless the reference says to; acknowledge it and defer. ' +
+    'Never claim an expectation or figure the reference does not state. ' +
+    SPEECH_TO_TEXT_RULE +
     'Use general technical knowledge for conceptual questions without presenting it as personal experience. ' +
     'For recaps, distinguish reference notes from what was actually said in the transcript.';
 }
@@ -110,6 +184,8 @@ function buildSystemGeneral(base, contextBlock) {
     'Never invent personal stories, contributions, employers, metrics, dates, prices, commitments, deadlines, decisions, or the status or progress of work. ' +
     'Placeholders, examples of possible personal details, guesses, and details marked unconfirmed or conditional are not established facts. ' +
     'If a requested personal detail or commitment is unknown, briefly flag it to the user as needing confirmation; do not fill the gap. ' +
+    'Never accept or agree to an offer, price, date or other commitment on the user\'s behalf unless the notes say to; acknowledge it and defer. ' +
+    SPEECH_TO_TEXT_RULE +
     'Distinguish conceptual knowledge from hands-on experience. ' +
     'Use general knowledge for conceptual questions without presenting it as personal experience. ' +
     'For recaps, distinguish reference notes from what was actually said in the transcript.';
@@ -153,6 +229,7 @@ const GENERAL_SYSTEMS = {
     'You are cue. Suggest 2–4 useful questions or clarifications the user could raise with the other participants now.\n' +
     'Base them on what was discussed, the notes and the user\'s role.\n' +
     'Good ones resolve ambiguity, surface risks or dependencies, confirm decisions, owners and dates, or move the conversation toward its goal.\n' +
+    'Do not suggest a question the conversation has already asked or answered. Prefer open points from the notes that the conversation has not covered yet.\n' +
     'Return as a bullet list only. No preamble.',
   recap: () =>
     'You are cue. Summarize the conversation so far:\n' +
@@ -180,17 +257,17 @@ function pointLine(ctx) {
 
 // General-layer user turns where the interview wording differs.
 const GENERAL_BUILDS = {
-  assist: (ctx) => earlierAnswers(ctx) + 'Recent conversation:\n' + (formatTranscript(ctx.transcript, 14) || '(none)') + pointLine(ctx) +
-    '\n\nRespond with exactly what I should say right now.',
-  say: (ctx) => earlierAnswers(ctx) + 'Conversation so far:\n' + (formatTranscript(ctx.transcript, 16) || '(listening not started yet)') + pointLine(ctx) +
-    '\n\nWhat should I say next?',
-  followup: (ctx) => 'Conversation so far:\n' + (formatTranscript(ctx.transcript, 20) || '(none)') + '\n\nSuggest questions or clarifications to raise.',
-  recap: (ctx) => 'Full transcript:\n' + (formatTranscript(ctx.transcript, 0) || '(nothing captured yet)') + '\n\nRecap this conversation.',
+  assist: (ctx) => earlierAnswers(ctx) + 'Recent conversation:\n' + (recentTranscript(ctx.transcript, SPOKEN_TRANSCRIPT_CHARS) || '(none)') + pointLine(ctx) +
+    callTimeLine(ctx) + checklistLine() + '\n\nRespond with exactly what I should say right now.',
+  say: (ctx) => earlierAnswers(ctx) + 'Conversation so far:\n' + (recentTranscript(ctx.transcript, SPOKEN_TRANSCRIPT_CHARS) || '(listening not started yet)') + pointLine(ctx) +
+    callTimeLine(ctx) + checklistLine() + '\n\nWhat should I say next?',
+  followup: (ctx) => 'Conversation so far:\n' + (fullTranscript(ctx.transcript) || '(none)') + callTimeLine(ctx) + '\n\nSuggest questions or clarifications to raise.',
+  recap: (ctx) => 'Full transcript:\n' + (fullTranscript(ctx.transcript) || '(nothing captured yet)') + '\n\nRecap this conversation.',
   answerThis: (ctx) => {
     const t = formatTranscript(ctx.transcript, 6);
     return earlierAnswers(ctx) +
       (t ? 'Recent conversation (only to resolve references in the point):\n' + t + '\n\n' : '') +
-      'Respond to this specific point:\n\n' + JSON.stringify(ctx.userText || '(no point provided)') + '\n\nGive one natural reply the user can say out loud.';
+      'Respond to this specific point:\n\n' + JSON.stringify(ctx.userText || '(no point provided)') + callTimeLine(ctx) + '\n\nGive one natural reply the user can say out loud.';
   }
 };
 
@@ -214,14 +291,16 @@ const MODES = {
         '• EXPERIENCE: Draw only the relevant detail from the background.\n' +
         '• TECHNICAL/CONCEPTUAL: Explain clearly with examples. For LeetCode: short approach + solution + complexity.\n' +
         '• COMPENSATION: Follow their documented preference, including deferring the discussion.\n' +
-        '• "Any questions for us?": Offer 2–3 of their prepared questions.\n\n' +
+        '• "Any questions for us?": Offer 2–3 of their prepared questions that the conversation has not covered yet.\n' +
+        '• NO QUESTION (they are explaining, telling a story or making small talk): Do not invent an answer to a question nobody asked. Give one short line that keeps the conversation going; add one prepared question the conversation has not covered only if they paused or invited questions.\n' +
+        '\n' +
         'Write in first person as if the candidate is speaking. No preamble, no "Here\'s what you could say". Just the answer.' + answerStyle(length),
         contextBlock
       ), aiRules, 'assist');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 14);
-      return earlierAnswers(ctx) + 'Recent conversation:\n' + (t || '(none)') + questionLine(ctx) + '\n\nRespond with exactly what I should say right now.';
+      const t = recentTranscript(ctx.transcript, SPOKEN_TRANSCRIPT_CHARS);
+      return earlierAnswers(ctx) + 'Recent conversation:\n' + (t || '(none)') + questionLine(ctx) + callTimeLine(ctx) + checklistLine() + '\n\nRespond with exactly what I should say right now.';
     }
   },
 
@@ -243,14 +322,16 @@ const MODES = {
         '• SITUATIONAL: Show structured thinking — "I\'d first X, then Y, because Z".\n' +
         '• EXPERIENCE: Reference the specific role/project from their resume.\n' +
         '• COMPENSATION: Follow the documented preference; do not invent a range.\n' +
-        '• TECHNICAL: Give a clear, confident explanation. Use analogies for non-technical interviewers.\n\n' +
+        '• TECHNICAL: Give a clear, confident explanation. Use analogies for non-technical interviewers.\n' +
+        '• NO QUESTION (they are explaining, telling a story or making small talk): Do not invent an answer to a question nobody asked. Give one short line that keeps the conversation going; add one prepared question the conversation has not covered only if they paused or invited questions.\n' +
+        '\n' +
         'No quotes, no preamble. Write the actual words to say.' + answerStyle(length),
         contextBlock
       ), aiRules, 'say');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 16);
-      return earlierAnswers(ctx) + 'Interview conversation so far:\n' + (t || '(listening not started yet)') + questionLine(ctx) +
+      const t = recentTranscript(ctx.transcript, SPOKEN_TRANSCRIPT_CHARS);
+      return earlierAnswers(ctx) + 'Interview conversation so far:\n' + (t || '(listening not started yet)') + questionLine(ctx) + callTimeLine(ctx) + checklistLine() +
         '\n\nWhat should I say next?';
     }
   },
@@ -266,13 +347,14 @@ const MODES = {
         'You are cue. Suggest 2–4 sharp follow-up questions the candidate could ask the interviewer.\n' +
         'Base them on what was discussed and the candidate\'s background/target role.\n' +
         'Good follow-ups: show genuine curiosity, demonstrate research, highlight the candidate\'s strengths, or uncover role details.\n' +
+        'Do not suggest a question the conversation has already asked or answered. Prefer the candidate\'s prepared questions that are still open.\n' +
         'Return as a bullet list only. No preamble.',
         contextBlock
       ), aiRules, 'followup');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 20);
-      return 'Conversation so far:\n' + (t || '(none)') + '\n\nSuggest follow-up questions for the interviewer.';
+      const t = fullTranscript(ctx.transcript);
+      return 'Conversation so far:\n' + (t || '(none)') + callTimeLine(ctx) + '\n\nSuggest follow-up questions for the interviewer.';
     }
   },
 
@@ -297,7 +379,7 @@ const MODES = {
       ), aiRules, 'recap');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 0);
+      const t = fullTranscript(ctx.transcript);
       return 'Full transcript of the conversation:\n' + (t || '(nothing captured yet)') + '\n\nRecap this conversation.';
     }
   },
@@ -319,8 +401,8 @@ const MODES = {
       ), aiRules, 'ask');
     },
     build(ctx) {
-      const t = formatTranscript(ctx.transcript, 12);
-      return earlierAnswers(ctx) + (t ? 'Recent conversation:\n' + t + '\n\n' : '') + 'Question: ' + ctx.userText;
+      const t = recentTranscript(ctx.transcript, ASK_TRANSCRIPT_CHARS);
+      return earlierAnswers(ctx) + (t ? 'Recent conversation:\n' + t + '\n\n' : '') + 'Question: ' + ctx.userText + callTimeLine(ctx);
     }
   },
 
@@ -352,7 +434,7 @@ const MODES = {
       const t = formatTranscript(ctx.transcript, 6);
       return earlierAnswers(ctx) +
         (t ? 'Recent conversation (only to resolve references in the question):\n' + t + '\n\n' : '') +
-        'Answer this specific interview question:\n\n' + JSON.stringify(ctx.userText || '(no question provided)') + '\n\nGive one natural answer the candidate can say out loud.';
+        'Answer this specific interview question:\n\n' + JSON.stringify(ctx.userText || '(no question provided)') + callTimeLine(ctx) + '\n\nGive one natural answer the candidate can say out loud.';
     }
   },
 
@@ -502,7 +584,8 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
   const system = general
     ? applyRules(buildSystemGeneral(GENERAL_SYSTEMS[mode](settings.answerLength), context), settings.aiRules || '', mode)
     : def.buildSystem(context, settings.aiRules || '', settings.answerLength);
-  const ctx = { transcript: turns, userText, question, answers };
+  const now = Number.isFinite(session.now) ? session.now : Date.now();
+  const ctx = { transcript: turns, userText, question, answers, now };
   const userTurn = { role: 'user', text: general && GENERAL_BUILDS[mode] ? GENERAL_BUILDS[mode](ctx) : def.build(ctx) };
   const request = {
     mode,
@@ -532,13 +615,36 @@ function sessionTranscriptText(session, what = 'interview') {
       .map(a => ({ ts: a.ts, line: '[cue suggested: ' + JSON.stringify(a.text.trim().slice(0, 400)) + ']' }))
   ].sort((a, b) => (a.ts || 0) - (b.ts || 0));
   for (const e of events) lines.push(e.line);
-  let text = lines.join('\n');
-  if (text.length > DEBRIEF_MAX_TRANSCRIPT_CHARS) {
-    const half = DEBRIEF_MAX_TRANSCRIPT_CHARS / 2;
-    text = text.slice(0, half) + '\n[… middle of the ' + what + ' omitted for length …]\n' + text.slice(-half);
-  }
-  return text;
+  return clipMiddle(lines.join('\n'), DEBRIEF_MAX_TRANSCRIPT_CHARS, what);
 }
+
+// What a real call leaves behind, whatever kind of conversation it was: what
+// was agreed, what happens next, the numbers said and what is still open.
+// "user" names the user in the section text ("you" or "the candidate").
+// Each section restates "only what was said": with the reference material in
+// the same prompt, fast models otherwise list the user's private targets as
+// figures and their own suggestions as promises.
+function callSummarySections(user) {
+  return '## Agreements and decisions (bullets: what was decided, and what each side said they agreed to or would do, including anything ' + user + ' agreed to; ' +
+    'only commitments someone actually voiced; an offer or proposal is agreed only if the other side accepted it in words, otherwise list it as "Offered: …, not accepted"; ' +
+    'write "None recorded" if none). ' +
+    '## Next steps (bullets: who does what, by when if said; only steps someone said they would take, not steps you think are wise; write "None recorded" if none). ' +
+    '## Figures (bullets: every number, rate, price, date, duration or count someone said aloud, with who said it and what it referred to; ' +
+    'quote it as heard and mark anything speech-to-text may have garbled with "(check)"; never add figures from the reference material, even ones the user prepared; write "None mentioned" if none). ' +
+    '## Open questions (bullets: questions raised but not answered, and questions in the reference material that the conversation never covered; ' +
+    'before listing one, check the whole transcript: anything the other side explained, even unprompted, is answered; write "None" if none). ';
+}
+
+function callLengthLine(session) {
+  const turns = (session.transcript || []).filter(t => Number.isFinite(t.ts));
+  if (turns.length < 2) return '';
+  const minutes = Math.round((turns[turns.length - 1].ts - turns[0].ts) / 60000);
+  return 'Length of the conversation: about ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + '.\n\n';
+}
+
+const DEBRIEF_RULES =
+  'Take agreements, next steps and figures only from what someone said, never from [cue suggested] lines or the reference material. ' +
+  'Never invent what anyone said, agreed or decided. ';
 
 function buildGeneralDebriefRequest(settings, session) {
   const context = buildInterviewContext(settings, 'say');
@@ -550,21 +656,20 @@ function buildGeneralDebriefRequest(settings, session) {
     'Lines marked [cue suggested] are suggestions the user saw on screen, not things they said. ' +
     'Write Markdown with these sections, in order: ' +
     '## Summary (two or three sentences: what the conversation was about and how it went). ' +
-    '## Decisions (bullets; write "None recorded" if none). ' +
-    '## Action items (bullets: who, what, by when if said; write "None recorded" if none). ' +
+    callSummarySections('the user') +
     '## Your contributions (two to four bullets on what the user said or proposed). ' +
     '## Follow-up (messages to send, things to prepare or check). ' +
     '## Add to your notes (facts or questions worth adding to this setup\'s notes; write "Nothing missing" if none). ' +
-    'Never invent what anyone said or decided. ' +
+    DEBRIEF_RULES +
     (heardUser ? '' : 'The user\'s microphone was not captured: say so under Summary and work from what the others said. '),
     context
   );
   return {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',
-    maxTokens: 2500,
+    maxTokens: 3500,
     effort: 'medium',
-    turns: [{ role: 'user', text: 'Conversation transcript:\n' + (sessionTranscriptText(session, 'conversation') || '(empty)') + '\n\nWrite the debrief.' }]
+    turns: [{ role: 'user', text: callLengthLine(session) + 'Conversation transcript:\n' + (sessionTranscriptText(session, 'conversation') || '(empty)') + '\n\nWrite the debrief.' }]
   };
 }
 
@@ -584,21 +689,22 @@ function buildDebriefRequest(settings, session) {
     'Lines marked [cue suggested] are suggestions the candidate saw on screen, not things they said. ' +
     'Write Markdown with these sections, in order: ' +
     '## Summary (two or three sentences: the role, the main topics, overall impression). ' +
+    (practice ? '' : callSummarySections('the candidate')) +
     '## Questions asked (a numbered list: each question, then one line on how the candidate answered). ' +
     '## What went well (two to four specific bullets). ' +
     '## What to improve (two to four specific bullets tied to questions; for the one or two weakest answers, give a stronger spoken version using only facts from the transcript or the reference material). ' +
     '## Follow-up (points for a thank-you note, and anything promised or worth researching). ' +
     '## Add to your prep notes (questions the reference material could not answer well, phrased as notes to add; write "Nothing missing" if none). ' +
-    'Never invent what anyone said. ' +
+    (practice ? 'Never invent what anyone said. ' : DEBRIEF_RULES) +
     (heardCandidate ? '' : 'The candidate\'s microphone was not captured: say so under Summary, list the questions, and review cue\'s suggestions instead of the candidate\'s answers. '),
     context
   );
   return {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',
-    maxTokens: 2500,
+    maxTokens: practice ? 2500 : 3500,
     effort: 'medium',
-    turns: [{ role: 'user', text: 'Interview transcript:\n' + (sessionTranscriptText(session) || '(empty)') + '\n\nWrite the debrief.' }]
+    turns: [{ role: 'user', text: callLengthLine(session) + 'Interview transcript:\n' + (sessionTranscriptText(session) || '(empty)') + '\n\nWrite the debrief.' }]
   };
 }
 

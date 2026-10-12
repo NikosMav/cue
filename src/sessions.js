@@ -184,7 +184,10 @@ class SessionStore {
     try { fs.unlinkSync(this._file(id)); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   }
 
-  /** Full sessions that were never marked ended: cue stopped while they ran. */
+  /**
+   * Full sessions that may be picked back up: never marked ended (cue stopped
+   * while they ran), or ended by quitting while cue was still listening.
+   */
   unended() {
     let names = [];
     try { names = fs.readdirSync(this.dir); } catch { return []; }
@@ -193,7 +196,7 @@ class SessionStore {
       if (!name.endsWith('.json') || !isValidId(name.slice(0, -5))) continue;
       try {
         const session = JSON.parse(fs.readFileSync(path.join(this.dir, name), 'utf8'));
-        if (!session.endedAt) out.push(session);
+        if (!session.endedAt || session.endReason === QUIT_WHILE_LISTENING) out.push(session);
       } catch { /* an unreadable file is skipped, as in list() */ }
     }
     return out;
@@ -226,21 +229,25 @@ function matches(session, needle) {
 
 // How long after cue stopped a conversation is still picked back up.
 const RESUME_WINDOW_MS = 30 * 60 * 1000;
+// Quitting while still listening is usually an accident in the middle of a
+// call, so a session ended that way can be picked back up like a crashed one.
+const QUIT_WHILE_LISTENING = 'quit-while-listening';
 
 /**
  * What to do at launch with sessions left unended (cue crashed, was killed, or
- * the computer lost power; a normal quit or Clear marks a session ended).
+ * the computer lost power) or ended by quitting while still listening; Clear
+ * or any other quit marks a session ended for good.
  * Resumes the most recent one when it belongs to the active setup, that setup
  * still saves, it is not a practice run and it stopped within the window. Every
  * other unended session with content is closed. Pure: the caller writes.
  */
 function planResume(sessions, { now = Date.now(), setupId = '', saving = false, maxAgeMs = RESUME_WINDOW_MS } = {}) {
-  const open = (sessions || []).filter((s) => s && !s.endedAt && hasContent(s))
+  const open = (sessions || []).filter((s) => s && (!s.endedAt || s.endReason === QUIT_WHILE_LISTENING) && hasContent(s))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const newest = open[0];
   const resume = newest && saving && newest.kind !== 'practice' && newest.setupId === setupId &&
     now - (newest.updatedAt || 0) <= maxAgeMs ? newest : null;
-  return { resume, close: open.filter((s) => s !== resume) };
+  return { resume, close: open.filter((s) => s !== resume && !s.endedAt) };
 }
 
 /**
@@ -287,8 +294,11 @@ class SessionRecorder {
 
   /** Continue a session cue was recording when it stopped (see planResume). */
   resume(session) {
-    if (!this.isEnabled() || !hasContent(session) || session.endedAt) return false;
+    if (!this.isEnabled() || !hasContent(session)) return false;
+    if (session.endedAt && session.endReason !== QUIT_WHILE_LISTENING) return false;
     this._cancel();
+    session.endedAt = null;
+    delete session.endReason;
     this.session = session;
     return true;
   }
@@ -299,13 +309,17 @@ class SessionRecorder {
     if (this.session && !hasContent(this.session)) this.session.kind = kind;
   }
 
-  /** Close the current session; returns its id when something was saved. */
-  end() {
+  /**
+   * Close the current session; returns its id when something was saved.
+   * reason: QUIT_WHILE_LISTENING lets the next launch pick it back up.
+   */
+  end(reason) {
     const session = this.session;
     this.session = null;
     this._cancel();
     if (!hasContent(session)) return null;
     session.endedAt = this.now();
+    if (reason) session.endReason = reason;
     return this._write(session) ? session.id : null;
   }
 
@@ -347,5 +361,5 @@ class SessionRecorder {
 
 module.exports = {
   SessionStore, SessionRecorder, newSession, sessionTitle, summarize, sessionToMarkdown,
-  exportFileName, isValidId, hasContent, writeFileAtomic, planResume, RESUME_WINDOW_MS
+  exportFileName, isValidId, hasContent, writeFileAtomic, planResume, RESUME_WINDOW_MS, QUIT_WHILE_LISTENING
 };

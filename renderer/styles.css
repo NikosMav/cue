@@ -642,6 +642,10 @@ button:focus { outline: none; }
   padding: 10px 12px;
 }
 .s-hint-block em { color: var(--tx-2); font-style: normal; font-weight: 600; }
+.about-me-warning { border-color: rgba(245, 181, 71, 0.30); margin-top: 8px; }
+.about-me-warning strong { color: #F5B547; font-weight: 600; }
+.about-me-warning ul { margin: 6px 0 0; padding-left: 16px; }
+.about-me-warning li { margin-top: 2px; }
 
 
 /* Sessions */

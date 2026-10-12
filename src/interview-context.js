@@ -72,6 +72,7 @@ const CATEGORY_PATTERNS = {
     /other (offer|interview|option)/i, /interviewing elsewhere/i,
     /do you have (any )?questions/i, /questions for us/i, /questions for me/i,
     /anything (you'?d? like to|you want to) ask/i,
+    /any (?:more|other|further) questions/i,
     /we have (a few minutes|some time) (left|for questions)/i,
   ],
   technical: [

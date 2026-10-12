@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences, clipboard, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -11,7 +11,7 @@ const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
-const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume } = require('./src/sessions');
+const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume, QUIT_WHILE_LISTENING, RESUME_WINDOW_MS } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
@@ -24,6 +24,7 @@ function currentSettings() {
   return effectiveSettings(store.getSettings());
 }
 const { createStreamingSTT } = require('./src/stt-streaming');
+const { resolveSttLanguage } = require('./src/stt-language');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
 const { currentQuestion } = require('./src/interview-context');
@@ -133,7 +134,9 @@ let appLaunched = false;
 const state = { capturing: false, busy: false, transcribing: { you: false, them: false } };
 let sttDisabled = false; // set when the key can't reach any speech model (stops retry spam)
 const transcript = []; // { channel, text, ts } — capped at MAX_TRANSCRIPT_TURNS
-const MAX_TRANSCRIPT_TURNS = 200; // ~30–40 minutes of conversation at normal pace
+// Speech-to-text emits many short lines (a 38-minute call produced about 600),
+// so this holds a long call in full. Prompts take what they need by length.
+const MAX_TRANSCRIPT_TURNS = 2000;
 // -------- slides state (memory-only, never written to disk) --------
 let slideStore = createSlideStore({ maxSlides: 50 });
 let slideTimer = null;
@@ -259,7 +262,7 @@ async function startLocalWhisper(settings) {
         executablePath: runtime.executablePath,
         runtimeDirectory: runtime.runtimeDirectory,
         modelPath,
-        language: model.englishOnly ? 'en' : (localSettings.language || 'auto'),
+        language: model.englishOnly ? 'en' : resolveSttLanguage(settings),
         threads: Number(localSettings.threads) || 0,
         tinydiarize: model.tinydiarize
       },
@@ -400,6 +403,10 @@ function createWindow() {
   win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST !== '1', { forward: true });
   clickThrough.start();
   win.on('closed', () => { if (clickThrough) clickThrough.stop(); });
+  // Closing the window quits cue, so it asks first while listening too.
+  win.on('close', (e) => { if (!mayQuitNow()) e.preventDefault(); });
+  // Windows is shutting down or signing out: never hold that up with a dialog.
+  win.on('session-end', () => { quitConfirmed = true; });
 
   // Dragging onto a monitor with a different scale factor briefly resizes the
   // window (to 467x401 when entering a 150% screen) and can leave it a pixel
@@ -419,11 +426,12 @@ function createWindow() {
     win.showInactive();
     win.setTitle('Cue');
     if (resumedConversation) {
-      const { turns, updatedAt, setupName } = resumedConversation;
+      const { turns, updatedAt, setupName, quitWhileListening } = resumedConversation;
       resumedConversation = null;
       send('transcript:restore', { turns });
       const minutes = Math.max(1, Math.round((Date.now() - updatedAt) / 60000));
-      send('status', { message: `cue stopped unexpectedly. Resumed your ${setupName ? setupName + ' ' : ''}conversation from ${minutes} min ago (${turns.length} turns). Clear starts a new one.` });
+      const why = quitWhileListening ? 'cue was quit while listening' : 'cue stopped unexpectedly';
+      send('status', { message: `${why}. Resumed your ${setupName ? setupName + ' ' : ''}conversation from ${minutes} min ago (${turns.length} turns). Clear starts a new one.` });
     }
     // Warn about missing content protection on old Windows builds
     if (isWindows && shouldProtect && !WIN_SUPPORTS_CONTENT_PROTECTION) {
@@ -1266,11 +1274,12 @@ function resumeInterruptedConversation() {
     try { old.endedAt = old.updatedAt || old.startedAt; sessionStore.save(old); } catch { /* retried at the next launch */ }
   }
   const session = plan.resume;
+  const quitWhileListening = !!session && session.endReason === QUIT_WHILE_LISTENING;
   if (!session || !sessionRecorder.resume(session)) return;
   const turns = session.transcript.slice(-MAX_TRANSCRIPT_TURNS).map(({ channel, text, ts }) => ({ channel, text, ts }));
   transcript.push(...turns);
   sessionAnswers.push(...(session.answers || []).slice(-MAX_SESSION_ANSWERS));
-  resumedConversation = { turns, updatedAt: session.updatedAt, setupName: session.setupName || '' };
+  resumedConversation = { turns, updatedAt: session.updatedAt, setupName: session.setupName || '', quitWhileListening };
   console.log(`[sessions] resumed ${session.id} (${turns.length} turns)`);
 }
 
@@ -1435,7 +1444,9 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
   const session = isValidId(id) && loadSession(id);
   if (!session) throw new Error('That session no longer exists.');
   const settings = currentSettings();
-  const llm = createLLM(settings);
+  // A debrief is read after the call, so accuracy matters more than speed:
+  // the fast model listed offers as agreements and prep notes as figures.
+  const llm = createLLM({ ...settings, smart: true });
   if (!llm.ready) throw new Error(llm.configurationError || 'Set up an AI provider in Settings first.');
   if (debriefInFlight) debriefInFlight.abort();
   const controller = new AbortController();
@@ -1888,13 +1899,61 @@ app.whenReady().then(async () => {
   }
 
   launchApp();
+  // macOS and Linux are shutting down: never hold that up with a dialog.
+  powerMonitor.on('shutdown', () => { quitConfirmed = true; });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+});
+
+// Quitting in the middle of a call is easy to do by accident (the quit button
+// sits next to the listen button), so while listening cue asks first. A quit
+// while listening is also remembered, so the next launch can pick the
+// conversation back up (see planResume).
+let quitConfirmed = false;
+let quitPrompt = null;
+let quitWhileListening = false;
+
+function mayQuitNow() {
+  if (quitConfirmed || !state.capturing) return true;
+  confirmQuit();
+  return false;
+}
+
+function confirmQuit() {
+  if (quitPrompt) return;
+  const saving = currentSettings().saveSessions;
+  const minutes = Math.round(RESUME_WINDOW_MS / 60000);
+  const parent = win && !win.isDestroyed() ? win : undefined;
+  const options = {
+    type: 'question',
+    buttons: ['Keep listening', 'Quit'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: 'Quit cue?',
+    message: 'Quit while listening?',
+    detail: saving
+      ? `cue is still listening. The conversation so far is saved, and if you reopen cue within ${minutes} minutes it continues where you left off.`
+      : 'cue is still listening. This setup does not save sessions, so the conversation so far will be lost.'
+  };
+  quitPrompt = (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))
+    .then(({ response }) => {
+      quitPrompt = null;
+      if (response !== 1) return;
+      quitConfirmed = true;
+      app.quit();
+    })
+    .catch(() => { quitPrompt = null; });
+}
+
+app.on('before-quit', (e) => {
+  if (!mayQuitNow()) { e.preventDefault(); return; }
+  quitWhileListening = state.capturing;
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   // Synchronous write: the session in progress is saved before exit.
-  if (sessionRecorder) sessionRecorder.end();
+  if (sessionRecorder) sessionRecorder.end(quitWhileListening ? QUIT_WHILE_LISTENING : undefined);
   // Best effort, deliberately not blocking the quit: the library also removes
   // the instance file from a `process.on('exit')` handler, and a file left
   // behind is harmless anyway because readers check whether the PID is alive.

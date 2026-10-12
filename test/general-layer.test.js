@@ -60,9 +60,9 @@ test('general recap lists decisions and action items; follow-up targets the othe
   assert.match(buildPromptRequest(settings, 'followup', []).system, /raise with the other participants/);
 });
 
-test('general debrief reviews decisions, action items and the user\'s contributions', () => {
+test('general debrief summarises agreements, next steps, figures and open questions, then the user\'s contributions', () => {
   const { system, turns } = buildDebriefRequest(generalSettings(), { kind: 'interview', transcript: [{ channel: 'you', text: 'I will ship Friday.', ts: 1 }], answers: [] });
-  assert.match(system, /## Decisions[\s\S]*## Action items[\s\S]*## Your contributions/);
+  assert.match(system, /## Agreements and decisions[\s\S]*## Next steps[\s\S]*## Figures[\s\S]*## Open questions[\s\S]*## Your contributions/);
   assert.doesNotMatch(system, INTERVIEW_WORDS);
   assert.match(turns[0].text, /^Conversation transcript:/);
 });

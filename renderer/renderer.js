@@ -649,7 +649,7 @@
       const { savedId } = await cue.clearTranscript();
       clearConversationUI();
       const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
-      showToast(savedId ? 'Session saved · open Sessions to review it' : `Transcript cleared · ${undoHint}`, 3500);
+      showToast(savedId ? 'Session saved · open Sessions for its summary and debrief' : `Transcript cleared · ${undoHint}`, 3500);
     });
   }
 
@@ -1745,7 +1745,16 @@
       button.classList.toggle('on', button.dataset.sttProvider === (settings.sttProvider || 'auto'));
     });
     const localWhisper = settings.localWhisper || { modelId: 'base.en', language: 'auto', threads: 0 };
-    $('#whisper-language').value = localWhisper.language || 'auto';
+    const languageSelect = $('#stt-language');
+    if (!languageSelect.options.length) {
+      for (const [code, name] of cue.sttLanguages.list) {
+        const option = document.createElement('option');
+        option.value = code;
+        option.textContent = name;
+        languageSelect.appendChild(option);
+      }
+    }
+    languageSelect.value = cue.sttLanguages.resolve(settings);
     $('#whisper-threads').value = Number(localWhisper.threads) || 0;
     const slidesCfg = settings.slides || { enabled: false, intervalMs: 3000 };
     $('#slides-enabled').checked = !!slidesCfg.enabled;
@@ -2039,7 +2048,34 @@
     $('#resume-text').value = a.resumeText || '';
     $('#star-stories').value = a.stories || '';
     $('#work-style').value = a.workStyle || '';
+    renderAboutMeWarning();
   }
+
+  // About me goes to every setup: point out lines that look written for one.
+  function renderAboutMeWarning() {
+    const box = $('#about-me-warning');
+    if (!box) return;
+    const aboutMe = { resumeText: $('#resume-text').value, stories: $('#star-stories').value, workStyle: $('#work-style').value };
+    const found = setupsModel.findSetupSpecificLines(aboutMe, settings.setups || [], { builtinId: setupsModel.BUILTIN_SETUP_ID });
+    box.textContent = '';
+    box.classList.toggle('hidden', !found.length);
+    if (!found.length) return;
+    const head = document.createElement('strong');
+    head.textContent = found.length === 1 ? '1 line looks specific to one setup' : found.length + ' lines look specific to one setup';
+    box.appendChild(head);
+    const list = document.createElement('ul');
+    for (const hit of found.slice(0, 6)) {
+      const item = document.createElement('li');
+      const quote = hit.text.length > 70 ? hit.text.slice(0, 70) + '…' : hit.text;
+      item.textContent = hit.label + ', line ' + hit.line + ': "' + quote + '" (' + hit.reason + ')';
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    const tail = document.createElement('div');
+    tail.textContent = (found.length > 6 ? 'And ' + (found.length - 6) + ' more. ' : '') + 'If it only applies to one conversation, move it to that setup\'s Notes.';
+    box.appendChild(tail);
+  }
+  for (const id of ['#resume-text', '#star-stories', '#work-style']) $(id).addEventListener('input', renderAboutMeWarning);
 
   function applyKindToForm(kind) {
     const interview = kind === 'interview';
@@ -2213,7 +2249,7 @@
     // Transcription
     if (!settings.localWhisper) settings.localWhisper = {};
     settings.localWhisper.modelId = $('#whisper-model').value || settings.localWhisper.modelId || 'base.en';
-    settings.localWhisper.language = $('#whisper-language').value || 'auto';
+    settings.sttLanguage = $('#stt-language').value || 'en';
     settings.localWhisper.threads = Math.max(0, Math.min(64, Number.parseInt($('#whisper-threads').value, 10) || 0));
     // Slides (opt-in, memory only)
     settings.slides = {
