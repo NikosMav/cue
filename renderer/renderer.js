@@ -39,6 +39,8 @@
   let caretEl = null;
   let responseCount = 0;
   const MAX_RESPONSES = 20;
+  // Answers to what was said aloud; they use up the speech in the question box.
+  const SPOKEN_ANSWER_MODES = new Set(['assist', 'say', 'answerThis']);
 
   const messages = $('#messages');
 
@@ -347,6 +349,26 @@
     return false;
   }
 
+  // The box shows only the end of what they are saying: during a long
+  // explanation it used to grow until it pushed the answers off the panel.
+  // Everything they said stays in the transcript history, and Assist reads
+  // the transcript, not this box.
+  const STT_FILL_MAX_CHARS = 240;
+  const TRIMMED_MARK = '… ';
+  function latestSpeech(text) {
+    if (text.length <= STT_FILL_MAX_CHARS) return text;
+    const tail = text.slice(-STT_FILL_MAX_CHARS);
+    // Start at a sentence that begins early in the kept part, else at a word.
+    const sentence = tail.search(/[.?!]\s+\S/);
+    const start = sentence >= 0 && sentence < STT_FILL_MAX_CHARS / 2
+      ? tail.slice(sentence + 1).trimStart()
+      : tail.slice(tail.indexOf(' ') + 1);
+    return TRIMMED_MARK + start;
+  }
+  function withoutTrimmedMark(text) {
+    return text.startsWith(TRIMMED_MARK.trim()) ? text.slice(TRIMMED_MARK.trim().length).trimStart() : text;
+  }
+
   // ---- Auto-fill the input box with transcribed speech from interviewer ----
   function autoFillInputFromSTT(text) {
     // If user has manually typed something different, don't overwrite
@@ -357,11 +379,12 @@
     composer.classList.remove('stt-dimmed');
 
     const current = input.value.trim();
-    const newText = current ? current + ' ' + text : text;
+    const newText = latestSpeech(current ? current + ' ' + text : text);
     input.value = newText;
     inputFromSTT = true;
     lastSTTValue = newText; // Track the STT value for edit detection
     syncPlaceholder();
+    input.scrollTop = input.scrollHeight; // newest words in view
 
     // Show filling state
     composer.classList.add('stt-filling');
@@ -462,10 +485,16 @@
     composer.classList.remove('stt-dimmed');
   }
 
+  const STT_INPUT_MAX_HEIGHT = 66; // three 22px lines
+  const TYPED_INPUT_MAX_HEIGHT = 140;
   function syncPlaceholder() {
     placeholder.classList.toggle('hidden', input.value.length > 0 || document.activeElement === input);
+    // Speech fills at most three lines so the answers keep their room; a
+    // question typed by hand may use more.
+    const max = inputFromSTT ? STT_INPUT_MAX_HEIGHT : TYPED_INPUT_MAX_HEIGHT;
+    input.style.maxHeight = max + 'px';
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+    input.style.height = Math.min(input.scrollHeight, max) + 'px';
   }
   
   // Track last STT value to detect substantial edits vs minor corrections
@@ -507,7 +536,7 @@
   $('#input-area').addEventListener('click', () => input.focus());
 
   function send() {
-    const text = input.value.trim();
+    const text = withoutTrimmedMark(input.value.trim());
     if (!text) { runMode('assist', ''); return; }
     const wasFromSTT = inputFromSTT;
     
@@ -1162,8 +1191,11 @@
     if (mode === 'practiceQuestion') category = 'Practice question';
     if (aiEl) finalizeAi('Interrupted');
     currentRequestId = id;
-    // Auto-answer took the interviewer's question from the input box.
-    if (auto && inputFromSTT) hardClearSTTFill();
+    // A spoken answer (Auto, Ctrl+Enter, the Assist or Say shortcut) has used
+    // what was heard so far: clear the box so new speech starts fresh instead
+    // of piling onto text already answered. Ctrl+Z brings it back; typed text
+    // is never cleared here.
+    if (inputFromSTT && (auto || SPOKEN_ANSWER_MODES.has(mode))) hardClearSTTFill();
     responseCount++;
     if (responseCount > MAX_RESPONSES) {
       const oldest = messages.querySelector('.response-group');
