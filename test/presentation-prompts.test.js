@@ -4,18 +4,18 @@ const { buildEnrichRequest, parseEnrichResponse, extractJson } = require('../src
 
 test('enrich system prompt forbids new facts and asks for JSON only', () => {
   const r = buildEnrichRequest({ conversation: '2nd-year CS', notes: '', titles: ['A', 'B'], batch: [{ n: 1, title: 'A', body: 'x', notes: '' }] });
-  assert.match(r.system, /must not add facts, figures or citations/);
+  assert.match(r.system, /must not add facts, figures, dates, product names, prices, limits or citations/);
   assert.match(r.system, /\(image slide: add your own points\)/);
   assert.match(r.turns[0].text, /1\. A\n2\. B/);
-  assert.equal(r.maxTokens, 2500);
+  assert.equal(r.maxTokens, 5000);
   assert.equal(r.effort, 'medium');
 });
 test('parseEnrichResponse tolerates fences, caps fields and drops unknown slides', () => {
   const text = '```json\n[{"n":1,"points":["' + 'p'.repeat(200) + '","b","c","d","e"],"questions":["q1","q2","q3","q4"],"keyIdea":"k"},{"n":9,"points":["x"]}]\n```';
   const [s, ...rest] = parseEnrichResponse(text, [1, 2]);
   assert.equal(rest.length, 0);
-  assert.equal(s.points.length, 4);
-  assert.equal(s.points[0].length, 140);
+  assert.equal(s.points.length, 5);
+  assert.equal(s.points[0].length, 160);
   assert.equal(s.questions.length, 3);
 });
 test('parseEnrichResponse returns [] for prose', () => assert.deepEqual(parseEnrichResponse('Sorry, I cannot.', [1]), []));
@@ -112,4 +112,28 @@ test('coverageInput graceMs takes You turns finalised shortly after leaving the 
   assert.equal(coverageInput({ left, slide: covSlide, transcript, graceMs: 3000 }).transcript, SPOKEN + '\nlate');
   assert.deepEqual(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: SPOKEN, ts: 32000 }], graceMs: 3000 }),
     { slide: covSlide, transcript: SPOKEN });
+});
+
+test('enrichment asks for a full speaker script that covers the whole slide', () => {
+  const r = buildEnrichRequest({ conversation: 'engineers', notes: '', titles: ['A', 'B'], batch: [{ n: 1, title: 'A', body: 'x', notes: 'say the analogy', next: 'B' }] });
+  assert.match(r.system, /"script"/);
+  assert.match(r.system, /Cover every item on the slide/);
+  assert.match(r.system, /speaker notes/);
+  assert.match(r.system, /leads into the next slide/);
+  assert.match(r.system, /must not add facts, figures/);
+  assert.match(r.system, /3 to 5/);
+  assert.ok(r.maxTokens >= 4000, 'room for four scripts');
+});
+
+test('parseEnrichResponse keeps the script, capped, and five points', () => {
+  const long = 'w '.repeat(1200).trim();
+  const [s] = parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a', 'b', 'c', 'd', 'e', 'f'], questions: [], keyIdea: 'k', script: long }]), [1]);
+  assert.equal(s.points.length, 5);
+  assert.ok(s.script.length <= 2400 && s.script.length > 1000);
+  const sentences = Array.from({ length: 40 }, (_, i) => 'Sentence number ' + i + ' explains one more thing for the room.').join(' ');
+  const [u] = parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a'], script: sentences }]), [1]);
+  assert.ok(u.script.length <= 2400);
+  assert.match(u.script, /\.$/, 'a long script is cut at the end of a sentence, never mid-sentence');
+  const [t] = parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a'], keyIdea: 'k' }]), [1]);
+  assert.equal(t.script, '', 'a missing script is empty, not an error');
 });

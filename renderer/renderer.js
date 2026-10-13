@@ -1877,6 +1877,20 @@
     };
   }
 
+  // Slides per enrichment call (src/deck-import.js BATCH_SIZE), for the
+  // progress estimate before main reports real progress.
+  const DECK_BATCH_SIZE = 4;
+  // The speaker script: paragraphs separated by blank lines, as plain text.
+  function renderScript(text) {
+    const el = $('#ps-script');
+    el.textContent = '';
+    for (const para of String(text || '').split(/\n\s*\n/)) {
+      if (!para.trim()) continue;
+      const p = document.createElement('p');
+      p.textContent = para.trim();
+      el.appendChild(p);
+    }
+  }
   function renderPresenterStrip() {
     applyModeLabels();
     const strip = $('#presenter-strip');
@@ -1914,6 +1928,9 @@
         points.appendChild(li);
       }
     }
+    const script = hasDeck && update.slide && !folded ? String(update.slide.script || '') : '';
+    renderScript(script);
+    strip.classList.toggle('has-script', !!script.trim());
     const expand = $('#ps-expand');
     expand.classList.toggle('hidden', !(mode === 'narrow' && presentationAnswerShown && slidePoints.length));
     expand.textContent = presentationPointsExpanded ? '▾' : '▸';
@@ -2226,6 +2243,11 @@
     points.spellcheck = false;
     points.dataset.field = 'points';
     points.setAttribute('aria-label', 'Talking points');
+    const script = document.createElement('textarea');
+    script.rows = 7;
+    script.maxLength = 2400;
+    script.dataset.field = 'script';
+    script.setAttribute('aria-label', 'Script');
     const questions = document.createElement('textarea');
     questions.rows = 3;
     questions.spellcheck = false;
@@ -2236,10 +2258,11 @@
     again.className = 's-action';
     again.textContent = 'Generate again';
     body.append(deckLabel('Key idea'), keyIdea, deckLabel('Talking points', 'one per line'), points,
+      deckLabel('Script', 'what you say on this slide'), script,
       deckLabel('Likely questions', 'one per line'), questions, again);
     row.append(head, body);
 
-    const fields = { keyIdea, points, questions };
+    const fields = { keyIdea, points, script, questions };
     // A text field fires change when it loses focus with a new value.
     for (const field of Object.values(fields)) {
       field.addEventListener('change', () => {
@@ -2272,7 +2295,7 @@
     if (slide.edited) tag('edited');
     if (slide.enrichError) tag('not generated', 'failed');
     // Never overwrite the field being typed in.
-    const values = { keyIdea: slide.keyIdea || '', points: (slide.points || []).join('\n'), questions: (slide.questions || []).join('\n') };
+    const values = { keyIdea: slide.keyIdea || '', points: (slide.points || []).join('\n'), script: slide.script || '', questions: (slide.questions || []).join('\n') };
     for (const field of row.querySelectorAll('[data-field]')) {
       if (document.activeElement !== field) field.value = values[field.dataset.field];
     }
@@ -2283,7 +2306,8 @@
     try {
       res = await cue.deckUpdateSlide(setupId, slide.n, {
         keyIdea: fields.keyIdea.value.trim().slice(0, 120),
-        points: parseLines(fields.points.value).map((line) => line.slice(0, 140)),
+        points: parseLines(fields.points.value).map((line) => line.slice(0, 160)),
+        script: fields.script.value.trim().slice(0, 2400),
         questions: parseLines(fields.questions.value).map((line) => line.slice(0, 160))
       });
     } catch (error) {
@@ -2305,7 +2329,7 @@
       return;
     }
     // Progress may already have arrived (no AI provider reports at once).
-    if (res.started && !deckProgress.has(setupId)) deckProgress.set(setupId, { done: 0, total: Math.ceil(res.started / 8) });
+    if (res.started && !deckProgress.has(setupId)) deckProgress.set(setupId, { done: 0, total: Math.ceil(res.started / DECK_BATCH_SIZE) });
     if (editingSetupId === setupId) renderDeckBlock();
   }
 
@@ -2491,7 +2515,7 @@
       // Batches report as they finish; until the first one does, show the count.
       if (!res.unchanged && deckView && deckView.setupId === setupId && !deckProgress.has(setupId)) {
         const pending = deckPending(deckView.deck);
-        if (pending) { deckProgress.set(setupId, { done: 0, total: Math.ceil(pending / 8) }); setDeckStatus(); }
+        if (pending) { deckProgress.set(setupId, { done: 0, total: Math.ceil(pending / DECK_BATCH_SIZE) }); setDeckStatus(); }
       }
     } catch (error) {
       if (editingSetupId === setupId) showDeckError(error && error.message ? error.message : String(error));

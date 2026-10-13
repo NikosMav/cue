@@ -40,7 +40,7 @@ function make(opts = {}) {
 test('buildPresentationUpdate fills slide and next from the deck', () => {
   const d = deck(3);
   const u = buildPresentationUpdate({ deck: d, snapshot: { current: 2, slideCount: 3 }, matching: 'ok' });
-  assert.deepStrictEqual(u.slide, { n: 2, title: 'T2', points: ['p2'] });
+  assert.deepStrictEqual(u.slide, { n: 2, title: 'T2', points: ['p2'], script: '' });
   assert.deepStrictEqual(u.next, { n: 3, title: 'T3' });
   assert.strictEqual(u.matching, 'ok');
   const last = buildPresentationUpdate({ deck: d, snapshot: { current: 3 }, matching: 'ok' });

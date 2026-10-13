@@ -364,6 +364,8 @@ function currentSlideBlock(slide) {
   if (textOf(slide.notes)) lines.push('Speaker notes: ' + textOf(slide.notes));
   const points = pointsOf(slide);
   if (points.length) lines.push('Talking points:\n' + points.map((p) => '- ' + p).join('\n'));
+  // What the presenter is saying on this slide, so an answer matches it.
+  if (textOf(slide.script)) lines.push('Presenter\'s script for this slide: ' + textOf(slide.script));
   return lines.join('\n');
 }
 

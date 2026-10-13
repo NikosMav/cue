@@ -2009,7 +2009,7 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
     if (!fromImport) ns = [...new Set([...ns, ...previous.pending])].sort((a, b) => a - b);
   }
   const controller = new AbortController();
-  const run = { controller, pending: new Set(deck.slides.filter(s => ns.includes(s.n) && !s.edited).map(s => s.n)) };
+  const run = { controller, pending: new Set(deck.slides.filter(s => ns.includes(s.n) && (!s.edited || !s.script)).map(s => s.n)) };
   deckEnrichments.set(setupId, run);
   try {
     const setup = presentationSetup(setupId);
@@ -2045,8 +2045,9 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
         if (!latest) return;
         const merged = { ...latest, slides: latest.slides.map(cur => {
           const mine = batchNs.includes(cur.n) ? d.slides.find(x => x.n === cur.n) : null;
-          if (!mine || cur.edited) return cur;
-          return { ...cur, points: mine.points, questions: mine.questions, keyIdea: mine.keyIdea, enrichError: mine.enrichError };
+          if (!mine) return cur;
+          if (cur.edited) return !cur.script && mine.script ? { ...cur, script: mine.script } : cur;
+          return { ...cur, points: mine.points, questions: mine.questions, keyIdea: mine.keyIdea, script: mine.script, enrichError: mine.enrichError };
         }) };
         deckStore().save(file, merged);
         deckSaved(setupId);
@@ -2117,6 +2118,7 @@ ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   slide.points = list(p.points);
   slide.questions = list(p.questions);
   slide.keyIdea = typeof p.keyIdea === 'string' ? p.keyIdea : '';
+  if (typeof p.script === 'string') slide.script = p.script.slice(0, 2400);
   slide.edited = true;
   slide.enrichError = false;
   deckStore().save(file, deck);
@@ -2151,7 +2153,7 @@ ipcMain.handle('deck:regenerate', (_e, setupId, which) => {
   if (!deck) return { error: 'Import a deck first.' };
   let ns;
   if (which === 'unedited') {
-    ns = deck.slides.filter(s => !s.edited).map(s => s.n);
+    ns = deck.slides.filter(s => !s.edited || !s.script).map(s => s.n);
   } else {
     const slide = deck.slides.find(s => s.n === which);
     if (!slide) return { error: 'That slide no longer exists.' };

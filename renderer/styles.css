@@ -770,6 +770,13 @@ button:focus { outline: none; }
 .ps-pace.behind { color: #fca5a5; }
 .ps-points { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ps-points:empty { display: none; }
+/* With a speaker script, the key points become a small glance list above it. */
+.presenter-strip.has-script .ps-points li { font-size: calc(var(--answer-px, 18px) * 0.72); color: var(--tx-2); }
+.ps-script { margin-top: 6px; }
+.ps-script:empty { display: none; }
+.ps-script p { margin: 0 0 10px; font-size: calc(var(--answer-px, 18px) * 0.9); line-height: 1.45; color: var(--tx-1); -webkit-user-select: text; user-select: text; }
+/* Narrow has no room for paragraphs: key points only. */
+#app.narrow .ps-script { display: none; }
 .ps-points li { font-size: calc(var(--answer-px, 18px) * 0.9); font-weight: 500; line-height: 1.3; color: var(--tx-1); padding-left: 18px; position: relative; }
 .ps-points li::before { content: '•'; position: absolute; left: 2px; color: var(--tx-mut); }
 /* next → and the newest flag on one line; all flags (when opened) wrap below. */

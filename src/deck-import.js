@@ -5,7 +5,8 @@ const crypto = require('crypto');
 const { extractDeck, DeckError } = require('./deck-extract');
 const { buildEnrichRequest, parseEnrichResponse } = require('./presentation-prompts');
 
-const BATCH_SIZE = 8;
+// Each slide now gets a ~180-word speaker script, so four slides per call.
+const BATCH_SIZE = 4;
 const MAX_QUESTIONS = 6;
 
 async function importDeck({ buffer, type, fileName, previous, extract = extractDeck }) {
@@ -19,7 +20,7 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
 
   const carried = new Map();
   for (const s of (previous && previous.slides) || []) {
-    const has = s.edited || s.points.length || s.questions.length || s.keyIdea;
+    const has = s.edited || s.points.length || s.questions.length || s.keyIdea || s.script;
     if (has && s.fingerprint && !carried.has(s.fingerprint)) carried.set(s.fingerprint, s);
   }
   const toEnrich = [];
@@ -27,10 +28,10 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
     const old = carried.get(s.fingerprint);
     const base = { n: s.n, title: s.title, body: s.body, notes: s.notes, fingerprint: s.fingerprint };
     if (old) {
-      return { ...base, points: [...old.points], questions: [...old.questions], keyIdea: old.keyIdea, edited: old.edited, enrichError: false };
+      return { ...base, points: [...old.points], questions: [...old.questions], keyIdea: old.keyIdea, script: old.script || '', edited: old.edited, enrichError: false };
     }
     toEnrich.push(s.n);
-    return { ...base, points: [], questions: [], keyIdea: '', edited: false, enrichError: false };
+    return { ...base, points: [], questions: [], keyIdea: '', script: '', edited: false, enrichError: false };
   });
   const deck = { version: 1, source: { fileName, type, sha256 }, slides, matchCache: {} };
   return { deck, unchanged: false, toEnrich };
@@ -39,9 +40,9 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
 // Never throws. A failed call or an unparseable reply flags that batch only.
 async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal }) {
   let current = { ...deck, slides: deck.slides.map((s) => ({ ...s })) };
-  const editedNs = new Set(current.slides.filter((s) => s.edited).map((s) => s.n));
+  const scriptOnly = new Set(current.slides.filter((s) => s.edited && !s.script).map((s) => s.n));
   const wanted = new Set(ns || []);
-  const targets = current.slides.filter((s) => wanted.has(s.n) && !editedNs.has(s.n)).map((s) => s.n);
+  const targets = current.slides.filter((s) => wanted.has(s.n) && (!s.edited || scriptOnly.has(s.n))).map((s) => s.n);
   const titles = current.slides.map((s) => s.title);
   const total = Math.ceil(targets.length / BATCH_SIZE);
   for (let i = 0; i < total; i++) {
@@ -49,7 +50,8 @@ async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal
     const batchNs = targets.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
     const batch = batchNs.map((n) => {
       const s = current.slides.find((x) => x.n === n);
-      return { n, title: s.title, body: s.body, notes: s.notes };
+      const next = current.slides.find((x) => x.n === n + 1);
+      return { n, title: s.title, body: s.body, notes: s.notes, next: next ? next.title : '' };
     });
     let results = [];
     try {
@@ -64,9 +66,10 @@ async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal
       ...current,
       slides: current.slides.map((s) => {
         if (!batchNs.includes(s.n)) return s;
-        if (failed) return { ...s, enrichError: true };
+        if (failed) return scriptOnly.has(s.n) ? s : { ...s, enrichError: true };
         const r = byN.get(s.n);
-        return r ? { ...s, points: r.points, questions: r.questions, keyIdea: r.keyIdea, enrichError: false } : { ...s, enrichError: true };
+        if (scriptOnly.has(s.n)) return r ? { ...s, script: r.script } : s;
+        return r ? { ...s, points: r.points, questions: r.questions, keyIdea: r.keyIdea, script: r.script, enrichError: false } : { ...s, enrichError: true };
       }),
     };
     if (onBatch) onBatch(current, i + 1, total, batchNs);

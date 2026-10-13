@@ -23,6 +23,7 @@ function normalizeSlide(s, i) {
     points: strList(s.points),
     questions: strList(s.questions),
     keyIdea: str(s.keyIdea),
+    script: str(s.script),
     edited: s.edited === true,
     enrichError: s.enrichError === true,
   };

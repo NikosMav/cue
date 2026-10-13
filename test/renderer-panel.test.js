@@ -590,3 +590,24 @@ test('dialog overlays do not darken or blur the window behind them', () => {
     assert.doesNotMatch(rule, /backdrop-filter/, sel + ' blurs the window');
   }
 });
+
+test('the wide presenter column shows the speaker script, in paragraphs, under smaller key points', () => {
+  assert.match(html, /<div id="ps-script" class="ps-script"><\/div>/);
+  assert.match(src, /function renderScript\(/);
+  const body = src.slice(src.indexOf('function renderScript('), src.indexOf('\n  }\n', src.indexOf('function renderScript(')));
+  assert.ok(body.includes(String.raw`.split(/\n\s*\n/)`), 'blank lines separate paragraphs');
+  assert.match(body, /\.textContent = /);
+  assert.doesNotMatch(body, /innerHTML = [^'"]/);
+  assert.match(css, /\.ps-script p \{[^}]*font-size: calc\(var\(--answer-px, 18px\) \* 0\.9\)/);
+  assert.match(css, /#app\.narrow \.ps-script \{ display: none; \}/);
+  assert.match(css, /\.presenter-strip\.has-script \.ps-points li \{[^}]*font-size: calc\(var\(--answer-px, 18px\) \* 0\.72\)/);
+});
+
+test('Review slides edits a Script per slide', () => {
+  assert.match(src, /script\.dataset\.field = 'script';/);
+  assert.match(src, /script: fields\.script\.value\.trim\(\)\.slice\(0, 2400\)/);
+  assert.match(src, /const DECK_BATCH_SIZE = 4;/);
+  assert.doesNotMatch(src, /\/ 8\)/, 'batch estimates use DECK_BATCH_SIZE');
+  assert.match(src, /points: parseLines\(fields\.points\.value\)\.map\(\(line\) => line\.slice\(0, 160\)\)/);
+  assert.match(src, /script: slide\.script \|\| ''/);
+});

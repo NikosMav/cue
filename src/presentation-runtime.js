@@ -35,7 +35,7 @@ function buildPresentationUpdate({ deck, snapshot, matching }) {
   const nx = find(nextN);
   return {
     snapshot,
-    slide: cur ? { n: cur.n, title: cur.title || '', points: (cur.points || []).slice() } : null,
+    slide: cur ? { n: cur.n, title: cur.title || '', points: (cur.points || []).slice(), script: cur.script || '' } : null,
     next: nx ? { n: nx.n, title: nx.title || '' } : null,
     matching
   };

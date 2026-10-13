@@ -10,7 +10,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cue-deck-'));
 const mkDeck = (title) => ({
   version: 1,
   source: { fileName: 'a.pptx', type: 'pptx', sha256: 'abc' },
-  slides: [{ n: 1, title, body: 'b', notes: 'n', fingerprint: 'f', points: ['p'], questions: ['q'], keyIdea: 'k', edited: true, enrichError: false }],
+  slides: [{ n: 1, title, body: 'b', notes: 'n', fingerprint: 'f', points: ['p'], questions: ['q'], keyIdea: 'k', script: 's', edited: true, enrichError: false }],
   matchCache: { ['a'.repeat(64)]: 2 },
 });
 
@@ -59,7 +59,7 @@ test('normalizeDeck drops bad slides and non-numeric cache entries', () => {
 
 test('normalizeDeck fills defaults, bounds cache values, rejects non-decks', () => {
   const d = normalizeDeck({ slides: [{}], matchCache: { ['a'.repeat(64)]: 151, ['b'.repeat(64)]: 1.5, ['c'.repeat(64)]: 150, ['d'.repeat(64)]: 0 } });
-  assert.deepEqual(d.slides[0], { n: 1, title: '', body: '', notes: '', fingerprint: '', points: [], questions: [], keyIdea: '', edited: false, enrichError: false });
+  assert.deepEqual(d.slides[0], { n: 1, title: '', body: '', notes: '', fingerprint: '', points: [], questions: [], keyIdea: '', script: '', edited: false, enrichError: false });
   assert.equal(d.version, 1);
   assert.deepEqual(d.matchCache, { ['c'.repeat(64)]: 150, ['d'.repeat(64)]: 0 });
   assert.equal(normalizeDeck(null), null);
@@ -73,4 +73,9 @@ test('fileFor rejects ids with path characters', () => {
   assert.throws(() => s.fileFor('../x'));
   assert.throws(() => s.fileFor(''));
   assert.throws(() => s.fileFor(5));
+});
+
+test('normalizeDeck keeps a slide script and defaults it to empty', () => {
+  const d = normalizeDeck({ slides: [{ n: 1, script: 'Hello there.' }, { n: 2 }, { n: 3, script: 7 }] });
+  assert.deepEqual(d.slides.map((s) => s.script), ['Hello there.', '', '']);
 });

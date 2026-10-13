@@ -6,7 +6,7 @@ const { DeckError } = require('../src/deck-extract');
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const slide = (n, title, extra = {}) => ({ n, title, body: 'body ' + title, notes: '', fingerprint: 'fp-' + title, ...extra });
-const full = (n, title, extra = {}) => ({ ...slide(n, title), points: [], questions: [], keyIdea: '', edited: false, enrichError: false, ...extra });
+const full = (n, title, extra = {}) => ({ ...slide(n, title), points: [], questions: [], keyIdea: '', script: '', edited: false, enrichError: false, ...extra });
 const extractor = (slides) => async () => ({ slides });
 
 test('same file re-import is a no-op', async () => {
@@ -47,7 +47,7 @@ test('a deck with no visible slides is rejected', async () => {
 });
 
 const tenSlides = () => ({ version: 1, source: { fileName: 'a', type: 'pptx', sha256: 'x' }, slides: Array.from({ length: 10 }, (_, i) => full(i + 1, 'S' + (i + 1))), matchCache: {} });
-const okResponse = (ns) => JSON.stringify(ns.map((n) => ({ n, points: ['p' + n], questions: ['q' + n], keyIdea: 'k' + n })));
+const okResponse = (ns) => JSON.stringify(ns.map((n) => ({ n, points: ['p' + n], questions: ['q' + n], keyIdea: 'k' + n, script: 'script ' + n })));
 const batchNs = (request) => JSON.parse(request.turns[0].text.split('Slides to write for (JSON):\n')[1]).map((s) => s.n);
 
 test('a failed batch marks only its slides and enrichment continues', async () => {
@@ -59,10 +59,10 @@ test('a failed batch marks only its slides and enrichment continues', async () =
     call: async (request) => { calls++; if (calls === 1) throw new Error('boom'); return okResponse(batchNs(request)); },
     onBatch: (d, done, total) => progress.push([done, total]),
   });
-  assert.equal(calls, 2);
-  for (const s of out.slides.slice(0, 8)) assert.equal(s.enrichError, true);
-  for (const s of out.slides.slice(8)) { assert.equal(s.enrichError, false); assert.deepEqual(s.points, ['p' + s.n]); assert.equal(s.keyIdea, 'k' + s.n); }
-  assert.deepEqual(progress, [[1, 2], [2, 2]]);
+  assert.equal(calls, 3);
+  for (const s of out.slides.slice(0, 4)) assert.equal(s.enrichError, true);
+  for (const s of out.slides.slice(4)) { assert.equal(s.enrichError, false); assert.deepEqual(s.points, ['p' + s.n]); assert.equal(s.keyIdea, 'k' + s.n); assert.equal(s.script, 'script ' + s.n); }
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
 });
 
 test('an empty parse marks the batch as failed', async () => {
@@ -76,6 +76,7 @@ test('edited slides are never sent for enrichment', async () => {
   const deck = tenSlides();
   deck.slides[1].edited = true;
   deck.slides[1].points = ['mine'];
+  deck.slides[1].script = 'my script';
   const sent = [];
   const out = await enrichDeck(deck, {
     ns: [1, 2, 3],
@@ -126,7 +127,7 @@ test('onBatch reports the batch ns so callers can track what is left', async () 
     call: async (r) => okResponse(batchNs(r)),
     onBatch: (d, done, total, ns) => seen.push(ns),
   });
-  assert.deepEqual(seen, [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10]]);
+  assert.deepEqual(seen, [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10]]);
 });
 
 test('an aborted run stops calling call and onBatch', async () => {
@@ -167,4 +168,38 @@ test('countQuestions totals questions across slides', () => {
   deck.slides[3].questions = ['c'];
   assert.equal(countQuestions(deck), 3);
   assert.equal(countQuestions(null), 0);
+});
+
+test('an edited slide without a script gets only its script; its edits stay', async () => {
+  const deck = tenSlides();
+  deck.slides[1].edited = true;
+  deck.slides[1].points = ['mine'];
+  deck.slides[1].questions = ['my question'];
+  deck.slides[1].keyIdea = 'my idea';
+  const sent = [];
+  const out = await enrichDeck(deck, {
+    ns: [2],
+    call: async (request) => { const ns = batchNs(request); sent.push(...ns); return okResponse(ns); },
+    onBatch() {},
+  });
+  assert.deepEqual(sent, [2]);
+  const s2 = out.slides[1];
+  assert.deepEqual([s2.points, s2.questions, s2.keyIdea, s2.edited], [['mine'], ['my question'], 'my idea', true]);
+  assert.equal(s2.script, 'script 2');
+});
+
+test('the next slide title goes with each slide so the script can lead into it', async () => {
+  let batch = null;
+  await enrichDeck(tenSlides(), {
+    ns: [3],
+    call: async (request) => { batch = JSON.parse(request.turns[0].text.split('Slides to write for (JSON):\n')[1]); return okResponse([3]); },
+    onBatch() {},
+  });
+  assert.equal(batch[0].next, 'S4');
+});
+
+test('re-import carries the script with the other enrichment fields', async () => {
+  const previous = { version: 1, source: { fileName: 'a', type: 'pptx', sha256: 'old' }, slides: [full(1, 'A', { points: ['p'], script: 'kept script' })], matchCache: {} };
+  const { deck } = await importDeck({ buffer: Buffer.from('new'), type: 'pptx', fileName: 'a.pptx', previous, extract: extractor([slide(1, 'A')]) });
+  assert.equal(deck.slides[0].script, 'kept script');
 });
