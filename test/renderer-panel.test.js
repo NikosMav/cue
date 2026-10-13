@@ -242,13 +242,69 @@ test('the footer is one row: answer actions, a gap, Smart, Auto and Ask', () => 
   assert.ok(footer.indexOf('id="ask-field"') < footer.indexOf('id="action-row"'), 'the Ask field opens above the row');
 });
 
-test('compact makes Assist, Follow-up and Recap icon-only when the row would overflow', () => {
-  const fit = functionBody('fitActionRow');
-  assert.match(fit, /scrollWidth > row\.clientWidth/);
-  assert.match(fit, /classList\.toggle\('compact'/);
+// A row whose content width depends on the fit classes on it.
+function fakeRow(clientWidth, widths) {
+  const classes = new Set();
+  return {
+    clientWidth,
+    classList: {
+      add: (...names) => names.forEach((n) => classes.add(n)),
+      remove: (...names) => names.forEach((n) => classes.delete(n)),
+      contains: (n) => classes.has(n)
+    },
+    get scrollWidth() { return classes.has('tight') ? widths.tight : classes.has('compact') ? widths.compact : widths.full; },
+    classes
+  };
+}
+
+test('the footer row compacts, then compacts further, instead of clipping', () => {
+  const { fitRow } = section('// ---- footer fit', '// ---- end footer fit', ['fitRow']);
+  const widths = { full: 700, compact: 560, tight: 400 };
+  const roomy = fakeRow(800, widths);
+  fitRow(roomy);
+  assert.deepEqual([...roomy.classes], [], 'a row that fits keeps its labels');
+  const medium = fakeRow(600, widths);
+  fitRow(medium);
+  assert.deepEqual([...medium.classes], ['compact']);
+  const narrow = fakeRow(450, widths);
+  fitRow(narrow);
+  assert.deepEqual([...narrow.classes].sort(), ['compact', 'tight']);
+  // Re-fitting a wider row drops the classes it no longer needs.
+  narrow.clientWidth = 800;
+  fitRow(narrow);
+  assert.deepEqual([...narrow.classes], []);
+  assert.match(functionBody('fitActionRow'), /fitRow\(\$\('#action-row'\)\)/);
   assert.match(src, /new ResizeObserver\(fitActionRow\)\.observe\(\$\('#action-row'\)\)/);
   assert.match(functionBody('applyModeLabels'), /fitActionRow\(\)/);
+});
+
+test('compact makes the secondary actions, Smart, Auto and Ask icon-only and shortens practice', () => {
   assert.match(css, /#action-row\.compact \.act:not\(\.act-primary\) \.lbl \{ display: none; \}/);
+  assert.match(css, /#action-row\.compact \.smart-pill \.lbl \{ display: none; \}/);
+  assert.match(css, /#action-row \.lbl-short \{ display: none; \}/);
+  assert.match(css, /#action-row\.compact #practice-row \.lbl \{ display: none; \}/);
+  assert.match(css, /#action-row\.compact #practice-row \.lbl-short \{ display: inline-flex; \}/);
+  assert.match(css, /#action-row\.tight \.act-primary \.lbl, #action-row\.tight \.practice-badge \{ display: none; \}/);
+  for (const id of ['smart-toggle', 'auto-toggle', 'ask-btn']) {
+    const at = html.indexOf('id="' + id + '"');
+    const tag = html.slice(html.lastIndexOf('<', at), html.indexOf('</button>', at));
+    assert.match(tag, /<span class="lbl">/, '#' + id + ' has a label span');
+    assert.match(tag, /title="/, '#' + id + ' keeps its name in the title');
+  }
+  const practice = container('practice-row');
+  for (const [id, short] of [['practice-next', 'Next'], ['practice-rate', 'Rate'], ['practice-end', 'End']]) {
+    const at = practice.indexOf('id="' + id + '"');
+    const tag = practice.slice(at, practice.indexOf('</button>', at));
+    assert.match(tag, /<span class="lbl">/, '#' + id + ' has a full label');
+    assert.match(tag, new RegExp('<span class="lbl-short">' + short + '</span>'), '#' + id + ' is "' + short + '" in compact');
+  }
+  const voiceAt = practice.indexOf('id="practice-voice"');
+  const voice = practice.slice(voiceAt, practice.indexOf('</button>', voiceAt));
+  assert.match(voice, /<span class="lbl-short ic"><\/span>/, 'Voice is an icon in compact');
+  const sync = functionBody('syncPracticeVoice');
+  assert.match(sync, /\.lbl'\)\.textContent = 'Voice: '/);
+  assert.match(sync, /icon\(on \? 'volume-2' : 'volume-x'/);
+  assert.doesNotMatch(sync, /\$\('#practice-voice'\)\.textContent =/, 'the label spans are not overwritten');
 });
 
 test('shortcut hints live in each button title, which keeps the full name', () => {
@@ -397,7 +453,9 @@ test('Settings, Sessions and the publik card grow the window; History does not',
     assert.match(functionBody(name), /syncOverlay\(\)/, name + ' syncs the overlay');
   }
   const body = functionBody('syncOverlay');
-  for (const id of ['settings-scrim', 'sessions-scrim', 'publik-scrim']) assert.match(body, new RegExp(id));
+  assert.match(body, /anyOverlayOpen\(\)/);
+  const scrims = src.slice(src.indexOf('const OVERLAY_SCRIMS = ['), src.indexOf('];', src.indexOf('const OVERLAY_SCRIMS = [')));
+  for (const id of ['settings-scrim', 'sessions-scrim', 'publik-scrim']) assert.ok(scrims.includes("'" + id + "'"), id + ' is an overlay');
   assert.match(body, /cue\.setOverlay\(open\)/);
   for (const name of ['showSidebar', 'hideSidebar', 'toggleSidebar']) {
     assert.doesNotMatch(functionBody(name), /setOverlay|syncOverlay/, name + ' does not grow the window');
@@ -441,4 +499,38 @@ test('the empty state names the Start button, not the old ■ icon', () => {
 test('a button-started answer is labelled with the button name for the active setup', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8');
   assert.match(src, /userBubble === modeLabel\(mode\) \? modeLabel\(mode, setup && setup\.kind\) : userBubble/);
+});
+
+test('a text size step takes the saved revision so the next Settings save is not rejected', () => {
+  const body = functionBody('changeTextSize');
+  assert.match(body, /const saved = await queueSettingsPatch\(\{ answerTextPx: size \}\);/);
+  assert.match(body, /if \(saved && saved\.settingsMeta && settings\) settings\.settingsMeta = saved\.settingsMeta;/);
+});
+
+test('an app-link consent request shows the panel first and grows a small window', () => {
+  const at = src.indexOf("cue.on('applink:consent-request'");
+  const handler = src.slice(at, src.indexOf('\n  });', at));
+  const shown = handler.indexOf('showPanel();');
+  assert.ok(shown > -1 && shown < handler.indexOf("consentScrim.classList.remove('hidden')"), 'the panel is shown before the sheet');
+  assert.match(handler, /consentScrim\.classList\.remove\('hidden'\);\s*syncOverlay\(\);/);
+  assert.match(functionBody('answerConsent'), /consentScrim\.classList\.add\('hidden'\);\s*syncOverlay\(\);/);
+  assert.match(src, /const OVERLAY_SCRIMS = \['settings-scrim', 'sessions-scrim', 'publik-scrim', 'consent-scrim'\];/);
+  assert.match(functionBody('syncOverlay'), /anyOverlayOpen\(\)/);
+});
+
+test('Hide is ignored while Settings, Sessions, the publik card or the consent sheet is open', () => {
+  const { anyOverlayOpen, open } = section('// ---- overlay state', '// ---- end overlay state', ['anyOverlayOpen', 'open'],
+    'const open = new Set(); const document = { getElementById: (id) => ({ classList: { contains: (c) => c === "hidden" && !open.has(id) } }) };\n');
+  assert.equal(anyOverlayOpen(), false);
+  for (const id of ['settings-scrim', 'sessions-scrim', 'publik-scrim', 'consent-scrim']) {
+    open.clear(); open.add(id);
+    assert.equal(anyOverlayOpen(), true, id);
+  }
+  assert.match(functionBody('toggleHide'), /if \(!panelHidden\(\) && anyOverlayOpen\(\)\) return;/);
+  const toggle = functionBody('toggleHide');
+  assert.ok(toggle.indexOf('anyOverlayOpen()') < toggle.indexOf("classList.toggle('collapsed')"), 'the check comes before anything changes');
+});
+
+test('"Use my own key" waits for Settings to fill before choosing the provider', () => {
+  assert.match(src, /action: async \(\) => \{ hidePublikDialog\(\); await openSettings\(\); selectByoProvider\(\); \}/);
 });

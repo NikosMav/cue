@@ -273,6 +273,11 @@ button:focus { outline: none; }
 #action-row > * { flex-shrink: 0; }
 #action-row > .ar-gap { flex: 1 1 auto; min-width: 8px; }
 #action-row.compact .act:not(.act-primary) .lbl { display: none; }
+#action-row.compact .smart-pill .lbl { display: none; }
+#action-row .lbl-short { display: none; }
+#action-row.compact #practice-row .lbl { display: none; }
+#action-row.compact #practice-row .lbl-short { display: inline-flex; }
+#action-row.tight .act-primary .lbl, #action-row.tight .practice-badge { display: none; }
 #action-row.practicing > .act[data-mode] { display: none; }
 #action-row > #practice-row { flex-wrap: nowrap; margin-top: 0; }
 .act {

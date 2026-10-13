@@ -325,12 +325,19 @@
     showToast(settings.autoAnswer ? 'Auto-answer on' : 'Auto-answer off', 1500);
   });
 
-  // Settings, Sessions and the publik card need room: while one is open main
-  // grows a small window (at least 760x640) and restores it when the last one
-  // closes. History is a drawer inside the panel and never grows the window.
+  // Settings, Sessions, the publik card and the app-link consent sheet need
+  // room: while one is open main grows a small window (at least 760x640) and
+  // restores it when the last one closes. History is a drawer inside the panel
+  // and never grows the window.
+  // ---- overlay state (test/renderer-panel.test.js evaluates it)
+  const OVERLAY_SCRIMS = ['settings-scrim', 'sessions-scrim', 'publik-scrim', 'consent-scrim'];
+  function anyOverlayOpen() {
+    return OVERLAY_SCRIMS.some((id) => !document.getElementById(id).classList.contains('hidden'));
+  }
+  // ---- end overlay state
   let overlayOpen = false;
   function syncOverlay() {
-    const open = ['settings-scrim', 'sessions-scrim', 'publik-scrim'].some((id) => !document.getElementById(id).classList.contains('hidden'));
+    const open = anyOverlayOpen();
     if (open === overlayOpen) return;
     overlayOpen = open;
     cue.setOverlay(open);
@@ -342,6 +349,9 @@
   let reopenSidebarOnExpand = false;
   function panelHidden() { return $('#panel').classList.contains('collapsed'); }
   function toggleHide() {
+    // An open overlay covers the header: hiding would leave its scrim over the
+    // header strip with no way back, so Hide (button or shortcut) waits for it.
+    if (!panelHidden() && anyOverlayOpen()) return;
     closePanelMenu();
     closeSetupMenu();
     const collapsed = $('#panel').classList.toggle('collapsed');
@@ -414,7 +424,13 @@
     const size = applyTextSize(stepTextSize(settings.answerTextPx, direction, panelText));
     if (size === panelText.answerScale(settings.answerTextPx)) return;
     settings.answerTextPx = size;
-    try { await queueSettingsPatch({ answerTextPx: size }); }
+    // answerTextPx is part of the settings revision: take the saved one, or
+    // the next Settings save (Done, a tab switch) is rejected as changed
+    // outside this window.
+    try {
+      const saved = await queueSettingsPatch({ answerTextPx: size });
+      if (saved && saved.settingsMeta && settings) settings.settingsMeta = saved.settingsMeta;
+    }
     catch (err) { showToast('Could not save the text size', 2000); }
   }
   async function openReviewSlides() {
@@ -1039,7 +1055,7 @@
     const fast = m.fast || 'fast model';
     const smart = m.smart || 'smart model';
     const btn = document.getElementById('smart-toggle');
-    if (btn) btn.title = 'Fast: ' + fast + ' · Smart: ' + smart + ' (higher quality, ~2× slower)';
+    if (btn) btn.title = 'Smart · Fast: ' + fast + ' · Smart: ' + smart + ' (higher quality, ~2× slower)';
   }
 
   // ---- microphone permission banner --------------------------------------
@@ -1791,13 +1807,22 @@
     fitActionRow();
   }
 
-  // The footer never wraps: when the row would overflow, Assist, Follow-up
-  // and Recap drop their labels (their titles keep the names).
-  function fitActionRow() {
-    const row = $('#action-row');
-    row.classList.remove('compact');
-    row.classList.toggle('compact', row.scrollWidth > row.clientWidth);
+  // ---- footer fit (test/renderer-panel.test.js evaluates it)
+  // The footer never wraps or clips. When the row would overflow, compact
+  // drops the labels of Assist, Follow-up, Recap, Smart, Auto and Ask (their
+  // titles keep the names) and gives the practice buttons their short form.
+  // If it still overflows, tight also drops the main button's label and the
+  // Practice badge.
+  const FIT_LEVELS = ['compact', 'tight'];
+  function fitRow(row) {
+    row.classList.remove(...FIT_LEVELS);
+    for (const level of FIT_LEVELS) {
+      if (row.scrollWidth <= row.clientWidth) return;
+      row.classList.add(level);
+    }
   }
+  // ---- end footer fit
+  function fitActionRow() { fitRow($('#action-row')); }
   new ResizeObserver(fitActionRow).observe($('#action-row'));
 
   // ---- presenter strip, header status and first-use hint ------------------
@@ -2804,7 +2829,14 @@
     fitActionRow();
   }
   function practiceVoiceOn() { return !settings || settings.practiceVoice !== false; }
-  function syncPracticeVoice() { $('#practice-voice').textContent = 'Voice: ' + (practiceVoiceOn() ? 'on' : 'off'); }
+  // Full label "Voice: on/off"; compact shows only the speaker icon.
+  function syncPracticeVoice() {
+    const on = practiceVoiceOn();
+    const btn = $('#practice-voice');
+    btn.querySelector('.lbl').textContent = 'Voice: ' + (on ? 'on' : 'off');
+    btn.querySelector('.lbl-short').innerHTML = icon(on ? 'volume-2' : 'volume-x', { size: 14 });
+    btn.title = 'Read questions aloud with your system voice (' + (on ? 'on' : 'off') + ')';
+  }
 
   // Questions are read aloud with the operating system's own voices (free and
   // offline). The mic is muted in main while the voice plays.
@@ -2915,6 +2947,7 @@
     cue.appLinkConsentRespond(pendingConsentId, allowed);
     pendingConsentId = null;
     consentScrim.classList.add('hidden');
+    syncOverlay();
   }
 
   cue.on('applink:consent-request', (request) => {
@@ -2922,7 +2955,11 @@
     $('#cs-title').textContent = request.message;
     $('#cs-body').textContent = request.detail;
     $('#cs-allow').textContent = request.allowLabel;
+    // Hidden, the window is only the header: show the panel first so the sheet
+    // gets its room (main refuses to grow a hidden window).
+    showPanel();
     consentScrim.classList.remove('hidden');
+    syncOverlay();
     // Do not wait for a mousemove to turn the mouse back on: the pointer may
     // already be still, and the sheet would be unclickable until it moved.
     scheduleUiRects();
@@ -2968,7 +3005,7 @@
           if (publikState.card) { showPublikCard(); return; }
           hidePublikDialog();
         } },
-        { label: c.decline, action: () => { hidePublikDialog(); openSettings(); selectByoProvider(); } }
+        { label: c.decline, action: async () => { hidePublikDialog(); await openSettings(); selectByoProvider(); } }
       ]
     };
   }
