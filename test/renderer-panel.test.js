@@ -544,3 +544,20 @@ test('the panel, dialogs and history drawer have no drop shadow', () => {
   assert.doesNotMatch(rule('.glass'), /box-shadow/);
   assert.doesNotMatch(rule('.transcript-sidebar'), /box-shadow/);
 });
+
+test('the top bar is a compact pill sized to its contents, aligned with the panel', () => {
+  const start = css.indexOf('#header {');
+  const header = css.slice(start, css.indexOf('}', start));
+  assert.doesNotMatch(header, /(^|[^-])width:\s*calc\(100%/m, 'the bar must not stretch to the panel width');
+  assert.match(header, /align-self:\s*flex-start/);
+  assert.match(header, /margin-left:\s*12px/);
+  assert.match(header, /max-width:\s*calc\(100% - 24px\)/);
+  const gap = css.slice(css.indexOf('.hd-gap {'), css.indexOf('}', css.indexOf('.hd-gap {')));
+  assert.doesNotMatch(gap, /flex:\s*1/, 'the gap no longer grows to fill the bar');
+});
+
+test('the ⋯ menu opens under its button, not at the window edge', () => {
+  assert.match(src, /function placePanelMenu\(\)/);
+  const open = src.slice(src.indexOf("panelMenu.classList.remove('hidden');") - 200, src.indexOf("panelMenu.classList.remove('hidden');") + 120);
+  assert.match(open, /placePanelMenu\(\)/);
+});

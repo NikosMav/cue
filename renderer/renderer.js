@@ -456,8 +456,17 @@
     showPanel();
     renderPanelMenu();
     panelMenu.classList.remove('hidden');
+    placePanelMenu();
     $('#menu-btn').setAttribute('aria-expanded', 'true');
   });
+  // The top bar is a pill sized to its controls, so the menu opens under its
+  // ⋯ button (right edges aligned), kept inside the window.
+  function placePanelMenu() {
+    const btn = $('#menu-btn').getBoundingClientRect();
+    const left = Math.max(12, Math.min(btn.right - panelMenu.offsetWidth, window.innerWidth - panelMenu.offsetWidth - 12));
+    panelMenu.style.left = left + 'px';
+    panelMenu.style.right = 'auto';
+  }
   panelMenu.querySelectorAll('[data-action]').forEach((item) => item.addEventListener('click', (e) => {
     e.stopPropagation();
     runMenuAction(item.dataset.action);
