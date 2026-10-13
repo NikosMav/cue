@@ -611,3 +611,19 @@ test('Review slides edits a Script per slide', () => {
   assert.match(src, /points: parseLines\(fields\.points\.value\)\.map\(\(line\) => line\.slice\(0, 160\)\)/);
   assert.match(src, /script: slide\.script \|\| ''/);
 });
+
+test('wide presenting: the script column widens while no answer is shown', () => {
+  assert.match(src, /strip\.classList\.toggle\('has-answer', !!presentationAnswerShown\);/);
+  assert.match(css, /#app\.wide #panel-body\.presenting > \.presenter-strip:not\(\.has-answer\) \{ flex-basis: 60%; \}/);
+});
+
+test('the empty state says cue is listening once listening has started', () => {
+  const { emptyStateText } = section('// ---- empty state helpers', '// ---- end empty state helpers', ['emptyStateText']);
+  assert.match(emptyStateText('presentation', false), /Press <strong>Start<\/strong> above to listen/);
+  assert.match(emptyStateText('presentation', true), /^<strong>Listening\.<\/strong>/);
+  assert.doesNotMatch(emptyStateText('presentation', true), /Press <strong>Start/);
+  assert.match(emptyStateText('interview', true), /What should I say\?/);
+  assert.match(emptyStateText('general', false), /^<strong>Ready\.<\/strong>/);
+  const capture = src.slice(src.indexOf("cue.on('capture:state', (st) =>"), src.indexOf('\n', src.indexOf("cue.on('capture:state', (st) =>")));
+  assert.match(capture, /refreshEmptyState\(\)/);
+});

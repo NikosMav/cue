@@ -1068,7 +1068,7 @@
     else closeSetupMenu();
   });
   document.addEventListener('click', (e) => { if (!setupMenu.contains(e.target)) closeSetupMenu(); });
-  cue.on('capture:state', (st) => { capturing = !!(st && st.active); updateSavingIndicator(); });
+  cue.on('capture:state', (st) => { capturing = !!(st && st.active); updateSavingIndicator(); refreshEmptyState(); });
 
   function updateSmartTooltip() {
     if (!settings) return;
@@ -1950,6 +1950,8 @@
     $('#ps-meta').classList.toggle('hidden', !nextText && !flags.length);
     // Narrow, with an answer on screen: only the status line (and its ▸).
     strip.classList.toggle('answering', mode === 'narrow' && folded);
+    // Wide: the script column takes more room until an answer arrives.
+    strip.classList.toggle('has-answer', !!presentationAnswerShown);
     strip.classList.remove('hidden');
     const status = headerStatus(update);
     headerStatusEl.textContent = status;
@@ -2617,6 +2619,27 @@
     if (p === 'custom') return !!s.baseUrl;
     return !!(s.apiKeys && s.apiKeys[p]);
   }
+  // ---- empty state helpers (pure; test/renderer-panel.test.js evaluates them)
+  function emptyStateText(kind, listening) {
+    if (kind === 'interview') {
+      return listening
+        ? '<strong>Listening.</strong> Press <strong>What should I say?</strong> when you\'re asked something.'
+        : '<strong>Ready for your interview.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when you\'re asked something.';
+    }
+    if (kind === 'presentation') {
+      return listening
+        ? '<strong>Listening.</strong> Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
+        : '<strong>Ready to present.</strong> Press <strong>Start</strong> above to listen. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.';
+    }
+    return listening
+      ? '<strong>Listening.</strong> Press <strong>What should I say?</strong> when someone asks you something or you want to contribute.'
+      : '<strong>Ready.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
+  }
+  // ---- end empty state helpers
+  // Starting or stopping listening rewrites the empty state, if it is showing.
+  function refreshEmptyState() {
+    if (latest.querySelector('.empty-state')) showEmptyState();
+  }
   function showEmptyState() {
     clearMessages();
     setPresentationAnswerShown(false); // the answers were cleared
@@ -2632,11 +2655,7 @@
       box.appendChild(open);
     } else {
       const setup = settings && activeSetupOf(settings);
-      box.innerHTML = setup && setup.kind === 'interview'
-        ? '<strong>Ready for your interview.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when you\'re asked something.'
-        : setup && setup.kind === 'presentation'
-          ? '<strong>Ready to present.</strong> Press <strong>Start</strong> above to listen. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
-          : '<strong>Ready.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
+      box.innerHTML = emptyStateText(setup && setup.kind, capturing);
     }
     latest.appendChild(box);
   }

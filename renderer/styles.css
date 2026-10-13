@@ -798,6 +798,8 @@ button:focus { outline: none; }
 #panel-body > #reading { flex-shrink: 1; }
 /* Wide presentation: the strip is the left column and never collapses. */
 #app.wide #panel-body.presenting { flex-direction: row; gap: 18px; }
+/* No answer on screen: the script column takes most of the width. */
+#app.wide #panel-body.presenting > .presenter-strip:not(.has-answer) { flex-basis: 60%; }
 #app.wide #panel-body.presenting > .presenter-strip { flex: 0 0 40%; min-width: 280px; box-sizing: border-box; margin-bottom: 0; padding: 2px 16px 0 2px; border-bottom: none; border-right: 1px solid var(--bd-hair); overflow-y: auto; }
 #app.wide #panel-body.presenting > #reading { flex: 1 1 0; min-width: 0; }
 /* Wide interview/general: one centred column of about 70 characters
