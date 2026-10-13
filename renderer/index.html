@@ -331,12 +331,29 @@
         <div class="s-seg" id="setup-kind-seg">
           <button data-kind="interview" type="button">Job interview</button>
           <button data-kind="general" type="button">General</button>
+          <button data-kind="presentation" type="button">Presentation</button>
         </div>
         <div class="s-note" id="setup-kind-note"></div>
 
         <label class="s-label" id="setup-conversation-label">Job description</label>
         <div class="s-field s-upload interview-only"><span class="s-filename" id="jd-filename"></span><button class="s-upload-btn" id="upload-jd-btn">Import PDF/DOCX</button></div>
         <textarea id="job-description" rows="5" spellcheck="false"></textarea>
+
+        <div class="presentation-only s-body hidden">
+          <label class="s-label" for="setup-duration">Planned length <span class="s-hint">minutes, 5 to 240</span></label>
+          <input id="setup-duration" class="s-input deck-duration" type="number" min="5" max="240" step="1" value="45" />
+          <select id="setup-display" class="s-select hidden" aria-label="Display to watch"></select>
+          <label class="s-label">Slides <span class="s-hint">PPTX or PDF · talking points are generated from them</span></label>
+          <div class="deck-bar">
+            <span class="deck-status" id="deck-status" role="status"></span>
+            <button id="deck-import" class="s-upload-btn" type="button">Import deck</button>
+            <button id="deck-review" class="s-upload-btn" type="button">Review slides</button>
+          </div>
+          <div id="deck-review-panel" class="deck-review hidden">
+            <div class="deck-review-actions"><button id="deck-regenerate-unedited" class="s-action" type="button">Generate again for unedited slides</button></div>
+            <div id="deck-review-list" class="deck-review-list"></div>
+          </div>
+        </div>
 
         <label class="s-label" for="knowledge-base">Notes <span class="s-hint">reference material for this conversation</span></label>
         <textarea id="knowledge-base" rows="8" spellcheck="false" placeholder="Facts, figures, prepared points. Mark anything unconfirmed; cue will not fill it in."></textarea>

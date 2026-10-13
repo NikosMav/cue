@@ -650,7 +650,14 @@
     if (!settings) return;
     Object.assign(settings, patch);
     if ('autoAnswer' in patch) syncAutoButton();
-    if ('setups' in patch) updatePrepStatus();
+    if ('setups' in patch) {
+      updatePrepStatus();
+      // Main wrote a setup itself (a deck pointer after an import, the save
+      // switch): take the saved revision too, or the next Save from Settings
+      // is rejected as changed outside this window.
+      refreshSettingsRevision();
+      renderDeckBlock();
+    }
   });
 
   // Stop = start/stop listening. Kick off system-audio capture straight from the click so
@@ -1367,7 +1374,7 @@
       conversation: !!(setup.conversation || '').trim(),
       notes: !!(setup.notes || '').trim()
     };
-    const labels = { about: 'About me', conversation: setup.kind === 'interview' ? 'Role' : 'Context', notes: 'Notes' };
+    const labels = { about: 'About me', conversation: { interview: 'Role', presentation: 'Talk' }[setup.kind] || 'Context', notes: 'Notes' };
     document.querySelectorAll('#prep-status .prep-item').forEach((el) => {
       const field = el.dataset.field;
       el.textContent = labels[field];
@@ -2063,6 +2070,34 @@
     return run;
   }
 
+  // Takes the saved revision after main wrote settings this copy already
+  // merged (settings:changed). Queued, so a save waiting behind it sends it.
+  function refreshSettingsRevision() {
+    const run = saveQueue.then(async () => {
+      const fresh = await cue.settingsGet();
+      if (settings && fresh) settings.settingsMeta = fresh.settingsMeta;
+    });
+    saveQueue = run.catch(() => {});
+    return run;
+  }
+
+  // ---- presentation helpers (pure; test/renderer-presentation.test.js evaluates them)
+  // One entry per non-empty line.
+  function parseLines(text) {
+    return String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  function deckStatusText({ fileName, slideCount, done, total, failed }) {
+    const count = Number(slideCount) || 0;
+    const parts = [fileName, count + (count === 1 ? ' slide' : ' slides')];
+    if (total > 0 && done < total) {
+      parts.push('Talking points: generating… ' + done + ' of ' + total + (total === 1 ? ' batch' : ' batches'));
+    } else if (failed > 0) {
+      parts.push(failed + (failed === 1 ? ' slide' : ' slides') + ' not generated');
+    }
+    return parts.join(' · ');
+  }
+  // ---- end presentation helpers
+
   // ---- About me and setups (data model: src/setups.js) --------------------
   const setupsModel = cue.setupsModel;
   let editingSetupId = null;
@@ -2111,16 +2146,269 @@
 
   function applyKindToForm(kind) {
     const interview = kind === 'interview';
+    const presentation = kind === 'presentation';
     document.querySelectorAll('#setup-kind-seg button').forEach((b) => b.classList.toggle('on', b.dataset.kind === kind));
     document.querySelectorAll('[data-pane="setups"] .interview-only').forEach((el) => el.classList.toggle('hidden', !interview));
-    $('#setup-conversation-label').textContent = interview ? 'Job description' : 'This conversation and your role';
+    document.querySelectorAll('[data-pane="setups"] .presentation-only').forEach((el) => el.classList.toggle('hidden', !presentation));
+    $('#setup-conversation-label').textContent = interview ? 'Job description' : presentation ? 'Talk and audience' : 'This conversation and your role';
     $('#job-description').placeholder = interview
       ? 'Paste the job description for the role.'
-      : 'e.g. Weekly platform sync; I lead the API work and give the status update.';
+      : presentation
+        ? 'e.g. Intro to graph algorithms, 2nd-year CS students, comfortable with Python.'
+        : 'e.g. Weekly platform sync; I lead the API work and give the status update.';
     $('#setup-kind-note').textContent = interview
       ? 'Tuned for job interviews: answers as the candidate, practice interviews available.'
-      : 'Works in any conversation: cue works out the situation from what it hears and answers for your role.';
+      : presentation
+        ? 'For giving a talk: cue keeps talking points for each slide and helps with audience questions.'
+        : 'Works in any conversation: cue works out the situation from what it hears and answers for your role.';
+    if (presentation) renderDeckBlock();
   }
+
+  // ---- presentation deck: import, status and the slide editor ------------
+  const deckProgress = new Map(); // setupId -> { done, total } from deck:progress
+  let deckView = null;            // { setupId, deck } shown in the deck block
+  let deckLoadToken = 0;
+  let deckReviewOpen = false;
+  let deckRowsKey = '';           // which deck the review rows were built for
+  const deckExpanded = new Set(); // slide numbers whose editor is open
+
+  function formKind() {
+    const on = document.querySelector('#setup-kind-seg button.on');
+    return on ? on.dataset.kind : null;
+  }
+  // Slides an import left for enrichment (mirrors src/deck-import.js).
+  function deckPending(deck) {
+    return deck.slides.filter((s) => !s.edited && !s.enrichError && !s.points.length && !s.questions.length && !s.keyIdea).length;
+  }
+  function showDeckError(message) {
+    const status = $('#deck-status');
+    status.textContent = message;
+    status.classList.add('error');
+  }
+  function setDeckStatus() {
+    if (!deckView) return;
+    const { setupId, deck } = deckView;
+    const progress = deckProgress.get(setupId) || {};
+    const status = $('#deck-status');
+    status.classList.remove('error');
+    status.textContent = deckStatusText({
+      fileName: deck.source.fileName,
+      slideCount: deck.slides.length,
+      done: progress.done,
+      total: progress.total,
+      failed: deck.slides.filter((s) => s.enrichError).length
+    });
+  }
+
+  // Shows the editing setup's deck. Safe to call any time: it does nothing
+  // unless the Settings form is showing a presentation setup.
+  async function renderDeckBlock() {
+    if (!settingsFormReady || !settings || formKind() !== 'presentation') return;
+    const setup = editingSetup();
+    if (!setup) return;
+    const token = ++deckLoadToken;
+    if (!setup.deck) {
+      deckView = null;
+      const status = $('#deck-status');
+      status.classList.remove('error');
+      status.textContent = 'No deck yet · import a PPTX or PDF';
+      $('#deck-review').disabled = true;
+      renderDeckReview();
+      return;
+    }
+    let deck = null;
+    try { deck = await cue.deckGet(setup.id); } catch (_) { deck = null; }
+    if (token !== deckLoadToken) return;
+    if (!deck) {
+      deckView = null;
+      showDeckError('Deck file missing — import it again');
+      $('#deck-review').disabled = true;
+      renderDeckReview();
+      return;
+    }
+    deckView = { setupId: setup.id, deck };
+    $('#deck-review').disabled = false;
+    setDeckStatus();
+    renderDeckReview();
+  }
+
+  function renderDeckReview() {
+    const panel = $('#deck-review-panel');
+    const list = $('#deck-review-list');
+    $('#deck-review').textContent = deckReviewOpen && deckView ? 'Hide slides' : 'Review slides';
+    panel.classList.toggle('hidden', !deckReviewOpen || !deckView);
+    if (!deckView) { list.textContent = ''; deckRowsKey = ''; return; }
+    if (!deckReviewOpen) return;
+    const { setupId, deck } = deckView;
+    const key = setupId + '|' + deck.source.sha256 + '|' + deck.slides.map((s) => s.n).join(',');
+    if (key !== deckRowsKey) {
+      if (!deckRowsKey.startsWith(setupId + '|')) deckExpanded.clear();
+      list.textContent = '';
+      for (const slide of deck.slides) list.appendChild(buildDeckRow(setupId, slide.n));
+      if (!deck.slides.length) {
+        const empty = document.createElement('div');
+        empty.className = 'deck-review-empty';
+        empty.textContent = 'This deck has no slides.';
+        list.appendChild(empty);
+      }
+      deckRowsKey = key;
+    }
+    for (const row of list.querySelectorAll('.deck-slide')) {
+      const slide = deck.slides.find((s) => s.n === Number(row.dataset.n));
+      if (slide) syncDeckRow(row, slide);
+    }
+  }
+
+  function currentSlide(setupId, n) {
+    return deckView && deckView.setupId === setupId ? deckView.deck.slides.find((s) => s.n === n) : null;
+  }
+
+  function deckLabel(text, hint) {
+    const el = document.createElement('div');
+    el.className = 's-label';
+    el.textContent = text;
+    if (hint) {
+      const h = document.createElement('span');
+      h.className = 's-hint';
+      h.textContent = hint;
+      el.appendChild(h);
+    }
+    return el;
+  }
+
+  function buildDeckRow(setupId, n) {
+    const row = document.createElement('div');
+    row.className = 'deck-slide';
+    row.dataset.n = String(n);
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'deck-slide-head';
+    const title = document.createElement('span');
+    title.className = 'deck-slide-title';
+    const tags = document.createElement('span');
+    tags.className = 'deck-slide-tags';
+    head.append(title, tags);
+    const body = document.createElement('div');
+    body.className = 'deck-slide-body';
+    body.classList.toggle('hidden', !deckExpanded.has(n));
+    head.setAttribute('aria-expanded', String(deckExpanded.has(n)));
+    head.addEventListener('click', () => {
+      const open = !body.classList.toggle('hidden');
+      if (open) deckExpanded.add(n); else deckExpanded.delete(n);
+      head.setAttribute('aria-expanded', String(open));
+    });
+
+    const keyIdea = document.createElement('input');
+    keyIdea.className = 's-input';
+    keyIdea.type = 'text';
+    keyIdea.maxLength = 120;
+    keyIdea.dataset.field = 'keyIdea';
+    keyIdea.setAttribute('aria-label', 'Key idea');
+    const points = document.createElement('textarea');
+    points.rows = 4;
+    points.spellcheck = false;
+    points.dataset.field = 'points';
+    points.setAttribute('aria-label', 'Talking points');
+    const questions = document.createElement('textarea');
+    questions.rows = 3;
+    questions.spellcheck = false;
+    questions.dataset.field = 'questions';
+    questions.setAttribute('aria-label', 'Likely questions');
+    const again = document.createElement('button');
+    again.type = 'button';
+    again.className = 's-action';
+    again.textContent = 'Generate again';
+    body.append(deckLabel('Key idea'), keyIdea, deckLabel('Talking points', 'one per line'), points,
+      deckLabel('Likely questions', 'one per line'), questions, again);
+    row.append(head, body);
+
+    const fields = { keyIdea, points, questions };
+    // A text field fires change when it loses focus with a new value.
+    for (const field of Object.values(fields)) {
+      field.addEventListener('change', () => {
+        const slide = currentSlide(setupId, n);
+        if (slide) saveDeckSlide(setupId, slide, fields);
+      });
+    }
+    again.addEventListener('click', async () => {
+      const slide = currentSlide(setupId, n);
+      if (!slide) return;
+      deckProgress.delete(setupId);
+      let res;
+      try { res = await cue.deckRegenerate(setupId, slide.n); } catch (error) { res = { error: error && error.message ? error.message : String(error) }; }
+      afterDeckRegenerate(setupId, res);
+    });
+    return row;
+  }
+
+  function syncDeckRow(row, slide) {
+    const head = row.querySelector('.deck-slide-head');
+    head.querySelector('.deck-slide-title').textContent = slide.n + ' · ' + (slide.title || 'Untitled slide');
+    const tags = head.querySelector('.deck-slide-tags');
+    tags.textContent = '';
+    const tag = (text, cls) => {
+      const el = document.createElement('span');
+      el.className = 'deck-tag' + (cls ? ' ' + cls : '');
+      el.textContent = text;
+      tags.appendChild(el);
+    };
+    if (slide.edited) tag('edited');
+    if (slide.enrichError) tag('not generated', 'failed');
+    // Never overwrite the field being typed in.
+    const values = { keyIdea: slide.keyIdea || '', points: (slide.points || []).join('\n'), questions: (slide.questions || []).join('\n') };
+    for (const field of row.querySelectorAll('[data-field]')) {
+      if (document.activeElement !== field) field.value = values[field.dataset.field];
+    }
+  }
+
+  async function saveDeckSlide(setupId, slide, fields) {
+    let res;
+    try {
+      res = await cue.deckUpdateSlide(setupId, slide.n, {
+        keyIdea: fields.keyIdea.value.trim().slice(0, 120),
+        points: parseLines(fields.points.value).map((line) => line.slice(0, 140)),
+        questions: parseLines(fields.questions.value).map((line) => line.slice(0, 160))
+      });
+    } catch (error) {
+      res = { error: error && error.message ? error.message : String(error) };
+    }
+    if (!deckView || deckView.setupId !== setupId) return;
+    if (res && res.deck) {
+      deckView = { setupId, deck: res.deck };
+      setDeckStatus();
+      renderDeckReview();
+    } else if (res && res.error) {
+      showDeckError(res.error);
+    }
+  }
+
+  function afterDeckRegenerate(setupId, res) {
+    if (!res || res.error) {
+      if (editingSetupId === setupId) showDeckError((res && res.error) || 'Could not start generating.');
+      return;
+    }
+    // Progress may already have arrived (no AI provider reports at once).
+    if (res.started && !deckProgress.has(setupId)) deckProgress.set(setupId, { done: 0, total: Math.ceil(res.started / 8) });
+    if (editingSetupId === setupId) renderDeckBlock();
+  }
+
+  cue.on('deck:progress', ({ setupId, done, total }) => {
+    deckProgress.set(setupId, { done, total });
+    if (editingSetupId === setupId) renderDeckBlock();
+  });
+
+  $('#deck-review').addEventListener('click', () => {
+    deckReviewOpen = !deckReviewOpen;
+    renderDeckReview();
+  });
+  $('#deck-regenerate-unedited').addEventListener('click', async () => {
+    if (!deckView) return;
+    const { setupId } = deckView;
+    deckProgress.delete(setupId);
+    let res;
+    try { res = await cue.deckRegenerate(setupId, 'unedited'); } catch (error) { res = { error: error && error.message ? error.message : String(error) }; }
+    afterDeckRegenerate(setupId, res);
+  });
 
   function fillSetupForm(id) {
     editingSetupId = id || settings.activeSetupId;
@@ -2148,7 +2436,9 @@
     $('#questions-to-ask').value = setup.questionsToAsk || '';
     $('#setup-instructions').value = setup.instructions || '';
     $('#setup-save').checked = !!setup.saveSessions;
+    $('#setup-duration').value = String(setup.durationMin || 45);
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
+    if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
   }
 
@@ -2169,6 +2459,10 @@
       instructions: $('#setup-instructions').value.trim(),
       saveSessions: $('#setup-save').checked
     };
+    if (patch.kind === 'presentation') {
+      const minutes = Number.parseInt($('#setup-duration').value, 10);
+      patch.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, minutes)) : (setup.durationMin || 45);
+    }
     settings.setups = settings.setups.map((s) => (s.id === setup.id ? { ...s, ...patch } : s));
   }
 
@@ -2197,7 +2491,7 @@
     applyKindToForm(b.dataset.kind);
     // A new kind brings its default save switch only for a setup that never had content.
     const s = editingSetup();
-    if (!s.conversation && !s.notes) $('#setup-save').checked = b.dataset.kind === 'interview';
+    if (!s.conversation && !s.notes) $('#setup-save').checked = b.dataset.kind !== 'general';
   }));
   $('#setup-new').addEventListener('click', () => {
     collectSetupForm();
@@ -2213,6 +2507,8 @@
     const copy = { ...setupsModel.makeSetup({ kind: source.kind }), ...source };
     copy.id = setupsModel.makeSetup().id;
     copy.name = source.name + ' copy';
+    // Deck files belong to one setup; the copy imports its own.
+    if (copy.kind === 'presentation') copy.deck = null;
     settings.setups = [...settings.setups, copy];
     fillSetupForm(copy.id);
   });
@@ -2227,6 +2523,32 @@
       lastActiveSetupId = settings.activeSetupId;
     }
     fillSetupForm(settings.activeSetupId);
+  });
+  $('#deck-import').addEventListener('click', async () => {
+    const button = $('#deck-import');
+    const setupId = editingSetupId;
+    button.disabled = true;
+    try {
+      // Main reads the setup from the saved file, so a new setup, or one just
+      // switched to Presentation, is saved first.
+      if (!(await saveSettings())) return;
+      deckProgress.delete(setupId);
+      const res = await cue.deckImport(setupId);
+      if (!res || res.canceled) return;
+      if (res.error) { if (editingSetupId === setupId) showDeckError(res.error); return; }
+      if (res.unchanged) showToast('Same file as the current deck · nothing changed', 2000);
+      if (editingSetupId !== setupId) return;
+      await renderDeckBlock();
+      // Batches report as they finish; until the first one does, show the count.
+      if (!res.unchanged && deckView && deckView.setupId === setupId && !deckProgress.has(setupId)) {
+        const pending = deckPending(deckView.deck);
+        if (pending) { deckProgress.set(setupId, { done: 0, total: Math.ceil(pending / 8) }); setDeckStatus(); }
+      }
+    } catch (error) {
+      if (editingSetupId === setupId) showDeckError(error && error.message ? error.message : String(error));
+    } finally {
+      button.disabled = false;
+    }
   });
   $('#setup-activate').addEventListener('click', async () => {
     collectSetupForm();

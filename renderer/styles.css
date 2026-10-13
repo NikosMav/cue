@@ -976,6 +976,28 @@ button:focus { outline: none; }
 .setup-bar { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .setup-bar .s-select { flex: 1; }
 .interview-only.hidden, .s-field.interview-only.hidden { display: none; }
+/* Presentation setups: deck import and the slide editor. Content swaps instantly. */
+.presentation-only.hidden { display: none; }
+.deck-duration { width: 110px; }
+.deck-bar { display: flex; align-items: center; gap: 8px; }
+.deck-status { flex: 1; min-width: 0; color: var(--tx-mut); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-status.error { color: #fca5a5; }
+.deck-review { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; background: rgba(0,0,0,0.18); }
+.deck-review.hidden { display: none; }
+.deck-review-actions { display: flex; justify-content: flex-end; }
+.deck-review-list { display: flex; flex-direction: column; gap: 4px; }
+.deck-review-empty { color: var(--tx-mut); font-size: 12px; padding: 4px 2px; }
+.deck-slide { border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-8); background: rgba(255,255,255,0.03); }
+.deck-slide-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: none; background: transparent; color: var(--tx-2); font: 500 12.5px var(--font); text-align: left; cursor: pointer; }
+.deck-slide-head:hover { color: #fff; }
+.deck-slide-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-tag { padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid rgba(255,255,255,0.14); color: var(--tx-mut); font-size: 10.5px; white-space: nowrap; }
+.deck-tag.failed { color: #fca5a5; border-color: rgba(239,68,68,0.35); }
+.deck-slide-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px; }
+.deck-slide-body.hidden { display: none; }
+.deck-slide-body .s-label { font-size: 12px; margin-top: 2px; }
+.deck-slide-body .s-action { align-self: flex-start; }
+/* end presentation setups */
 
 /* Setup switcher in the panel */
 #prep-status { align-items: center; }
