@@ -89,4 +89,28 @@ function parseEnrichResponse(text, batchNs) {
   return out;
 }
 
-module.exports = { buildEnrichRequest, parseEnrichResponse, extractJson };
+function buildMatchRequest({ slides, hint }) {
+  const system =
+    'You are cue, working out which slide of a deck a presenter is showing. ' +
+    'The attached image is a screenshot of their screen. Decide which of the listed slides it shows. ' +
+    'Answer with only {"slide": n}, or {"slide": null} when the screen is not one of these slides (for example a demo, a browser or another app). ' +
+    'No other text.';
+  const lines = (slides || []).map(s => {
+    const body = String(s.body || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    return s.n + ': ' + (s.title || '') + ' | ' + body;
+  }).join('\n');
+  let text = 'Slides:\n' + lines;
+  if (Number.isInteger(hint) && hint >= 1) {
+    text += '\n\nThe presenter was on slide ' + hint + '; slide ' + (hint + 1) + ' is most likely.';
+  }
+  return { system, turns: [{ role: 'user', text }], maxTokens: 30, effort: 'low' };
+}
+
+function parseMatchResponse(text, slideCount) {
+  const o = extractJson(text);
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const n = o.slide;
+  return Number.isInteger(n) && n >= 1 && n <= slideCount ? n : null;
+}
+
+module.exports = { buildEnrichRequest, parseEnrichResponse, extractJson, buildMatchRequest, parseMatchResponse };
