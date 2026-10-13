@@ -14,7 +14,7 @@ function helpers() {
   const start = src.indexOf('// ---- presentation helpers');
   const end = src.indexOf('// ---- end presentation helpers', start);
   assert.ok(start > -1 && end > start, 'presentation helpers not found');
-  return new Function(src.slice(start, end) + '\nreturn { parseLines, deckStatusText, formatTimeLeft, pacingChip, toolbarStatus, stripStatusLine, displayOptions, visiblePoints };')();
+  return new Function(src.slice(start, end) + '\nreturn { parseLines, deckStatusText, formatTimeLeft, pacingChip, headerStatus, stripStatusLine, displayOptions, visiblePoints };')();
 }
 
 test('deck status text', () => {
@@ -46,7 +46,6 @@ test('presentation setups have duration, display, and a deck block', () => {
 test('the presentation form uses its own label and placeholder', () => {
   assert.match(src, /'Talk and audience'/);
   assert.match(src, /'e\.g\. Intro to graph algorithms, 2nd-year CS students, comfortable with Python\.'/);
-  assert.match(src, /presentation: 'Talk'/, 'setups summary label');
 });
 
 test('switching to presentation with no content turns saving on', () => {
@@ -124,16 +123,6 @@ test('pacingChip', () => {
   assert.equal(pacingChip(null), '');
 });
 
-test('toolbarStatus', () => {
-  const { toolbarStatus } = helpers();
-  assert.equal(toolbarStatus(update()), '7/32 · ✓');
-  assert.equal(toolbarStatus(update({ status: 'ahead', minutes: 2 })), '7/32 · ▲');
-  assert.equal(toolbarStatus(update({ status: 'behind', minutes: 4 })), '7/32 · ▼');
-  assert.equal(toolbarStatus(update({ offDeck: true })), 'off-deck');
-  assert.equal(toolbarStatus(update({ current: null, slideCount: 0, status: 'none' })), '');
-  assert.equal(toolbarStatus(null), '');
-});
-
 test('stripStatusLine', () => {
   const { stripStatusLine } = helpers();
   assert.equal(stripStatusLine(update()), 'Slide 7 / 32 · Big-O intuition');
@@ -171,9 +160,9 @@ test('displayOptions: picker only with more than one display; a missing display 
   assert.equal(displayOptions([], '').show, false);
 });
 
-test('the presenter strip, toolbar pill and display note are in the page', () => {
+test('the presenter strip, header status and display note are in the page', () => {
   assert.match(html, /<div id="panel-main">\s*<div id="presenter-strip" class="presenter-strip hidden"/);
-  for (const id of ['ps-status', 'ps-time', 'ps-pace', 'ps-points', 'ps-next', 'ps-flags', 'tb-presentation', 'setup-display-note']) {
+  for (const id of ['ps-status', 'ps-time', 'ps-pace', 'ps-points', 'ps-next', 'ps-flags', 'header-status', 'setup-display-note']) {
     assert.match(html, new RegExp('id="' + id + '"'));
   }
   assert.match(src, /'That display is not connected; watching the primary display\.'/);

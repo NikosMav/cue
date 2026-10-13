@@ -4,12 +4,15 @@ const { acceleratorFromEvent, acceleratorParts, formatAccelerator } = require('.
 const { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./src/setups');
 const { findSetupSpecificLines } = require('./src/about-me-check');
 const { STT_LANGUAGES, resolveSttLanguage } = require('./src/stt-language');
+const { TEXT_DEFAULT, TEXT_MIN, TEXT_MAX, TEXT_STEP, answerScale } = require('./src/panel-layout');
 const platform = process.platform;
 
 contextBridge.exposeInMainWorld('cue', {
   platform,
   setupsModel: { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS, findSetupSpecificLines },
   sttLanguages: { list: STT_LANGUAGES, resolve: resolveSttLanguage },
+  // Answer text size limits and clamp (one source with the settings store).
+  panelText: { TEXT_DEFAULT, TEXT_MIN, TEXT_MAX, TEXT_STEP, answerScale },
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch),
   whisperModels: () => ipcRenderer.invoke('whisper:models'),

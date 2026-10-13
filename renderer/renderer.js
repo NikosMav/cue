@@ -12,9 +12,6 @@
   quitButton.title = isMac ? 'Quit cue (⌘⇧X)' : 'Quit cue (Ctrl+Shift+X)';
 
   // ---- paint icons -------------------------------------------------------
-  $('#logo-btn').innerHTML = icon('logo', { size: 18 });
-  $('.tb-hide .chev').innerHTML = icon('chevron-down', { size: 14 });
-  $('#stop-btn').innerHTML = icon('stop-square', { size: 15 });
   $('#quit-btn').innerHTML = icon('x', { size: 14 });
   document.querySelector('.act[data-mode="assist"] .ic').innerHTML = icon('sparkles', { size: 16 });
   document.querySelector('.act[data-mode="say"] .ic').innerHTML = icon('wand-sparkles', { size: 16 });
@@ -22,7 +19,6 @@
   document.querySelector('.act[data-mode="recap"] .ic').innerHTML = icon('refresh-cw', { size: 16 });
   $('#smart-toggle .ic').innerHTML = icon('zap', { size: 14 });
   $('#auto-toggle .ic').innerHTML = icon('wand-sparkles', { size: 14 });
-  $('#more-btn').innerHTML = icon('more-horizontal', { size: 18 });
   $('#send-btn').innerHTML = icon('play', { size: 15 });
   const clearIC = document.querySelector('#clear-transcript-btn .ic');
   if (clearIC) clearIC.innerHTML = icon('trash-2', { size: 15 });
@@ -306,30 +302,6 @@
     while (questionHistory.length > MAX_QUESTION_HISTORY) {
       questionHistory.shift();
     }
-    
-    updateHistoryBadge(); // Update badge when history changes
-  }
-  
-  // History button badge showing count
-  function updateHistoryBadge() {
-    const historyBtn = document.getElementById('history-btn');
-    if (!historyBtn) return;
-    
-    // Remove existing badge if any
-    let badge = historyBtn.querySelector('.history-badge');
-    
-    const count = questionHistory.length;
-    if (count > 0) {
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'history-badge';
-        historyBtn.appendChild(badge);
-      }
-      badge.textContent = count > 9 ? '9+' : count;
-      badge.style.display = '';
-    } else if (badge) {
-      badge.style.display = 'none';
-    }
   }
 
   // ---- Restore last question from history (Ctrl+Z) ----
@@ -342,7 +314,6 @@
       composer.classList.add('stt-filling');
       updateQuestionReadyState();
       syncPlaceholder();
-      updateHistoryBadge(); // Update badge after removing from history
       showToast('Question restored', 1500);
       return true;
     }
@@ -469,7 +440,6 @@
     clearInputInterim(); // Clear interim when clearing input
     syncPlaceholder();
     updateSendButtonState();
-    updateHistoryBadge();
     
     // Show undo hint when explicitly cleared
     if (showUndoHint && hadContent) {
@@ -625,12 +595,18 @@
   });
 
   // Hide / collapse
-  // Hide takes the transcript sidebar with it and brings it back on expand.
+  // Hide shrinks the window to the header (main does the resize), which stays
+  // visible. It takes the transcript sidebar with it and brings it back on expand.
   let reopenSidebarOnExpand = false;
+  function panelHidden() { return $('#panel').classList.contains('collapsed'); }
   function toggleHide() {
+    closePanelMenu();
+    closeSetupMenu();
     const collapsed = $('#panel').classList.toggle('collapsed');
-    $('#hide-btn').classList.toggle('collapsed', collapsed);
-    $('#live-dot').style.display = collapsed ? 'none' : '';
+    const hideBtn = $('#hide-btn');
+    hideBtn.classList.toggle('collapsed', collapsed);
+    hideBtn.textContent = collapsed ? 'Show' : 'Hide';
+    hideBtn.title = collapsed ? 'Show the panel' : 'Hide the panel';
     renderPresenterStrip();
     if (collapsed) {
       reopenSidebarOnExpand = sidebarOpen;
@@ -638,9 +614,95 @@
     } else if (reopenSidebarOnExpand) {
       showSidebar();
     }
+    cue.setHidden(collapsed, Math.ceil($('#header').getBoundingClientRect().height));
   }
+  // Screens and menus that open below the header need the panel shown first:
+  // main refuses to grow a hidden window.
+  function showPanel() { if (panelHidden()) toggleHide(); }
   $('#hide-btn').addEventListener('click', toggleHide);
   cue.on('hide:toggle', toggleHide);
+
+  // Start/stop: "● Listening" while capturing, "Start" otherwise.
+  function setCaptureButton(active) {
+    const btn = $('#stop-btn');
+    btn.classList.toggle('active', active);
+    btn.textContent = active ? '● Listening' : 'Start';
+    btn.title = active ? 'Stop listening' : 'Start listening';
+  }
+
+  // ---- panel menu helpers (pure; test/renderer-panel.test.js evaluates them)
+  // Review slides only applies to a presentation setup.
+  function menuActionVisible(action, setupKind) {
+    return action !== 'review-slides' || setupKind === 'presentation';
+  }
+  // ---- end panel menu helpers
+
+  // ---- text size helpers (pure; test/renderer-panel.test.js evaluates them)
+  // One A−/A+ step from the saved size; `text` is src/panel-layout.js (via preload).
+  function stepTextSize(current, direction, text) {
+    return text.answerScale(text.answerScale(current) + direction * text.TEXT_STEP);
+  }
+  // ---- end text size helpers
+
+  // ---- ⋯ menu --------------------------------------------------------------
+  const panelMenu = $('#panel-menu');
+  const panelText = cue.panelText;
+  function closePanelMenu() {
+    panelMenu.classList.add('hidden');
+    $('#menu-btn').setAttribute('aria-expanded', 'false');
+  }
+  function renderPanelMenu() {
+    const setup = settings && activeSetupOf(settings);
+    panelMenu.querySelectorAll('[data-action]').forEach((item) => {
+      item.classList.toggle('hidden', !menuActionVisible(item.dataset.action, setup && setup.kind));
+    });
+    applyTextSize(settings ? settings.answerTextPx : panelText.TEXT_DEFAULT);
+  }
+  // Text size drives --answer-px on #app; the answers read it (styles.css).
+  function applyTextSize(px) {
+    const size = panelText.answerScale(px);
+    $('#app').style.setProperty('--answer-px', size + 'px');
+    $('#text-size-value').textContent = String(size);
+    return size;
+  }
+  async function changeTextSize(direction) {
+    if (!settings) return;
+    const size = applyTextSize(stepTextSize(settings.answerTextPx, direction, panelText));
+    if (size === panelText.answerScale(settings.answerTextPx)) return;
+    settings.answerTextPx = size;
+    try { await queueSettingsPatch({ answerTextPx: size }); }
+    catch (err) { showToast('Could not save the text size', 2000); }
+  }
+  async function openReviewSlides() {
+    if (!activePresentationSetup()) return;
+    await openSetupsTab(settings.activeSetupId);
+    deckReviewOpen = true;
+    renderDeckReview();
+  }
+  function runMenuAction(action) {
+    // Text size keeps the menu open so the new size can be read and stepped again.
+    if (action === 'text-smaller') { changeTextSize(-1); return; }
+    if (action === 'text-larger') { changeTextSize(1); return; }
+    closePanelMenu();
+    if (action === 'history') { showPanel(); toggleSidebar(); }
+    else if (action === 'sessions') openSessions();
+    else if (action === 'settings') openSettings();
+    else if (action === 'review-slides') openReviewSlides();
+  }
+  $('#menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeSetupMenu();
+    if (!panelMenu.classList.contains('hidden')) { closePanelMenu(); return; }
+    showPanel();
+    renderPanelMenu();
+    panelMenu.classList.remove('hidden');
+    $('#menu-btn').setAttribute('aria-expanded', 'true');
+  });
+  panelMenu.querySelectorAll('[data-action]').forEach((item) => item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runMenuAction(item.dataset.action);
+  }));
+  document.addEventListener('click', (e) => { if (!panelMenu.contains(e.target)) closePanelMenu(); });
   // Global scroll shortcuts: the panel never takes focus, so keys cannot scroll it.
   cue.on('answers:scroll', ({ direction }) => {
     releasePin();
@@ -652,8 +714,9 @@
     if (!settings) return;
     Object.assign(settings, patch);
     if ('autoAnswer' in patch) syncAutoButton();
+    if ('answerTextPx' in patch) applyTextSize(settings.answerTextPx);
     if ('setups' in patch) {
-      updatePrepStatus();
+      updateSetupStatus();
       // Main wrote a setup itself (a deck pointer after an import, the save
       // switch): take the saved revision too, or the next Save from Settings
       // is rejected as changed outside this window.
@@ -890,46 +953,6 @@
     if (sysStream) { sysStream.getTracks().forEach((t) => t.stop()); sysStream = null; }
   }
 
-  // ---- STT / VAD status helpers ------------------------------------------
-  // Live dot states: 'off' | 'idle' | 'speaking' | 'transcribing'
-  function setLiveDotState(dotState) {
-    const dot = document.getElementById('live-dot');
-    if (!dot) return;
-    dot.classList.remove('off', 'idle', 'speaking', 'transcribing');
-    dot.classList.add(dotState);
-    const labels = {
-      off:          'Not listening',
-      idle:         'Listening — silence detected',
-      speaking:     'Speech detected',
-      transcribing: 'Transcribing…'
-    };
-    dot.title = labels[dotState] || '';
-  }
-
-  let sttState = 'disconnected';
-
-  // The label shows what the user needs to know (is cue hearing the call?),
-  // not transport names such as "streaming" or "batch".
-  const STT_LABELS = {
-    disconnected: 'not listening', off: 'not listening', connecting: 'connecting…', batch: 'listening',
-    streaming: 'listening', local: 'listening · local', 'loading local': 'loading speech model',
-    stopping: 'stopping', error: 'listening error'
-  };
-  const sttLabelText = (state) => STT_LABELS[state] || state;
-
-  function updateSttStatus({ active, streaming } = {}) {
-    const label = document.getElementById('stt-status');
-    if (!label) return;
-    if (active === false) {
-      sttState = 'disconnected';
-      label.textContent = sttLabelText('off');
-    } else if (active === true) {
-      sttState = streaming ? 'connecting' : 'batch';
-      label.textContent = sttLabelText(sttState);
-    }
-    label.className = 'stt-status stt-' + sttState;
-  }
-
   // ---- transcript history sidebar (hidden by default, manual toggle) ----
   let tsSidebarInterimEl = null;
   let sidebarOpen = false;
@@ -940,9 +963,7 @@
 
   function showSidebar() {
     const sidebar = document.getElementById('transcript-sidebar');
-    const historyBtn = document.getElementById('history-btn');
     if (sidebar) sidebar.classList.remove('hidden');
-    if (historyBtn) historyBtn.classList.add('active');
     const panelWrap = document.getElementById('panel-wrap');
     if (panelWrap) panelWrap.classList.add('sidebar-open');
     sidebarOpen = true;
@@ -950,9 +971,7 @@
 
   function hideSidebar() {
     const sidebar = document.getElementById('transcript-sidebar');
-    const historyBtn = document.getElementById('history-btn');
     if (sidebar) sidebar.classList.add('hidden');
-    if (historyBtn) historyBtn.classList.remove('active');
     const panelWrap = document.getElementById('panel-wrap');
     if (panelWrap) panelWrap.classList.remove('sidebar-open');
     sidebarOpen = false;
@@ -971,13 +990,6 @@
         });
       }
     }
-  }
-
-  // History button toggle
-  const historyBtn = document.getElementById('history-btn');
-  if (historyBtn) {
-    historyBtn.innerHTML = icon('message-square-text', { size: 15 });
-    historyBtn.addEventListener('click', toggleSidebar);
   }
 
   // Close sidebar button
@@ -1063,16 +1075,10 @@
   }
 
   // ---- events from main --------------------------------------------------
-  cue.on('capture:state', ({ active, streaming, mode }) => {
-    setLiveDotState(active ? 'idle' : 'off');
-    $('#stop-btn').classList.toggle('active', active);
+  cue.on('capture:state', ({ active }) => {
+    setCaptureButton(active);
     // Add .listening class to composer when capture is active
     composer.classList.toggle('listening', active);
-    // Update history button to show active state when listening
-    const historyBtn = document.getElementById('history-btn');
-    if (historyBtn) {
-      historyBtn.classList.toggle('listening', active);
-    }
     // startSystemAudio() is called directly from the stop-button click handler
     // so that the getDisplayMedia request has a fresh user gesture.
     // Here we only start the mic (no gesture required) and stop everything on deactivate.
@@ -1088,14 +1094,6 @@
         interimEl.classList.remove('show');
       }
       // Don't auto-close sidebar — let user keep it open if they want
-    }
-    updateSttStatus({ active, streaming });
-    if (active && mode === 'local') {
-      sttState = 'local';
-      const label = document.getElementById('stt-status');
-      if (label) { label.textContent = sttLabelText('local'); label.className = 'stt-status stt-local'; }
-    } else {
-      updateSttStatus({ active, streaming });
     }
   });
 
@@ -1138,7 +1136,6 @@
   }
   
   cue.on('stt:interim', ({ channel, text }) => {
-    setLiveDotState('transcribing');
     const el = getOrCreateInterimEl();
     const label = channel === 'them' ? 'Them' : 'You';
     el.textContent = `${label}: ${text}`;
@@ -1151,7 +1148,6 @@
     }
   });
   cue.on('stt:final', ({ channel, text }) => {
-    setLiveDotState('idle');
     // Clear interim when we get a final
     if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
     clearTranscriptInterim();
@@ -1161,40 +1157,14 @@
   cue.on('stt:status', ({ channel, status, provider }) => {
     cue.log(`[stt] ${provider || channel || 'unknown'} ${status}`);
     if (provider === 'local') {
-      const label = document.getElementById('stt-status');
-      const localLabels = {
-        loading: 'loading local',
-        ready: 'local',
-        transcribing: 'local',
-        stopping: 'stopping',
-        off: 'off',
-        error: 'error'
-      };
-      sttState = status === 'ready' || status === 'transcribing' ? 'local' : status;
-      if (label) {
-        label.textContent = sttLabelText(localLabels[status] || status);
-        label.className = 'stt-status stt-' + sttState;
-      }
-      if (status === 'loading') $('#stop-btn').classList.add('active');
-      if (status === 'off' || status === 'error') $('#stop-btn').classList.remove('active');
-      if (status === 'loading' || status === 'transcribing' || status === 'stopping') setLiveDotState('transcribing');
-      if (status === 'ready') setLiveDotState('idle');
-      if (status === 'off') setLiveDotState('off');
-      return;
-    }
-    if (status === 'connected') {
-      sttState = 'streaming';
-      const label = document.getElementById('stt-status');
-      if (label) { label.textContent = sttLabelText(sttState); label.className = 'stt-status stt-streaming'; }
+      if (status === 'loading') setCaptureButton(true);
+      if (status === 'off' || status === 'error') setCaptureButton(false);
     }
   });
   cue.on('slides:update', ({ count, last }) => {
     if (!count) return;
     const title = last && last.caption ? last.caption.split('\n')[0].slice(0, 80) : 'Slide ' + count;
     showToast(`Slide ${count} captured · ${title}`, 3000);
-  });
-  cue.on('vad:state', ({ channel, speaking }) => {
-    setLiveDotState(speaking ? 'speaking' : 'idle');
   });
   cue.on('llm:start', ({ id, userBubble, small, category, auto, mode }) => {
     if (mode === 'practiceQuestion') category = 'Practice question';
@@ -1326,17 +1296,9 @@
   cue.on('status', ({ message }) => {
     cue.log('[status] ' + message);
     showStatus(message);
-    if (sttState !== 'disconnected') {
-      const lower = message.toLowerCase();
-      if (lower.includes('error') || lower.includes(' off')) {
-        sttState = 'error';
-        const label = document.getElementById('stt-status');
-        if (label) { label.textContent = sttLabelText(sttState); label.className = 'stt-status stt-error'; }
-      }
-    }
   });
 
-  // ---- prep status & smart tooltip helpers -------------------------------
+  // ---- setup status & smart tooltip helpers ------------------------------
 
 
   // ---- AI rules: live char counter + soft cap ---------------------------
@@ -1356,11 +1318,11 @@
   function updateSavingIndicator() {
     const setup = settings && activeSetupOf(settings);
     const on = !!(setup && setup.saveSessions && (capturing || practiceActive));
-    $('#setup-saving').classList.toggle('hidden', !on);
+    $('#setup-saving-dot').classList.toggle('hidden', !on);
   }
 
   let lastActiveSetupId = null;
-  function updatePrepStatus() {
+  function updateSetupStatus() {
     if (!settings) return;
     const setup = activeSetupOf(settings);
     if (!setup) return;
@@ -1371,21 +1333,8 @@
     }
     lastActiveSetupId = setup.id;
     $('#setup-switch-name').textContent = setup.name;
-    const about = settings.aboutMe || {};
-    const loaded = {
-      about: !!((about.resumeText || '').trim() || (about.stories || '').trim()),
-      conversation: !!(setup.conversation || '').trim(),
-      notes: !!(setup.notes || '').trim()
-    };
-    const labels = { about: 'About me', conversation: { interview: 'Role', presentation: 'Talk' }[setup.kind] || 'Context', notes: 'Notes' };
-    document.querySelectorAll('#prep-status .prep-item').forEach((el) => {
-      const field = el.dataset.field;
-      el.textContent = labels[field];
-      el.classList.toggle('loaded', loaded[field]);
-      el.classList.toggle('missing', !loaded[field]);
-      el.title = labels[field] + (loaded[field] ? ' loaded — click to edit' : ' not set — click to add');
-    });
     updateSavingIndicator();
+    if (!panelMenu.classList.contains('hidden')) renderPanelMenu();
     renderPresenterStrip();
     return maybeShowPresentationHint();
   }
@@ -1405,7 +1354,7 @@
         if (s.id === settings.activeSetupId) return;
         try {
           settings = await queueSettingsPatch({ activeSetupId: s.id });
-          const hinted = updatePrepStatus();
+          const hinted = updateSetupStatus();
           if (messages.querySelector('.empty-state')) showEmptyState();
           if (!hinted) showToast('Setup: ' + s.name, 1500);
         } catch (err) {
@@ -1427,20 +1376,11 @@
   }
   $('#setup-switch').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (setupMenu.classList.contains('hidden')) { renderSetupMenu(); setupMenu.classList.remove('hidden'); }
+    closePanelMenu();
+    if (setupMenu.classList.contains('hidden')) { showPanel(); renderSetupMenu(); setupMenu.classList.remove('hidden'); }
     else closeSetupMenu();
   });
   document.addEventListener('click', (e) => { if (!setupMenu.contains(e.target)) closeSetupMenu(); });
-  // Indicators open where that material is edited.
-  document.querySelectorAll('#prep-status .prep-item').forEach((el) => el.addEventListener('click', async () => {
-    if (el.dataset.field === 'about') {
-      await openSettings();
-      const tab = document.querySelector('.s-tab[data-tab="about"]');
-      if (tab) tab.click();
-    } else {
-      openSetupsTab(settings.activeSetupId);
-    }
-  }));
   cue.on('capture:state', (st) => { capturing = !!(st && st.active); updateSavingIndicator(); });
 
   function updateSmartTooltip() {
@@ -1501,6 +1441,7 @@
   $('#panel-opacity').addEventListener('input', (e) => applyPanelOpacity(Number(e.target.value) / 100));
 
   async function openSettings() {
+    showPanel();
     settingsFormReady = false;
     $('#s-close').disabled = true;
     try { settings = await cue.settingsGet(); }
@@ -1516,7 +1457,6 @@
     refreshWhisperModels();
     refreshShortcuts();
   }
-  $('#more-btn').addEventListener('click', openSettings);
   $('#settings-reload').addEventListener('click', openSettings);
   $('#s-close').addEventListener('click', () => { void closeSettings(); });
   scrim.addEventListener('click', (e) => { if (e.target === scrim) void closeSettings(); });
@@ -2115,14 +2055,12 @@
     if (status === 'behind') return '▼ behind ' + minutes + ' min';
     return '';
   }
-  // The pill in the toolbar while the panel is collapsed.
-  function toolbarStatus(update) {
-    const snap = (update && update.snapshot) || {};
-    const count = snap.slideCount || 0;
-    if (!count) return '';
-    if (snap.offDeck) return 'off-deck';
-    const mark = { on: '✓', ahead: '▲', behind: '▼' }[snap.pacing && snap.pacing.status] || '';
-    return (update.slide ? update.slide.n : '–') + '/' + count + (mark ? ' · ' + mark : '');
+  // The header's status while the panel is hidden: pacing and time left.
+  function headerStatus(update) {
+    if (!update || !update.snapshot) return '';
+    const snap = update.snapshot;
+    const pace = snap.offDeck ? 'off-deck' : pacingChip(snap.pacing);
+    return [pace, formatTimeLeft(snap.remainingMs)].filter(Boolean).join(' · ');
   }
   // First line of the presenter strip; empty without a deck.
   function stripStatusLine(update) {
@@ -2189,7 +2127,7 @@
     }
   }
 
-  // ---- presenter strip, toolbar pill and first-use hint -------------------
+  // ---- presenter strip, header status and first-use hint ------------------
   // main sends presentation:update only while listening with a presentation
   // setup; the last one stays on screen after listening stops.
   let presentationUpdate = null;
@@ -2220,11 +2158,11 @@
   function renderPresenterStrip() {
     applyModeLabels();
     const strip = $('#presenter-strip');
-    const pill = $('#tb-presentation');
+    const headerStatusEl = $('#header-status');
     const setup = activePresentationSetup();
     if (!setup) {
       strip.classList.add('hidden');
-      pill.classList.add('hidden');
+      headerStatusEl.classList.add('hidden');
       return;
     }
     const update = presentationUpdate && presentationUpdateKey === presentationKey(setup) ? presentationUpdate : idlePresentationUpdate(setup);
@@ -2262,9 +2200,10 @@
     // first point, so the answer gets the room in the fixed-height panel.
     strip.classList.toggle('answering', presentationAnswerShown);
     strip.classList.remove('hidden');
-    const status = toolbarStatus(update);
-    pill.textContent = status;
-    pill.classList.toggle('hidden', !status || !$('#panel').classList.contains('collapsed'));
+    const status = headerStatus(update);
+    headerStatusEl.textContent = status;
+    headerStatusEl.className = 'header-status ' + ((snap.pacing && snap.pacing.status) || '');
+    headerStatusEl.classList.toggle('hidden', !status || !panelHidden());
   }
   $('#ps-flags').addEventListener('click', () => {
     presentationFlagsOpen = !presentationFlagsOpen;
@@ -2856,7 +2795,7 @@
       settings = await cue.settingsSet(settings);
       if (messages.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed
       $('#s-status').textContent = statusText();
-      updatePrepStatus();
+      updateSetupStatus();
       updateSmartTooltip();
       return true;
     } catch (error) {
@@ -2911,7 +2850,6 @@
   let openSessionId = null;
   let debriefingId = null;
   let debriefRaw = '';
-  $('#sessions-btn .ic').innerHTML = icon('archive', { size: 15 });
 
   function formatWhen(ms) {
     return new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -3045,12 +2983,12 @@
   }
 
   function openSessions() {
+    showPanel();
     sessionsScrim.classList.remove('hidden');
     showSessionsList();
   }
   function closeSessions() { sessionsScrim.classList.add('hidden'); }
 
-  $('#sessions-btn').addEventListener('click', openSessions);
   $('#sessions-close').addEventListener('click', closeSessions);
   sessionsScrim.addEventListener('click', (e) => { if (e.target === sessionsScrim) closeSessions(); });
   $('#session-back').addEventListener('click', showSessionsList);
@@ -3060,7 +2998,7 @@
     sessionsView = await cue.sessionsSetEnabled(e.target.checked);
     renderSessionsList();
     settings = await cue.settingsGet();
-    updatePrepStatus();
+    updateSetupStatus();
     showToast(e.target.checked ? 'Sessions will be saved on this computer' : 'Saving off · sessions already saved are kept', 2500);
   });
   $('#sessions-choose-dir').addEventListener('click', async () => { sessionsView = await cue.sessionsChooseExportDir(); renderSessionsList(); });
@@ -3182,6 +3120,13 @@
 
   // ---- global keys -------------------------------------------------------
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !panelMenu.classList.contains('hidden')) { closePanelMenu(); return; }
+    if (e.key === 'Escape' && !setupMenu.classList.contains('hidden')) { closeSetupMenu(); return; }
+    // Text size: window keys only (the panel rarely has focus; the ⋯ menu is the main path).
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); changeTextSize(1); return; }
+      if (e.key === '-') { e.preventDefault(); changeTextSize(-1); return; }
+    }
     if (e.key === 'Escape' && !scrim.classList.contains('hidden')) void closeSettings();
     else if (e.key === 'Escape' && !sessionsScrim.classList.contains('hidden')) closeSessions();
     // Escape with nothing else to close stops the answer being written.
@@ -3193,9 +3138,9 @@
   // The renderer reports where its UI is and the main process compares the
   // cursor with it (src/click-through.js). Deciding here from mousemove
   // failed: Windows forwards those unreliably while the window is
-  // click-through, and never over the drag handle, so a direct grab of Drag
-  // went to the app behind.
-  const UI_SELECTORS = '#toolbar, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #onboard-scrim, #consent-scrim';
+  // click-through, and never over the drag handle, so a direct grab of the
+  // header went to the app behind.
+  const UI_SELECTORS = '#header, #panel-menu, #setup-menu, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #publik-scrim, #consent-scrim';
   let lastUiRects = '';
   let uiRectsFrame = null;
   function reportUiRects() {
@@ -3255,73 +3200,37 @@
     if (e.key === 'Escape' && pendingConsentId) { e.preventDefault(); answerConsent(false); }
   });
 
-  // ---- onboarding / first-run tutorial -----------------------------------
-  const obScrim = $('#onboard-scrim');
-  const permissionHelp = isWindows
-    ? 'cue needs permission to see and hear. Open Windows Privacy & security settings, allow <strong>Microphone</strong> and <strong>Screen recording</strong> for cue, then come back here.'
-    : 'cue needs two macOS permissions. Click each button, turn <strong>cue</strong> ON in the window that opens, then come back here.';
-  const permissionButtons = isWindows
-    ? [
-        { label: 'Open Microphone settings', action: () => cue.openPane('ms-settings:privacy-microphone') },
-        { label: 'Open Screen recording settings', action: () => cue.openPane('ms-settings:privacy-screenrecorder') }
-      ]
-    : [
-        { label: 'Open Microphone settings', action: () => cue.openPane('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone') },
-        { label: 'Open Screen Recording settings', action: () => cue.openPane('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture') }
-      ];
-  const assistShortcut = isWindows ? '<span class="kbd">Ctrl</span> <span class="kbd">↵</span>' : '<span class="kbd">⌘</span> <span class="kbd">↵</span>';
-  const solveShortcut = isWindows ? '<span class="kbd">Ctrl</span> <span class="kbd">H</span>' : '<span class="kbd">⌘</span> <span class="kbd">H</span>';
-  const shotShortcut = isWindows ? '<span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">H</span>' : '<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">H</span>';
-  const quitShortcut = isWindows ? '<span class="kbd">Ctrl</span><span class="kbd">⇧</span><span class="kbd">X</span>' : '<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">X</span>';
-  const OB_STEPS = [
-    {
-      icon: '👋',
-      title: 'Welcome to cue',
-      body: 'cue is a private AI copilot that floats over your screen. It can <strong>see your screen</strong>, <strong>hear your meetings</strong>, and help you answer questions or solve coding problems — while staying hidden from most screen shares.<br><br>This quick guide gets you running in about a minute.'
-    },
-    {
-      icon: '🔐',
-      title: 'Allow cue to see & hear',
-      body: permissionHelp + '<ul><li><strong>Microphone</strong> — to hear you</li><li><strong>Screen recording</strong> — to see your screen and hear meeting audio</li></ul>',
-      buttons: permissionButtons
-    },
-    {
-      icon: '🔑',
-      title: 'Connect an AI provider',
-      body: 'cue uses <strong>your own</strong> API key — pick <span class="hl">OpenAI</span>, <span class="hl">Anthropic</span>, <span class="hl">Google Gemini</span>, or <span class="hl">Azure AI Foundry</span>. Get a key from your provider, then paste it into cue\'s Settings.<br><br><strong>Tip:</strong> For the <em>best</em> real-time listening, add a <span class="hl">Deepgram</span> key (lowest latency streaming transcription). Otherwise, an OpenAI key enables streaming via the Realtime API, and Gemini/Whisper work as batch fallbacks.',
-      buttons: [{ label: 'Open cue Settings', action: () => { finishOnboard(); openSettings(); } }]
-    },
-    {
-      icon: '🫥',
-      title: 'Stay hidden in Zoom',
-      body: 'cue is hidden from most screen shares automatically (Google Meet, Teams, QuickTime — nothing to do). <strong>Zoom needs one setting:</strong><br><br>Zoom → <span class="hl">Settings</span> → <span class="hl">Share Screen</span> → <span class="hl">Advanced</span> → <strong>Screen capture mode</strong> → choose <strong>“Advanced capture with window filtering.”</strong><br><br>Avoid “<strong>without</strong> window filtering” — that mode reveals cue.'
-    },
-    {
-      icon: '✨',
-      title: 'You’re all set',
-      body: 'How to use cue:<ul><li>' + assistShortcut + ' — <strong>Assist</strong> with whatever\'s on screen or being said</li><li>' + solveShortcut + ' — solve a coding problem on screen (add parts of a long problem first with ' + shotShortcut + ')</li><li>Click <strong>▢</strong> in the top bar to start listening to a meeting; turn on <strong>Auto</strong> to answer each question as soon as it is asked</li><li>Type a question and press <span class="kbd">↵</span>; press <span class="kbd">Esc</span> to stop an answer</li></ul>Reopen this guide anytime by clicking the <strong>cue logo</strong>. Quit with ' + quitShortcut + '.'
-    }
-  ];
-  // First-run disclosure (R21 §4.3): two disclosures — cost and data path —
-  // and a visible "use my own key" branch. Copy comes from main (one source).
-  // Only "Continue" mints a key; Next/Skip never provision.
+  // ---- publik consent helpers (pure; test/renderer-panel.test.js evaluates them)
+  // The disclosure shows on its own at start-up while publik is the provider
+  // and this build's disclosure version has not been accepted.
+  function publikConsentPending(settings, publik) {
+    if (!settings || !publik || !publik.available || settings.provider !== 'publik') return false;
+    return (Number(publik.disclosureAccepted) || 0) < (Number(publik.disclosureVersion) || 1);
+  }
+  // ---- end publik consent helpers
+
+  // ---- publik consent dialog ---------------------------------------------
+  const publikScrim = $('#publik-scrim');
+  // Disclosure (R21 §4.3): two disclosures — cost and data path — and a
+  // visible "use my own key" branch. Copy comes from main (one source).
+  // Only "Continue" mints a key; closing the dialog never provisions.
   function publikStep() {
     const c = publikState.copy.disclosure;
     return {
       icon: '🪙',
       title: c.title,
       body: () => `${esc(c.intro)}<br><br><strong>Cost.</strong> ${esc(c.cost)}<br><br><strong>Where your prompts go.</strong> ${esc(c.dataPath)}` +
-        `<span class="ob-fine">${esc(c.terms)} <a id="ob-publik-terms">publik API terms</a></span>`,
+        `<span class="pd-fine">${esc(c.terms)} <a id="pd-publik-terms">publik API terms</a></span>`,
       buttons: [
         { label: c.accept, action: async () => {
-          const btns = $('#ob-buttons').querySelectorAll('button'); btns.forEach((b) => { b.disabled = true; });
+          const btns = $('#pd-buttons').querySelectorAll('button'); btns.forEach((b) => { b.disabled = true; });
           publikState = await cue.publikAcceptDisclosure(); settings.provider = 'publik'; renderPublikBlock();
           // CONTRACT §12.1: the card comes right after POST /installs succeeds,
           // with the real balance on it. Nothing is spent before it is seen.
           if (publikState.card) { showPublikCard(); return; }
-          if (obDialog) { hideOnboardDialog(); } else { obIndex++; renderOnboard(); }
+          hidePublikDialog();
         } },
-        { label: c.decline, action: () => { if (obDialog) hideOnboardDialog(); else finishOnboard(); openSettings(); selectByoProvider(); } }
+        { label: c.decline, action: () => { hidePublikDialog(); openSettings(); selectByoProvider(); } }
       ]
     };
   }
@@ -3330,14 +3239,13 @@
   // primary button that opens claim_url — and "Later", which keeps the key
   // and the balance. Everything is painted from publikState.card (src/publik.js
   // ctaView), so the copy has one source and the link rule is tested there.
+  // It has only these buttons: leaving it any other way would spend the
+  // starter without the card being acknowledged.
   function publikCardStep() {
     const card = publikState.card;
     const done = async () => {
       publikState = await cue.publikCardSeen(); renderPublikBlock();
-      const idx = OB_STEPS.findIndex((st) => st.publikCard);
-      if (idx >= 0) OB_STEPS.splice(idx, 1);
-      if (obDialog) { hideOnboardDialog(); return; }
-      if (obIndex >= OB_STEPS.length) finishOnboard(); else renderOnboard();
+      hidePublikDialog();
     };
     const buttons = [];
     if (card.primary) {
@@ -3348,84 +3256,41 @@
       icon: '✅',
       title: card.title,
       body: () => `<div class="publik-card-balance">${esc(card.balance)}</div><div class="publik-card-why">${esc(card.why)}</div>`,
-      buttons,
-      publikCard: true
+      buttons
     };
   }
   function esc(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
-  let obDialog = false; // true while the publik card is shown alone, after onboarding
+  function renderPublikDialog(step) {
+    showPanel();
+    $('#pd-icon').textContent = step.icon;
+    $('#pd-title').textContent = step.title;
+    $('#pd-body').innerHTML = step.body();
+    const termsLink = $('#pd-publik-terms');
+    if (termsLink) termsLink.addEventListener('click', () => cue.publikOpen(publikState.links.terms));
+    const btns = $('#pd-buttons'); btns.innerHTML = '';
+    step.buttons.forEach((b) => { const el = document.createElement('button'); el.textContent = b.label; if (b.primary) el.classList.add('pd-cta'); el.addEventListener('click', b.action); btns.appendChild(el); });
+    publikScrim.classList.remove('hidden'); scheduleUiRects();
+  }
+  function hidePublikDialog() { publikScrim.classList.add('hidden'); }
   function showPublikDisclosure() {
     if (!publikState || !publikState.available) return;
-    const idx = OB_STEPS.findIndex((st) => st.publik);
-    if (idx < 0) return;
-    obDialog = true;
-    $('#onboard').classList.add('dialog');
-    obIndex = idx; renderOnboard();
-    obScrim.classList.remove('hidden'); scheduleUiRects();
+    renderPublikDialog(publikStep());
   }
-  // Show the card: inside onboarding it becomes the next step; afterwards it
-  // is a dialog of its own (also reached from the "never a silent starter"
-  // gate in main.js runFeature).
+  // Also reached from Settings → Keys, an answer error's action, and the
+  // "never a silent starter" gate in main.js runFeature.
   function showPublikCard() {
     if (!publikState || !publikState.card) return;
-    const existing = OB_STEPS.findIndex((st) => st.publikCard);
-    if (existing >= 0) OB_STEPS.splice(existing, 1);
-    const inOnboarding = !obScrim.classList.contains('hidden') && !obDialog;
-    if (inOnboarding) {
-      const idx = OB_STEPS.findIndex((st) => st.publik);
-      OB_STEPS.splice(idx + 1, 0, publikCardStep());
-      obIndex = idx + 1; renderOnboard();
-      return;
-    }
-    OB_STEPS.push(publikCardStep());
-    obDialog = true;
-    $('#onboard').classList.add('dialog');
-    obIndex = OB_STEPS.length - 1; renderOnboard();
-    obScrim.classList.remove('hidden'); scheduleUiRects();
+    renderPublikDialog(publikCardStep());
   }
-  function hideOnboardDialog() { obDialog = false; $('#onboard').classList.remove('dialog'); obScrim.classList.add('hidden'); }
-
-  let obIndex = 0;
-  function renderOnboard() {
-    const step = OB_STEPS[obIndex];
-    $('#ob-icon').textContent = step.icon;
-    $('#ob-title').textContent = step.title;
-    $('#ob-body').innerHTML = typeof step.body === 'function' ? step.body() : step.body;
-    const termsLink = $('#ob-publik-terms');
-    if (termsLink) termsLink.addEventListener('click', () => cue.publikOpen(publikState.links.terms));
-    const btns = $('#ob-buttons'); btns.innerHTML = '';
-    (step.buttons || []).forEach((b) => { const el = document.createElement('button'); el.textContent = b.label; if (b.primary) el.classList.add('ob-cta'); el.addEventListener('click', b.action); btns.appendChild(el); });
-    // The publik card has its own two buttons and no Next/Skip: leaving it any
-    // other way would spend the starter without the card being acknowledged.
-    $('#onboard').classList.toggle('card', !!step.publikCard);
-    const dots = $('#ob-dots'); dots.innerHTML = '';
-    OB_STEPS.forEach((_, i) => { const d = document.createElement('span'); if (i === obIndex) d.className = 'on'; dots.appendChild(d); });
-    $('#ob-back').style.visibility = obIndex === 0 ? 'hidden' : 'visible';
-    $('#ob-next').textContent = obIndex === OB_STEPS.length - 1 ? 'Done' : 'Next';
-    $('#ob-skip').style.visibility = obIndex === OB_STEPS.length - 1 ? 'hidden' : 'visible';
-  }
-  function showOnboard() { obDialog = false; $('#onboard').classList.remove('dialog'); obIndex = 0; renderOnboard(); obScrim.classList.remove('hidden'); scheduleUiRects(); }
-  async function finishOnboard() {
-    if (obDialog) { hideOnboardDialog(); return; }
-    obScrim.classList.add('hidden');
-    if (settings && !settings.onboarded) { settings.onboarded = true; await cue.settingsSet({ onboarded: true }); }
-  }
-  $('#ob-next').addEventListener('click', () => { if (obIndex === OB_STEPS.length - 1) finishOnboard(); else { obIndex++; renderOnboard(); } });
-  $('#ob-back').addEventListener('click', () => { if (obIndex > 0) { obIndex--; renderOnboard(); } });
-  $('#ob-skip').addEventListener('click', finishOnboard);
-  $('#logo-btn').addEventListener('click', showOnboard);
 
   // ---- boot --------------------------------------------------------------
   (async function boot() {
     settings = await cue.settingsGet();
     applyPanelOpacity(settings.panelOpacity);
-    const platformInfo = await cue.platformInfo();
+    applyTextSize(settings.answerTextPx);
     publikState = await cue.publikState();
-    // A build with no app token never shows the option, and keeps the BYO
-    // onboarding card. With one, the "Connect an AI provider" card becomes the
-    // publik disclosure; the BYO branch stays one tap away on that card.
+    // A build with no app token never shows the option.
     $('#provider-publik').classList.toggle('hidden', !publikState.available);
-    if (publikState.available) OB_STEPS.splice(2, 1, { ...publikStep(), publik: true });
 
     // R4: shortcut hints
     const sayHintEl = document.getElementById('say-shortcut-hint');
@@ -3433,34 +3298,22 @@
     if (sayHintEl) sayHintEl.textContent = isWindows ? 'Ctrl+Shift+↵' : '⌘⇧↵';
     if (assistHintEl) assistHintEl.textContent = isWindows ? 'Ctrl+↵' : '⌘↵';
 
-    // R5: prep status
-    updatePrepStatus();
+    // R5: setup name and saving dot in the header
+    updateSetupStatus();
     // R6: smart tooltip
     updateSmartTooltip();
-    // Fix 3: Adjust permission buttons based on actual Windows version.
-    // ms-settings:privacy-screenrecorder only exists on Windows 11.
-    // On Windows 10, screen capture needs no permission — so replace the button
-    // with a more helpful note instead of an invalid settings link.
-    if (isWindows && platformInfo.winBuild > 0 && platformInfo.winBuild < 22000) {
-      // Windows 10: update the onboarding screen recording button to be more helpful
-      const ob = OB_STEPS[1];
-      ob.buttons = ob.buttons.filter((b) => !b.label.toLowerCase().includes('screen'));
-      ob.body = 'cue needs microphone permission to hear you. Click the button below to open Windows microphone settings and allow cue.<br><br><strong>Screen capture works automatically on Windows 10</strong> — no additional permission needed.<ul><li><strong>Microphone</strong> — to hear you</li><li><strong>Screen recording</strong> — works automatically on Windows 10</li></ul>';
-    }
 
     smartBtn.classList.toggle('on', !!settings.smart);
     syncAutoButton();
     showEmptyState();
     syncPlaceholder();
-    updateHistoryBadge(); // Initialize badge on boot
     updateSendButtonState(); // Initialize send button state
 
     // Placeholder and tooltips show the configured shortcuts for this platform.
     refreshShortcuts().catch(() => {});
 
     const st = await cue.captureState();
-    $('#live-dot').classList.toggle('off', !st.active);
-    $('#stop-btn').classList.toggle('active', st.active);
-    if (!settings.onboarded) showOnboard();
+    setCaptureButton(!!st.active);
+    if (publikConsentPending(settings, publikState)) showPublikDisclosure();
   })();
 })();
