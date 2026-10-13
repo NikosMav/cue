@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences, clipboard, powerMonitor } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, dialog, systemPreferences, clipboard, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -449,6 +449,23 @@ function setWindowOverlay(open) {
   scheduleBoundsSave();
 }
 
+// A reloaded (or crashed and reloaded) renderer starts shown with no overlay:
+// put back the bounds a hidden or overlay-grown window was standing in for.
+function resetTemporaryWindowSize() {
+  endResize();
+  if (!win || win.isDestroyed()) return;
+  const restore = windowState.hiddenRestore || windowState.overlayRestore;
+  Object.assign(windowState, { hidden: false, hiddenRestore: null, overlayRestore: null });
+  if (!restore) return;
+  // Keep where the user moved the window; only the size goes back.
+  const current = win.getBounds();
+  const next = clampBounds({ x: current.x, y: current.y, width: restore.width, height: restore.height }, workAreaFor(current));
+  windowState.size = { width: next.width, height: next.height };
+  win.setMinimumSize(MIN_SIZE.width, MIN_SIZE.height);
+  win.setBounds(next);
+  scheduleBoundsSave();
+}
+
 function createWindow() {
   // A new window starts at its saved size, not a previous window's temporary one.
   stopResize();
@@ -596,8 +613,9 @@ function createWindow() {
       });
     }
   });
-  // A reload or a crash loses the renderer's pointer-up: end any grip resize.
-  win.webContents.on('did-start-loading', endResize);
+  // A reload or a crash loses the renderer's pointer-up and its hidden or
+  // overlay state: end any grip resize and start the new page in a normal window.
+  win.webContents.on('did-start-loading', resetTemporaryWindowSize);
   win.webContents.on('render-process-gone', (_e, d) => {
     endResize();
     console.log('[cue] renderer gone', JSON.stringify(d));
@@ -2494,6 +2512,13 @@ function launchApp() {
 
 // -------- lifecycle --------
 app.whenReady().then(async () => {
+  // No application menu: its accelerators reloaded the page (Ctrl+R) and
+  // zoomed it (Ctrl+=/-). The renderer's own Ctrl+=/- step the text size.
+  // macOS keeps only the app and Edit menus, which copy and paste in text
+  // fields need there.
+  Menu.setApplicationMenu(process.platform === 'darwin'
+    ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
+    : null);
   // One-time move to setups, after a backup. A failure leaves the file as it
   // was; cue keeps reading it through the compatibility path.
   try {

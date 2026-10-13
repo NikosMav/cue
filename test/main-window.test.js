@@ -84,7 +84,8 @@ test('the intended size is recorded at create, resize end, show and overlay clos
 test('a lost grip resize ends on reload, renderer crash, hidden window or after 30 s', () => {
   assert.match(main, /const RESIZE_MAX_MS = 30000;/);
   assert.match(body('endResize'), /stopResize\(\);[\s\S]*scheduleBoundsSave\(\)/);
-  assert.match(main, /win\.webContents\.on\('did-start-loading', endResize\)/);
+  assert.match(main, /win\.webContents\.on\('did-start-loading', resetTemporaryWindowSize\)/);
+  assert.match(body('resetTemporaryWindowSize'), /endResize\(\);/);
   const gone = main.slice(main.indexOf("win.webContents.on('render-process-gone'"));
   assert.match(gone.slice(0, gone.indexOf('\n  });')), /endResize\(\)/);
 });
@@ -115,4 +116,24 @@ test('window protections are unchanged', () => {
   assert.match(main, /win\.setAlwaysOnTop\(true, 'screen-saver', 1\)/);
   assert.match(main, /winOptions\.type = 'toolbar'/);
   assert.match(main, /win\.showInactive\(\)/);
+});
+
+test('a reload or crash puts back the bounds a hidden or overlay-grown window stood in for', () => {
+  const reset = body('resetTemporaryWindowSize');
+  assert.match(reset, /endResize\(\);/);
+  assert.match(reset, /const restore = windowState\.hiddenRestore \|\| windowState\.overlayRestore;/);
+  assert.match(reset, /Object\.assign\(windowState, \{ hidden: false, hiddenRestore: null, overlayRestore: null \}\);/);
+  assert.match(reset, /win\.setMinimumSize\(MIN_SIZE\.width, MIN_SIZE\.height\);/);
+  assert.match(reset, /clampBounds\(\{ x: current\.x, y: current\.y, width: restore\.width, height: restore\.height \}, workAreaFor\(current\)\)/);
+  assert.match(reset, /win\.setBounds\(next\);/);
+  assert.match(main, /win\.webContents\.on\('did-start-loading', resetTemporaryWindowSize\)/);
+});
+
+test('the application menu is removed: no Ctrl+R reload or page zoom', () => {
+  const ready = main.slice(main.indexOf('app.whenReady().then('));
+  const call = ready.slice(ready.indexOf('Menu.setApplicationMenu('), ready.indexOf(');', ready.indexOf('Menu.setApplicationMenu(')));
+  assert.match(call, /: null$/, 'Windows and Linux get no menu');
+  assert.match(call, /process\.platform === 'darwin'\s*\? Menu\.buildFromTemplate\(\[\{ role: 'appMenu' \}, \{ role: 'editMenu' \}\]\)/, 'macOS keeps only the app and Edit menus');
+  assert.doesNotMatch(call, /viewMenu|reload|zoom/i);
+  assert.match(main.split('\n')[0], /\bMenu\b/);
 });
