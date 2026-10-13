@@ -226,7 +226,7 @@ test('the reading area is the only scrolling zone between a fixed header and foo
 });
 
 test('the footer is one row: answer actions, a gap, Smart, Auto and Ask', () => {
-  const row = element('action-row');
+  const row = container('action-row');
   assert.ok(!/class="sep"/.test(row), 'no separators');
   assert.ok(!html.includes('shortcut-hint') && !src.includes('shortcut-hint') && !css.includes('shortcut-hint'), 'hint spans are gone');
   const order = ['data-mode="say"', 'data-mode="assist"', 'data-mode="followup"', 'data-mode="recap"', 'class="ar-gap"', 'id="smart-toggle"', 'id="auto-toggle"', 'id="ask-btn"'];
@@ -335,4 +335,26 @@ test('the reading area and footer add no transitions or animations', () => {
     assert.ok(start > -1 && end > start, marker + ' styles not found');
     assert.doesNotMatch(css.slice(start, end), /transition|animation/, marker);
   }
+});
+
+test('practice swaps the answer buttons only: Smart, Auto and Ask stay in the row', () => {
+  const body = functionBody('setPracticeUI');
+  assert.doesNotMatch(body, /\$\('#action-row'\)\.classList\.toggle\('hidden'/, 'the whole row is not hidden');
+  assert.match(body, /\$\('#action-row'\)\.classList\.toggle\('practicing', active\)/);
+  assert.match(css, /#action-row\.practicing > \.act\[data-mode\] \{ display: none; \}/);
+  const row = container('action-row');
+  for (const id of ['practice-row', 'smart-toggle', 'auto-toggle', 'ask-btn']) assert.match(row, new RegExp('id="' + id + '"'), '#' + id + ' is in the row');
+  const practice = container('practice-row');
+  for (const id of ['smart-toggle', 'auto-toggle', 'ask-btn']) assert.ok(!practice.includes('id="' + id + '"'), '#' + id + ' is not inside the practice controls');
+  assert.ok(row.indexOf('id="practice-row"') < row.indexOf('class="ar-gap"'), 'practice controls sit where the answer buttons were');
+});
+
+test('an answer started without llm:start takes the scroll pin away from the archived one', () => {
+  assert.match(functionBody('startAi'), /pinnedGroup = null;/);
+});
+
+test('the Auto tooltip describes the main button, not Enter', () => {
+  const body = functionBody('syncAutoButton');
+  assert.doesNotMatch(body, /press Enter/);
+  assert.match(body, /the main button or its shortcut/);
 });

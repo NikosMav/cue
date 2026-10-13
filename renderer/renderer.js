@@ -126,6 +126,7 @@
   function startAi(small) {
     clearEmptyState();
     archiveLatest();
+    pinnedGroup = null; // the pinned answer may now be folded in Previous answers
     const group = document.createElement('div');
     group.className = 'response-group';
     aiEl = document.createElement('div');
@@ -315,7 +316,7 @@
     autoBtn.classList.toggle('on', !!settings.autoAnswer);
     autoBtn.title = settings.autoAnswer
       ? 'Auto-answer is on: cue answers a question from the other side when they finish asking (while listening)'
-      : 'Auto-answer is off: press Enter or the shortcut to answer';
+      : 'Auto-answer is off: use the main button or its shortcut to answer';
   }
   autoBtn.addEventListener('click', async () => {
     settings.autoAnswer = !settings.autoAnswer;
@@ -2708,7 +2709,8 @@
   function setPracticeUI(active) {
     practiceActive = active;
     $('#practice-row').classList.toggle('hidden', !active);
-    $('#action-row').classList.toggle('hidden', active);
+    // Only the answer buttons give way: Smart, Auto and Ask stay in the row.
+    $('#action-row').classList.toggle('practicing', active);
     // Practice is an interview: a general setup mid-run would mix the prompts.
     const setupSwitch = $('#setup-switch');
     setupSwitch.disabled = active;

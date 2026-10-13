@@ -61,17 +61,18 @@
                 <button class="act act-secondary" data-mode="assist" title="Assist · Scans your screen and conversation to decide what you need"><span class="ic"></span><span class="lbl">Assist</span></button>
                 <button class="act" data-mode="followup" title="Follow-up"><span class="ic"></span><span class="lbl">Follow-up</span></button>
                 <button class="act" data-mode="recap" title="Recap"><span class="ic"></span><span class="lbl">Recap</span></button>
+                <!-- Practice controls replace the four answer buttons while practising -->
+                <div id="practice-row" class="hidden">
+                  <span class="practice-badge">Practice</span>
+                  <button class="act act-primary" id="practice-next" title="Cue asks the next interview question">Next question</button>
+                  <button class="act act-secondary" id="practice-rate" title="Feedback on what you just said">Rate my answer</button>
+                  <button class="act" id="practice-voice" title="Read questions aloud with your system voice">Voice: on</button>
+                  <button class="act act-clear" id="practice-end" title="End practice and save it">End</button>
+                </div>
                 <span class="ar-gap"></span>
                 <button id="smart-toggle" class="smart-pill" type="button"><span class="ic"></span><span>Smart</span></button>
                 <button id="auto-toggle" class="smart-pill" type="button"><span class="ic"></span><span>Auto</span></button>
                 <button id="ask-btn" class="smart-pill" type="button" title="Type a question (Enter sends, Esc closes)" aria-expanded="false">✎ Ask</button>
-              </div>
-              <div id="practice-row" class="hidden">
-                <span class="practice-badge">Practice</span>
-                <button class="act act-primary" id="practice-next" title="Cue asks the next interview question">Next question</button>
-                <button class="act act-secondary" id="practice-rate" title="Feedback on what you just said">Rate my answer</button>
-                <button class="act" id="practice-voice" title="Read questions aloud with your system voice">Voice: on</button>
-                <button class="act act-clear" id="practice-end" title="End practice and save it">End</button>
               </div>
             </div>
           </div>

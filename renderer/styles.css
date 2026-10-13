@@ -273,6 +273,8 @@ button:focus { outline: none; }
 #action-row > * { flex-shrink: 0; }
 #action-row > .ar-gap { flex: 1 1 auto; min-width: 8px; }
 #action-row.compact .act:not(.act-primary) .lbl { display: none; }
+#action-row.practicing > .act[data-mode] { display: none; }
+#action-row > #practice-row { flex-wrap: nowrap; margin-top: 0; }
 .act {
   display: inline-flex; align-items: center; gap: 6px;
   border: none; background: transparent; cursor: pointer;
