@@ -258,3 +258,9 @@ test('a presentation session whose setup was deleted is debriefed as a presentat
   const e = settingsForSession({ setupsVersion: 1, setups: [] }, { setupId: 'gone', setupName: 'Old lecture', setupKind: 'presentation' });
   assert.equal(e.setupKind, 'presentation');
 });
+
+test('a deck pointer whose file only looks like .json is rejected', () => {
+  const mk = (file) => ({ id: 'p', name: 'L', kind: 'presentation', deck: { file, fileName: 'a.pptx', slideCount: 3, importedAt: 1 } });
+  const out = normalizeSetups({ setups: [mk('a/json'), { ...mk('a\\json'), id: 'q' }, { ...mk('abcxjson'), id: 'r' }] });
+  for (const s of out.setups.slice(1)) assert.equal(s.deck, null);
+});
