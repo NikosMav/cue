@@ -1,6 +1,7 @@
 // Writes test/fixtures/prompts-before-presentation.json: the full prompt
 // requests (system, user turns, category, cache prefix) of every interview and
-// general mode, plus both debriefs, for fixed inputs. Captured before the
+// general mode, plus the interview and general debriefs (including the
+// microphone-not-captured and empty branches), for fixed inputs. Captured before the
 // presentation layer was added; test/prompts-guard.test.js proves the
 // interview and general layers stay byte-identical.
 // Run: node scripts/dev/capture-prompts.js
@@ -55,6 +56,8 @@ const answers = [
   { mode: 'leetcode', prompt: '', text: 'def solve(): pass', ts: T0 + 30000 }
 ];
 
+const theirTurns = transcript.filter(t => t.channel === 'them');
+
 const codingAnswers = [{ mode: 'leetcode', prompt: '', text: 'def solve(): return 1', ts: T0 + 30000 }];
 
 const modes = Object.keys(MODES);
@@ -68,6 +71,9 @@ function capture(settings) {
   out['ask:afterCoding'] = buildPromptRequest(settings, 'ask', transcript, 'Can you make it faster?', { now: NOW, answers: codingAnswers });
   out.debrief = buildDebriefRequest(settings, { kind: 'interview', transcript, answers });
   out['debrief:practice'] = buildDebriefRequest(settings, { kind: 'practice', transcript, answers });
+  // The microphone-not-captured branch, and an empty session.
+  out['debrief:noUser'] = buildDebriefRequest(settings, { kind: 'interview', transcript: theirTurns, answers });
+  out['debrief:empty'] = buildDebriefRequest(settings, { kind: 'interview', transcript: [], answers: [] });
   return out;
 }
 

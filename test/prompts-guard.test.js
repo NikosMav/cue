@@ -19,6 +19,8 @@ function rebuild(settings) {
   out['ask:afterCoding'] = buildPromptRequest(settings, 'ask', transcript, askAfterCoding, { now, answers: codingAnswers });
   out.debrief = buildDebriefRequest(settings, { kind: 'interview', transcript, answers });
   out['debrief:practice'] = buildDebriefRequest(settings, { kind: 'practice', transcript, answers });
+  out['debrief:noUser'] = buildDebriefRequest(settings, { kind: 'interview', transcript: transcript.filter(t => t.channel === 'them'), answers });
+  out['debrief:empty'] = buildDebriefRequest(settings, { kind: 'interview', transcript: [], answers: [] });
   return JSON.parse(JSON.stringify(out));
 }
 
