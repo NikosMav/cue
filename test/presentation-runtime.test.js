@@ -275,3 +275,23 @@ test('recordCoverage stores results per slide', () => {
   rt.recordCoverage(2, { status: 'missed', missing: 'x' });
   assert.deepEqual(rt.coverage[2], { status: 'missed', missing: 'x' });
 });
+
+test('recordCoverage keeps one flag per slide: replaced on revisit, removed when covered', () => {
+  const rt = createPresentationRuntime({ deck: deck(), durationMin: 45, now: () => 0 });
+  rt.recordCoverage(2, { status: 'missed', missing: 'x' });
+  rt.recordCoverage(3, { status: 'partial', missing: 'y' });
+  assert.deepEqual(rt.state.snapshot().flags, ["Slide 2: didn't mention x", "Slide 3: didn't mention y"]);
+  rt.recordCoverage(2, { status: 'partial', missing: 'z' });
+  assert.deepEqual(rt.state.snapshot().flags, ["Slide 3: didn't mention y", "Slide 2: didn't mention z"]);
+  rt.recordCoverage(3, { status: 'covered', missing: '' });
+  assert.deepEqual(rt.state.snapshot().flags, ["Slide 2: didn't mention z"]);
+  assert.deepEqual(rt.coverage[3], { status: 'covered', missing: '' });
+});
+
+test('setDurationMin updates the planned length in place', () => {
+  const rt = createPresentationRuntime({ deck: deck(), durationMin: 45, now: () => 0 });
+  assert.equal(rt.durationMin, 45);
+  rt.setDurationMin(20);
+  assert.equal(rt.durationMin, 20);
+  assert.equal(rt.update().snapshot.remainingMs, 20 * 60000);
+});

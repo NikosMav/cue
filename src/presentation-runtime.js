@@ -3,7 +3,7 @@
 // the screen capture, the LLM call and the cache-save scheduler.
 const { createPresentationState } = require('./presentation-state');
 const { createMatcher } = require('./deck-match');
-const { buildMatchRequest, parseMatchResponse } = require('./presentation-prompts');
+const { buildMatchRequest, parseMatchResponse, coverageFlag } = require('./presentation-prompts');
 
 // Same pattern pollSlides uses to stop paid calls a key cannot make.
 const FATAL_RE = /429|quota|401|403|model_not_found/i;
@@ -45,6 +45,7 @@ function buildPresentationUpdate({ deck, snapshot, matching }) {
 // onCacheWrite() is called after every cache write (main debounces the save).
 function createPresentationRuntime({ deck, durationMin, now, identify, capture, callLLM, onCacheWrite }) {
   let current = deck || null;
+  let plannedMin = durationMin;
   const slideCount = slideCountOf(current);
   const state = createPresentationState({ durationMin, slideCount, now });
   let writes = {};
@@ -158,7 +159,13 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
     get deck() { return current; },
     state,
     coverage,
-    recordCoverage: (n, result) => { coverage[n] = result; },
+    // The slide's latest result; its flag replaces an earlier one (or goes when covered).
+    recordCoverage: (n, result) => {
+      coverage[n] = result;
+      state.setSlideFlag(n, coverageFlag(n, result));
+    },
+    get durationMin() { return plannedMin; },
+    setDurationMin: (min) => { plannedMin = min; state.setDurationMin(min); },
     matcher,
     onFrame,
     step,

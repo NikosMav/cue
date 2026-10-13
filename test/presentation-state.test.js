@@ -195,3 +195,32 @@ test('coverage is checked only after 20 s dwell', () => {
   assert.equal(shouldCheckCoverage({ dwellMs: 20000 }), true);
   assert.equal(shouldCheckCoverage(null), false);
 });
+
+test('setDurationMin applies a new planned length to the clock and pacing', () => {
+  const { st, clock } = make({ durationMin: 45, slideCount: 10 });
+  assert.equal(st.snapshot().remainingMs, 45 * MIN);
+  st.setDurationMin(20);
+  assert.equal(st.snapshot().remainingMs, 20 * MIN, 'before the talk starts');
+  st.setSlide(1, { source: 'manual' });
+  clock.t = 5 * MIN;
+  st.setDurationMin(30);
+  assert.equal(st.snapshot().remainingMs, 25 * MIN, 'after the start, measured from the start');
+  st.setDurationMin('nonsense');
+  assert.equal(st.snapshot().remainingMs, 25 * MIN, 'invalid values are ignored');
+  // 30 min over 10 slides: 10 slides to go need 30 min, 25 left -> 5 min behind (45 min would be on track).
+  assert.deepEqual(st.snapshot().pacing, { status: 'behind', minutes: 5 });
+});
+
+test('slide flags replace on revisit, clear when covered and keep last-set order', () => {
+  const { st } = make({ durationMin: 45, slideCount: 10 });
+  st.setSlideFlag(2, "Slide 2: didn't mention A");
+  st.setSlideFlag(3, "Slide 3: didn't mention B");
+  st.addFlag('free text');
+  assert.deepEqual(st.snapshot().flags, ["Slide 2: didn't mention A", "Slide 3: didn't mention B", 'free text']);
+  st.setSlideFlag(2, "Slide 2: didn't mention C");
+  assert.deepEqual(st.snapshot().flags, ["Slide 3: didn't mention B", 'free text', "Slide 2: didn't mention C"]);
+  st.setSlideFlag(3, null);
+  assert.deepEqual(st.snapshot().flags, ['free text', "Slide 2: didn't mention C"]);
+  st.setSlideFlag(2, '');
+  assert.deepEqual(st.snapshot().flags, ['free text']);
+});

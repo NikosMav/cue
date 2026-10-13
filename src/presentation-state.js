@@ -10,8 +10,11 @@ function shouldCheckCoverage(left) {
 function createPresentationState({ durationMin, slideCount, now } = {}) {
   const clock = typeof now === 'function' ? now : Date.now;
   const count = Number.isInteger(slideCount) && slideCount > 0 ? slideCount : 0;
-  const mins = Number(durationMin);
-  const durationMs = (Number.isFinite(mins) && mins > 0 ? mins : 0) * 60000;
+  const toMs = (min) => {
+    const mins = Number(min);
+    return Number.isFinite(mins) && mins > 0 ? mins * 60000 : null;
+  };
+  let durationMs = toMs(durationMin) || 0;
 
   let startTs = null;
   let current = null;
@@ -20,7 +23,7 @@ function createPresentationState({ durationMin, slideCount, now } = {}) {
   const visited = new Set(); // slides with a completed visit >= FLICK_MS
   const skipped = new Set();
   const timeline = [];
-  const flags = [];
+  const flags = []; // { n: slide number or null, text }, oldest first
 
   function start() {
     if (startTs === null) startTs = clock();
@@ -59,7 +62,22 @@ function createPresentationState({ durationMin, slideCount, now } = {}) {
 
   function addFlag(text) {
     const s = typeof text === 'string' ? text.trim() : '';
-    if (s) flags.push(s);
+    if (s) flags.push({ n: null, text: s });
+  }
+
+  // One flag per slide: a new one replaces the slide's earlier flag (and moves
+  // to the end); an empty text removes it.
+  function setSlideFlag(n, text) {
+    const i = flags.findIndex(f => f.n === n);
+    if (i > -1) flags.splice(i, 1);
+    const s = typeof text === 'string' ? text.trim() : '';
+    if (s) flags.push({ n, text: s });
+  }
+
+  // A changed planned length; the clock keeps its start.
+  function setDurationMin(min) {
+    const ms = toMs(min);
+    if (ms !== null) durationMs = ms;
   }
 
   function pacing(remainingMs) {
@@ -85,12 +103,12 @@ function createPresentationState({ durationMin, slideCount, now } = {}) {
       remainingMs,
       pacing: pacing(remainingMs),
       skipped: [...skipped].sort((a, b) => a - b),
-      flags: flags.slice(),
+      flags: flags.map(f => f.text),
       timeline: timeline.map((v) => ({ n: v.n, enterTs: v.enterTs, leaveTs: v.leaveTs })),
     };
   }
 
-  return { start, setSlide, setOffDeck, addFlag, snapshot };
+  return { start, setSlide, setOffDeck, addFlag, setSlideFlag, setDurationMin, snapshot };
 }
 
 module.exports = {

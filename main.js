@@ -22,7 +22,7 @@ const { importDeck, enrichDeck, appendQuestions, validQuestionItems, countQuesti
 const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
 const { deckOutline, slideContext } = require('./src/deck-relevance');
 const { createPresentationRuntime, deckChanged } = require('./src/presentation-runtime');
-const { buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput } = require('./src/presentation-prompts');
+const { buildCoverageRequest, parseCoverageResponse, coverageInput } = require('./src/presentation-prompts');
 
 // Settings as every feature reads them: About me + the active setup projected
 // onto the flat prep fields (src/setups.js).
@@ -85,7 +85,7 @@ app.on('second-instance', () => {
 // to look at that — so the only symptom was a key that did nothing. Iris reads
 // this and can say which key is taken instead of guessing from a screenshot.
 let shortcutState = {};   // action id → registered
-// action id → { accelerator, status: 'ok' | 'taken' | 'conflict' | 'invalid' | 'unset' }
+// action id → { accelerator, status: 'ok' | 'taken' | 'conflict' | 'invalid' | 'unset' | 'inactive' }
 let shortcutStatus = {};
 let shortcutsSuspended = false; // while Settings records a new key combination
 const isMac = process.platform === 'darwin';
@@ -792,11 +792,20 @@ async function identifyCallLLM(request) {
 }
 
 // Fire-and-forget: did the presenter's own speech cover the slide they just left?
-// Failures are silent; a result for a replaced runtime is dropped.
+// Runs COVERAGE_GRACE_MS after leaving, so speech-to-text has finalised what
+// was said on the slide. Failures are silent; a result for a replaced runtime
+// is dropped.
+const COVERAGE_GRACE_MS = 3000;
 function checkCoverage(rt, left) {
   if (!left) return;
+  const timer = setTimeout(() => runCoverageCheck(rt, left), COVERAGE_GRACE_MS);
+  if (timer.unref) timer.unref();
+}
+
+function runCoverageCheck(rt, left) {
+  if (presentationRuntime !== rt) return;
   const slides = (rt.deck && rt.deck.slides) || [];
-  const input = coverageInput({ left, slide: slides.find(s => s.n === left.n) || null, transcript });
+  const input = coverageInput({ left, slide: slides.find(s => s.n === left.n) || null, transcript, graceMs: COVERAGE_GRACE_MS });
   if (!input) return;
   (async () => {
     const llm = createLLM({ ...currentSettings(), smart: false });
@@ -808,9 +817,7 @@ function checkCoverage(rt, left) {
     if (presentationRuntime !== rt) return;
     const result = parseCoverageResponse(text);
     if (!result) return;
-    rt.recordCoverage(left.n, result);
-    const flag = coverageFlag(left.n, result);
-    if (flag) rt.state.addFlag(flag);
+    rt.recordCoverage(left.n, result); // also sets or clears the slide's flag
     sendPresentationUpdate();
     recordPresentationSession();
   })().catch(e => console.log('[presentation] coverage check failed', (e && e.message) || e));
@@ -833,6 +840,10 @@ function loadPresentationRuntime({ reset = false } = {}) {
     }
     if (!reset && prev && prev.setupId === s.setupId && prev.swapDeck(deck)) {
       next = prev;
+      // A changed planned length applies at once. Updated in place: before the
+      // first slide this equals a fresh state, but keeps a pacing clock that
+      // speech already started; after it, the timeline is kept.
+      if (prev.durationMin !== s.durationMin) prev.setDurationMin(s.durationMin);
     } else {
       const rt = createPresentationRuntime({
         deck,
@@ -861,6 +872,8 @@ function loadPresentationRuntime({ reset = false } = {}) {
 async function pollPresentation() {
   if (presentationPollBusy) return;
   const rt = presentationRuntime;
+  // No deck, no matcher: nothing to compare a frame with, so do not capture.
+  if (!rt || !rt.matcher) return;
   let frame = null;
   presentationPollBusy = true;
   try {
@@ -1229,6 +1242,9 @@ ipcMain.handle('settings:set', (_e, patch) => {
   const before = store.getSettings();
   const next = store.setRendererSettings(patch);
   removeOrphanedDecks(before, next);
+  // Switching to or from a presentation setup takes or frees the slide keys.
+  const presentation = currentSettings().setupKind === 'presentation';
+  if (presentation !== shortcutsForPresentation && !shortcutsSuspended) registerShortcuts();
   loadPresentationRuntime();
   // A saved key may have fixed what paused slide matching.
   if (presentationRuntime) presentationRuntime.resumeMatching();
@@ -1781,13 +1797,17 @@ function deckSaved(setupId) {
   if (presentationRuntime && presentationRuntime.setupId === setupId) loadPresentationRuntime();
 }
 
+function abortDeckEnrichment(setupId) {
+  const running = deckEnrichments.get(setupId);
+  if (running) { running.controller.abort(); deckEnrichments.delete(setupId); }
+}
+
 function removeOrphanedDecks(before, after) {
   try {
     const kept = new Set(((after && after.setups) || []).map(x => x.id));
     for (const setup of (before && before.setups) || []) {
       if (kept.has(setup.id)) continue;
-      const running = deckEnrichments.get(setup.id);
-      if (running) { running.controller.abort(); deckEnrichments.delete(setup.id); }
+      abortDeckEnrichment(setup.id);
       // Never trust the stored pointer for the path: the file name derives from the id.
       if (setup.deck) deckStore().remove(deckStore().fileFor(setup.id));
     }
@@ -1878,6 +1898,9 @@ ipcMain.handle('deck:import', async (_e, setupId) => {
     const file = deckStore().fileFor(setupId);
     const { deck, unchanged, toEnrich } = await importDeck({ buffer, type, fileName, previous: deckStore().load(file) });
     if (!unchanged) {
+      // A run for the old deck must stop merging its slide-n points into this
+      // one, even when this import needs no enrichment at all.
+      abortDeckEnrichment(setupId);
       deckStore().save(file, deck);
       setDeckPointer(setupId, deck, file, Date.now());
       if (toEnrich.length) runDeckEnrichment(setupId, file, deck, toEnrich, { fromImport: true });
@@ -2036,17 +2059,27 @@ function shortcutsView() {
   };
 }
 
+// Slide stepping is only taken from other apps while a presentation setup is
+// active; elsewhere these keys stay free and the actions report 'inactive'.
+const PRESENTATION_SHORTCUTS = new Set(['slidePrev', 'slideNext']);
+let shortcutsForPresentation = false; // the setup kind registerShortcuts last ran for
+
 function registerShortcuts() {
   globalShortcut.unregisterAll();
   shortcutState = {};
   shortcutStatus = {};
+  shortcutsForPresentation = currentSettings().setupKind === 'presentation';
   const map = resolveShortcuts(store.getSettings().shortcuts);
+  const inactive = id => PRESENTATION_SHORTCUTS.has(id) && !shortcutsForPresentation;
+  // Inactive actions hold no keys, so they cannot conflict with anything.
+  const live = Object.fromEntries(Object.entries(map).filter(([id]) => !inactive(id)));
   // The later of two actions sharing a combination is the one reported.
-  const conflicted = new Set(findConflicts(map).map(([, later]) => later));
+  const conflicted = new Set(findConflicts(live).map(([, later]) => later));
   for (const { id } of SHORTCUT_ACTIONS) {
     const accelerator = map[id];
     let status;
     if (!accelerator) status = 'unset';
+    else if (inactive(id)) status = 'inactive';
     else if (!isValidAccelerator(accelerator)) status = 'invalid';
     else if (conflicted.has(id)) status = 'conflict';
     else if (shortcutsSuspended) status = 'ok';

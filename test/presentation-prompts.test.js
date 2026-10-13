@@ -83,3 +83,23 @@ test('coverageInput selects You turns inside the visit and gates on dwell and ke
   assert.equal(coverageInput({ left: null, slide: covSlide, transcript }), null);
   assert.equal(coverageInput({ left, slide: null, transcript }), null);
 });
+
+test('coverageInput is null when the presenter said nothing during the visit', () => {
+  const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
+  assert.equal(coverageInput({ left, slide: covSlide, transcript: [] }), null);
+  assert.equal(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'them', text: 'hi', ts: 2000 }] }), null);
+  assert.equal(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: '   ', ts: 2000 }] }), null);
+});
+
+test('coverageInput graceMs takes You turns finalised shortly after leaving the slide', () => {
+  const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
+  const transcript = [
+    { channel: 'you', text: 'one', ts: 2000 },
+    { channel: 'you', text: 'late', ts: 32500 },
+    { channel: 'you', text: 'next slide', ts: 33500 }
+  ];
+  assert.equal(coverageInput({ left, slide: covSlide, transcript }).transcript, 'one', 'default grace is 0');
+  assert.equal(coverageInput({ left, slide: covSlide, transcript, graceMs: 3000 }).transcript, 'one\nlate');
+  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: 'late', ts: 32000 }], graceMs: 3000 }),
+    { slide: covSlide, transcript: 'late' });
+});

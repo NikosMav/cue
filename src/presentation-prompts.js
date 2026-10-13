@@ -151,13 +151,17 @@ function coverageFlag(n, result) {
 }
 
 // Given the visit that just ended, decide whether to check and with what input.
-function coverageInput({ left, slide, transcript }) {
+// graceMs also takes You turns finalised shortly after the slide was left
+// (speech-to-text lags the voice). Nothing said: nothing to judge.
+function coverageInput({ left, slide, transcript, graceMs = 0 }) {
   if (!left || !slide || !shouldCheckCoverage(left)) return null;
   if (!String(slide.keyIdea || '').trim()) return null;
+  const until = left.leaveTs + (Number(graceMs) > 0 ? Number(graceMs) : 0);
   const said = (transcript || [])
-    .filter(t => t.channel === 'you' && t.ts >= left.enterTs && t.ts <= left.leaveTs)
+    .filter(t => t.channel === 'you' && t.ts >= left.enterTs && t.ts <= until)
     .map(t => t.text)
     .join('\n');
+  if (!said.trim()) return null;
   return { slide, transcript: said };
 }
 

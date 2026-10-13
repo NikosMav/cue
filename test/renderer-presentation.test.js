@@ -284,3 +284,62 @@ test('presentation debriefs save the prose and the questions separately, with th
   assert.match(handler, /session\.debriefQuestions = /);
   assert.match(handler, /deckOutline\(/);
 });
+
+// Slice of main.js from `marker` to the next top-level closing brace.
+function mainBlock(main, marker) {
+  const at = main.indexOf(marker);
+  assert.ok(at > -1, marker + ' not found');
+  return main.slice(at, main.indexOf('\n}', at));
+}
+
+test('only the status line is a live region, not the whole ticking strip', () => {
+  assert.doesNotMatch(html, /id="presenter-strip"[^>]*aria-live/);
+  assert.match(html, /<span id="ps-status" class="ps-status" aria-live="polite"><\/span>/);
+});
+
+test('slide shortcuts are registered only in a presentation setup and reported inactive elsewhere', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const reg = mainBlock(main, 'function registerShortcuts()');
+  assert.match(main, /const PRESENTATION_SHORTCUTS = new Set\(\['slidePrev', 'slideNext'\]\)/);
+  assert.match(reg, /shortcutsForPresentation = currentSettings\(\)\.setupKind === 'presentation'/);
+  assert.match(reg, /findConflicts\(live\)/, 'inactive actions never conflict');
+  assert.match(reg, /else if \(inactive\(id\)\) status = 'inactive';/);
+  assert.ok(reg.indexOf("status = 'inactive'") < reg.indexOf('globalShortcut.register('), 'checked before registering');
+  const set = main.slice(main.indexOf("ipcMain.handle('settings:set'"), main.indexOf('\n});', main.indexOf("ipcMain.handle('settings:set'")));
+  assert.match(set, /presentation !== shortcutsForPresentation[^\n]*registerShortcuts\(\)/);
+  assert.match(src, /inactive: 'Active only while a presentation setup is selected\.'/);
+  assert.match(src, /'shortcut-status' \+ \(action\.status === 'inactive' \? '' : ' warn'\)/);
+});
+
+test('a changed import aborts any running enrichment, even with nothing to enrich', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const at = main.indexOf("ipcMain.handle('deck:import'");
+  const handler = main.slice(at, main.indexOf('\n});', at));
+  const changed = handler.slice(handler.indexOf('if (!unchanged) {'));
+  assert.ok(changed.indexOf('abortDeckEnrichment(setupId)') > -1);
+  assert.ok(changed.indexOf('abortDeckEnrichment(setupId)') < changed.indexOf('if (toEnrich.length)'));
+  assert.match(mainBlock(main, 'function abortDeckEnrichment('), /running\.controller\.abort\(\); deckEnrichments\.delete\(setupId\)/);
+});
+
+test('presentation polling skips the frame capture without a matcher', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const poll = mainBlock(main, 'async function pollPresentation()');
+  assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') > -1);
+  assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') < poll.indexOf('captureHashFrame('));
+});
+
+test('coverage checks wait for speech-to-text and keep one flag per slide', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  assert.match(main, /const COVERAGE_GRACE_MS = 3000;/);
+  assert.match(mainBlock(main, 'function checkCoverage('), /setTimeout\(\(\) => runCoverageCheck\(rt, left\), COVERAGE_GRACE_MS\)/);
+  const run = mainBlock(main, 'function runCoverageCheck(');
+  assert.match(run, /graceMs: COVERAGE_GRACE_MS/);
+  assert.match(run, /rt\.recordCoverage\(left\.n, result\)/);
+  assert.doesNotMatch(main, /state\.addFlag\(/, 'flags are slide-keyed via recordCoverage');
+});
+
+test('a Settings save applies a changed planned length to the live runtime', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const load = mainBlock(main, 'function loadPresentationRuntime(');
+  assert.match(load, /if \(prev\.durationMin !== s\.durationMin\) prev\.setDurationMin\(s\.durationMin\);/);
+});

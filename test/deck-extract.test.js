@@ -53,3 +53,13 @@ test('pdf: one slide per page, first line is the title, no notes; a text-less pa
   assert.deepEqual([out[0].title, out[0].body, out[0].notes], ['Graphs', 'Nodes and edges', '']);
   assert.equal(out[1].title, 'Slide 2');
 });
+
+test('a:br soft line breaks become a space in titles and body lines', async () => {
+  const run = (t) => '<a:r><a:t>' + t + '</a:t></a:r>';
+  const ph = (attrs, inner) => '<p:sp><p:nvSpPr><p:cNvPr id="1" name="s"/><p:cNvSpPr/><p:nvPr><p:ph ' + attrs + '/></p:nvPr></p:nvSpPr><p:txBody><a:bodyPr/>' + inner + '</p:txBody></p:sp>';
+  const xml = ph('type="title"', '<a:p>' + run('Line1') + '<a:br/>' + run('Line2') + '</a:p>') +
+    ph('idx="1"', '<a:p>' + run('alpha') + '<a:br><a:rPr lang="en-US"/></a:br>' + run('beta') + '</a:p><a:p>' + run('gamma ') + '<a:br/>' + run('delta') + '</a:p>');
+  const [s] = (await extractDeck(await makePptx([{ xml }]), 'pptx')).slides;
+  assert.equal(s.title, 'Line1 Line2');
+  assert.equal(s.body, 'alpha beta\ngamma delta');
+});

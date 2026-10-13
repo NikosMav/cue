@@ -29,15 +29,19 @@ function attr(tag, name) {
   return m ? decode(m[1]) : null;
 }
 
-// Paragraph texts (a:p -> joined a:t), empty paragraphs dropped.
+// Paragraph texts (a:p -> joined a:t), empty paragraphs dropped. A soft line
+// break (a:br) inside a paragraph becomes a single space.
 function paragraphs(xml) {
   const out = [];
   const pRe = /<a:p(?=[\s>])[^>]*>([\s\S]*?)<\/a:p>/g;
   let m;
   while ((m = pRe.exec(xml))) {
-    const tRe = /<a:t(?=[\s>])[^>]*>([\s\S]*?)<\/a:t>/g;
+    const tRe = /<a:t(?=[\s>])[^>]*>([\s\S]*?)<\/a:t>|<a:br(?=[\s>\/])[^>]*>/g;
     let t, text = '';
-    while ((t = tRe.exec(m[1]))) text += decode(t[1]);
+    while ((t = tRe.exec(m[1]))) {
+      if (t[1] !== undefined) text += decode(t[1]);
+      else if (text && !/\s$/.test(text)) text += ' ';
+    }
     text = text.trim();
     if (text) out.push(text);
   }

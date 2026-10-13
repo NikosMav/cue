@@ -1527,7 +1527,8 @@
   const SHORTCUT_STATUS_TEXT = {
     taken: 'Another app already uses this combination. Pick a different one.',
     conflict: 'Also assigned to another action above. Pick a different one.',
-    invalid: 'This combination cannot be used as a shortcut.'
+    invalid: 'This combination cannot be used as a shortcut.',
+    inactive: 'Active only while a presentation setup is selected.'
   };
 
   function keycaps(accelerator) {
@@ -1549,7 +1550,7 @@
       const statusText = SHORTCUT_STATUS_TEXT[action.status];
       if (statusText) {
         const st = document.createElement('span');
-        st.className = 'shortcut-status warn';
+        st.className = 'shortcut-status' + (action.status === 'inactive' ? '' : ' warn');
         st.textContent = statusText;
         name.appendChild(st);
       }
