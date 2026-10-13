@@ -2028,6 +2028,7 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
       ns,
       conversation: setup.conversation,
       notes: setup.notes,
+      scriptLength: setup.scriptLength,
       signal: controller.signal,
       call: request => streamWithWatchdog(params => llm.stream(params), {
         system: request.system,

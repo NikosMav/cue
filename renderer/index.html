@@ -342,6 +342,13 @@
         <div class="presentation-only s-body hidden">
           <label class="s-label" for="setup-duration">Planned length <span class="s-hint">minutes, 5 to 240</span></label>
           <input id="setup-duration" class="s-input deck-duration" type="number" min="5" max="240" step="1" value="45" />
+          <label class="s-label" for="setup-script-length">Script length <span class="s-hint">what you say per slide</span></label>
+          <select id="setup-script-length" class="s-select" aria-label="Script length">
+            <option value="short">Short (about 50–80 words)</option>
+            <option value="standard">Standard (about 80–130 words)</option>
+            <option value="detailed">Detailed (about 130–200 words)</option>
+          </select>
+          <div class="s-note">Applies to newly generated scripts. Use Generate again for unedited slides to apply it to this deck.</div>
           <div id="setup-display-block" class="hidden">
             <label class="s-label" for="setup-display">Watch display <span class="s-hint">the screen your slides are on</span></label>
             <select id="setup-display" class="s-select" aria-label="Display to watch"></select>

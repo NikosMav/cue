@@ -203,3 +203,21 @@ test('re-import carries the script with the other enrichment fields', async () =
   const { deck } = await importDeck({ buffer: Buffer.from('new'), type: 'pptx', fileName: 'a.pptx', previous, extract: extractor([slide(1, 'A')]) });
   assert.equal(deck.slides[0].script, 'kept script');
 });
+
+test('enrichDeck passes the script length to the request', async () => {
+  let system = '';
+  await enrichDeck(tenSlides(), { ns: [1], scriptLength: 'short', call: async (r) => { system = r.system; return okResponse([1]); }, onBatch() {} });
+  assert.match(system, /never more than 80/);
+});
+
+test('enrichDeck cuts a script that runs over its word limit', async () => {
+  const long = Array.from({ length: 25 }, () => 'This sentence has exactly seven words.').join(' ');
+  let deck = null;
+  await enrichDeck(tenSlides(), {
+    ns: [1], scriptLength: 'short',
+    call: async () => JSON.stringify([{ n: 1, points: ['p'], script: long }]),
+    onBatch(current) { deck = current; }
+  });
+  const words = deck.slides.find((s) => s.n === 1).script.split(/\s+/).length;
+  assert.ok(words <= 92 && words > 80, 'short scripts stop near 80 words, at a sentence end');
+});

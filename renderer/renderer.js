@@ -2380,6 +2380,7 @@
     $('#setup-instructions').value = setup.instructions || '';
     $('#setup-save').checked = !!setup.saveSessions;
     $('#setup-duration').value = String(setup.durationMin || 45);
+    $('#setup-script-length').value = setup.scriptLength || 'standard';
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
     if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
@@ -2435,6 +2436,7 @@
     if (patch.kind === 'presentation') {
       const minutes = Number.parseInt($('#setup-duration').value, 10);
       patch.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, minutes)) : (setup.durationMin || 45);
+      patch.scriptLength = $('#setup-script-length').value;
       // Before the display list arrives the select is empty: keep the saved choice.
       if ($('#setup-display').options.length) patch.watchDisplayId = $('#setup-display').value;
     }

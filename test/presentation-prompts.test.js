@@ -117,7 +117,7 @@ test('coverageInput graceMs takes You turns finalised shortly after leaving the 
 test('enrichment asks for a full speaker script that covers the whole slide', () => {
   const r = buildEnrichRequest({ conversation: 'engineers', notes: '', titles: ['A', 'B'], batch: [{ n: 1, title: 'A', body: 'x', notes: 'say the analogy', next: 'B' }] });
   assert.match(r.system, /"script"/);
-  assert.match(r.system, /Cover every item on the slide/);
+  assert.match(r.system, /Cover the items on the slide/);
   assert.match(r.system, /speaker notes/);
   assert.match(r.system, /leads into the next slide/);
   assert.match(r.system, /must not add facts, figures/);
@@ -136,4 +136,26 @@ test('parseEnrichResponse keeps the script, capped, and five points', () => {
   assert.match(u.script, /\.$/, 'a long script is cut at the end of a sentence, never mid-sentence');
   const [t] = parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a'], keyIdea: 'k' }]), [1]);
   assert.equal(t.script, '', 'a missing script is empty, not an error');
+});
+
+test('a script over its word limit is cut at a sentence end', () => {
+  const sentences = Array.from({ length: 25 }, (_, i) => 'Point ' + i + ' is said once and clearly here.').join(' ');
+  const words = (s) => s.split(/\s+/).filter(Boolean).length;
+  const cut = (scriptLength) => parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a'], script: sentences }]), [1], { scriptLength })[0].script;
+  assert.ok(words(cut('short')) <= 92 && words(cut('short')) >= 80, 'short allows 15% over 80 words');
+  assert.ok(words(cut('standard')) <= 150 && words(cut('standard')) >= 135);
+  assert.equal(words(cut('detailed')), 200, 'within the detailed limit nothing is cut');
+  assert.match(cut('short'), /here\.$/);
+  const one = 'word '.repeat(300).trim() + '.';
+  assert.equal(parseEnrichResponse(JSON.stringify([{ n: 1, points: ['a'], script: one }]), [1], { scriptLength: 'short' })[0].script, one, 'a single long sentence is kept rather than emptied');
+});
+
+test('script length sets a hard word range', () => {
+  const req = (scriptLength) => buildEnrichRequest({ conversation: '', notes: '', titles: ['A'], batch: [{ n: 1, title: 'A', body: 'x', notes: '', next: '' }], scriptLength }).system;
+  assert.match(req('short'), /about 65 words \(50 to 80, never more than 80\)/);
+  assert.match(req('standard'), /about 105 words \(80 to 130, never more than 130\)/);
+  assert.match(req('detailed'), /about 165 words \(130 to 200, never more than 200\)/);
+  assert.match(req(undefined), /80 to 130/, 'standard by default');
+  assert.match(req('short'), /one short sentence/);
+  assert.match(req('standard'), /leave the rest to the key points/);
 });

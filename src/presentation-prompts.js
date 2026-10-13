@@ -1,7 +1,6 @@
 const { shouldCheckCoverage } = require('./presentation-state');
 const POINT_CHARS = 160;
-// About 180 spoken words is the target; models often write more, so the cap
-// leaves room and a longer script is cut at the end of a sentence.
+// A backstop on characters; the word limit below normally applies first.
 const SCRIPT_CHARS = 2400;
 function capScript(text) {
   const t = text.trim();
@@ -47,14 +46,36 @@ function extractJson(text) {
   return null;
 }
 
-function buildEnrichRequest({ conversation, notes, titles, batch }) {
+// Words per slide script. Models overshoot on dense slides even with a
+// stated limit, so parseEnrichResponse also cuts a script that runs more
+// than 15% over, at the end of a sentence.
+const SCRIPT_WORDS = { short: [50, 80], standard: [80, 130], detailed: [130, 200] };
+const SCRIPT_OVERRUN = 1.15;
+function trimToWords(text, maxWords) {
+  const sentences = text.match(/[^.?!]+[.?!]+["'’”)]*\s*|[^.?!]+$/g) || [text];
+  let out = '', count = 0;
+  for (const s of sentences) {
+    const n = s.split(/\s+/).filter(Boolean).length;
+    if (out && count + n > maxWords) break;
+    out += s;
+    count += n;
+  }
+  return out.trim();
+}
+function buildEnrichRequest({ conversation, notes, titles, batch, scriptLength = 'standard' }) {
+  const [low, high] = SCRIPT_WORDS[scriptLength] || SCRIPT_WORDS.standard;
+  const target = Math.round((low + high) / 2);
+  const lead = scriptLength === 'detailed'
+    ? 'End with one sentence that leads into the next slide'
+    : 'End with one short sentence that leads into the next slide';
   const system =
     'You are cue, preparing a presenter for a live talk. You write what the presenter will say for each slide, in their own voice. ' + BASE_RULES +
     'For each slide supplied, write:\n' +
-    '• "script": what the presenter says while the slide is up: one to three short paragraphs, about 100 to 180 words, in natural spoken first person. ' +
-    'Cover every item on the slide (each bullet, table row, label and example), and work in the speaker notes, which are the presenter\'s own talk track: ' +
-    'their analogies, examples, demo steps and the answers to any quiz on the slide. Explain each item a little beyond the slide, the way a good trainer would. ' +
-    'End with one sentence that leads into the next slide (its title is given as "next"; omit this on the last slide). ' +
+    '• "script": what the presenter says while the slide is up: one to three short paragraphs, about ' + target + ' words (' + low + ' to ' + high + ', never more than ' + high + '), in natural spoken first person. ' +
+    'Cover the items on the slide (bullets, table rows, labels and examples), and work in the speaker notes, which are the presenter\'s own talk track: ' +
+    'their analogies, examples, demo steps and the answers to any quiz on the slide. Where the limit allows, explain an item a little beyond the slide, the way a good trainer would. ' +
+    'The word limit comes first: on a dense slide, say the most important items once, clearly, and leave the rest to the key points. ' +
+    lead + ' (its title is given as "next"; omit this on the last slide). ' +
     'Write sentences to say out loud: no headings, no bullet lists, no stage directions.\n' +
     '• "points": 3 to 5 short key points (each at most ' + POINT_CHARS + ' characters) that together cover everything on the slide, for a glance mid-talk.\n' +
     '• "questions": 0 to 3 questions the audience is likely to ask (each at most ' + QUESTION_CHARS + ' characters).\n' +
@@ -73,7 +94,7 @@ function buildEnrichRequest({ conversation, notes, titles, batch }) {
     'Extra reference notes (JSON string):\n' + JSON.stringify(notes || '') + '\n\n' +
     'All slide titles, for context:\n' + list + '\n\n' +
     'Slides to write for (JSON):\n' + JSON.stringify(batch || []);
-  // Four scripts of ~180 words plus points and questions, in JSON.
+  // Four scripts of up to 200 words plus points and questions, in JSON.
   return { system, turns: [{ role: 'user', text }], maxTokens: 5000, effort: 'medium' };
 }
 
@@ -89,7 +110,8 @@ function cleanList(v, max, cap) {
   return out;
 }
 
-function parseEnrichResponse(text, batchNs) {
+function parseEnrichResponse(text, batchNs, { scriptLength = 'standard' } = {}) {
+  const maxWords = Math.round((SCRIPT_WORDS[scriptLength] || SCRIPT_WORDS.standard)[1] * SCRIPT_OVERRUN);
   const arr = extractJson(text);
   if (!Array.isArray(arr)) return [];
   const allowed = new Set(batchNs || []);
@@ -103,7 +125,7 @@ function parseEnrichResponse(text, batchNs) {
       points,
       questions: cleanList(it.questions, 3, QUESTION_CHARS),
       keyIdea: typeof it.keyIdea === 'string' ? it.keyIdea.trim().slice(0, KEY_IDEA_CHARS) : '',
-      script: typeof it.script === 'string' ? capScript(it.script) : ''
+      script: typeof it.script === 'string' ? trimToWords(capScript(it.script), maxWords) : ''
     });
   }
   return out;

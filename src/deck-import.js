@@ -38,7 +38,7 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
 }
 
 // Never throws. A failed call or an unparseable reply flags that batch only.
-async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal }) {
+async function enrichDeck(deck, { ns, call, conversation, notes, scriptLength, onBatch, signal }) {
   let current = { ...deck, slides: deck.slides.map((s) => ({ ...s })) };
   const scriptOnly = new Set(current.slides.filter((s) => s.edited && !s.script).map((s) => s.n));
   const wanted = new Set(ns || []);
@@ -55,8 +55,8 @@ async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal
     });
     let results = [];
     try {
-      const text = await call(buildEnrichRequest({ conversation, notes, titles, batch }));
-      results = parseEnrichResponse(text, batchNs) || [];
+      const text = await call(buildEnrichRequest({ conversation, notes, titles, batch, scriptLength }));
+      results = parseEnrichResponse(text, batchNs, { scriptLength }) || [];
     } catch (_) { results = []; }
     if (signal && signal.aborted) break;
     const byN = new Map();

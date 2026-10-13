@@ -627,3 +627,11 @@ test('the empty state says cue is listening once listening has started', () => {
   const capture = src.slice(src.indexOf("cue.on('capture:state', (st) =>"), src.indexOf('\n', src.indexOf("cue.on('capture:state', (st) =>")));
   assert.match(capture, /refreshEmptyState\(\)/);
 });
+
+test('Settings has a Script length choice for presentation setups', () => {
+  assert.match(html, /<select id="setup-script-length"[^>]*>/);
+  for (const v of ['short', 'standard', 'detailed']) assert.match(html, new RegExp('<option value="' + v + '"'));
+  assert.match(src, /\$\('#setup-script-length'\)\.value = setup\.scriptLength \|\| 'standard';/);
+  assert.match(src, /patch\.scriptLength = \$\('#setup-script-length'\)\.value;/);
+  assert.match(html, /Applies to newly generated scripts/);
+});
