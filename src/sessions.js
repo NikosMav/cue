@@ -46,7 +46,35 @@ function newSession({ kind = 'interview', now = Date.now(), setupId = '', setupN
 
 function kindLabel(session) {
   if (session.kind === 'practice') return 'Practice';
+  if (session.setupKind === 'presentation') return 'Presentation';
   return session.setupKind === 'general' ? 'Conversation' : 'Interview';
+}
+
+/**
+ * The session's `presentation` block from live state (spec section 6). Titles
+ * are kept only for slides that appear in the timeline, so sessions stay small
+ * and debriefs survive deck deletion.
+ */
+function presentationBlock({ deck, snapshot, coverage, durationMin }) {
+  const snap = snapshot || {};
+  const slides = deck && Array.isArray(deck.slides) ? deck.slides : [];
+  const timeline = (snap.timeline || []).map((v) => ({ n: v.n, enterTs: v.enterTs, leaveTs: v.leaveTs }));
+  const titles = {};
+  for (const v of timeline) {
+    const slide = slides.find((s) => s.n === v.n);
+    if (slide && slide.title) titles[v.n] = slide.title;
+  }
+  const cov = {};
+  for (const [n, c] of Object.entries(coverage || {})) cov[n] = { status: c.status, missing: (c.missing || []).slice() };
+  return {
+    deckFileName: (deck && deck.source && deck.source.fileName) || '',
+    slideCount: snap.slideCount || slides.length,
+    durationMin,
+    titles,
+    timeline,
+    coverage: cov,
+    skipped: (snap.skipped || []).slice()
+  };
 }
 
 function isValidId(id) {
@@ -107,6 +135,25 @@ function quote(text) {
   return String(text || '').trim().split('\n').map((line) => '> ' + line).join('\n');
 }
 
+// Slide-change markers keyed by the index of the event they precede
+// (events.length = after the last one). A visit goes before the first
+// transcript line at or after its enterTs; visits sharing a spot collapse to
+// the last one.
+function slideMarkers(presentation, events) {
+  const out = new Map();
+  const timeline = presentation && Array.isArray(presentation.timeline) ? presentation.timeline : [];
+  if (!timeline.length) return out;
+  const titles = presentation.titles || {};
+  const visits = timeline.slice().sort((a, b) => (a.enterTs || 0) - (b.enterTs || 0));
+  for (const v of visits) {
+    let at = events.findIndex((e) => e.kind === 'turn' && (e.ts || 0) >= v.enterTs);
+    if (at < 0) at = events.length;
+    const title = titles[v.n];
+    out.set(at, [title ? `— Slide ${v.n} · ${title} —` : `— Slide ${v.n} —`]);
+  }
+  return out;
+}
+
 /**
  * Readable Markdown for review or sharing: header, debrief, then the
  * conversation with cue's suggestions interleaved in time order.
@@ -117,7 +164,7 @@ function sessionToMarkdown(session) {
   const end = session.endedAt || session.updatedAt || session.startedAt;
   out.push(`- **Date:** ${formatDate(session.startedAt)}`);
   out.push(`- **Duration:** ${formatDuration(end - session.startedAt)}`);
-  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : session.setupKind === 'general' ? 'Live conversation' : 'Live interview'}`);
+  out.push(`- **Type:** ${session.kind === 'practice' ? 'Practice interview with cue' : session.setupKind === 'presentation' ? 'Presentation' : session.setupKind === 'general' ? 'Live conversation' : 'Live interview'}`);
   if (session.setupName) out.push(`- **Setup:** ${session.setupName}`);
   out.push('');
   if (session.debrief && session.debrief.trim()) {
@@ -130,7 +177,11 @@ function sessionToMarkdown(session) {
   ].sort((x, y) => (x.ts || 0) - (y.ts || 0));
   if (!events.length) out.push('_Nothing was captured._', '');
   const speaker = session.setupKind === 'general' ? SPEAKER_GENERAL : SPEAKER;
-  for (const event of events) {
+  const markers = slideMarkers(session.presentation, events);
+  for (let i = 0; i <= events.length; i++) {
+    for (const m of markers.get(i) || []) out.push(m, '');
+    const event = events[i];
+    if (!event) break;
     if (event.kind === 'turn') {
       out.push(`**${speaker[event.t.channel] || event.t.channel}** (${formatClock(event.t.ts)}): ${event.t.text.trim()}`, '');
     } else {
@@ -292,6 +343,17 @@ class SessionRecorder {
     this._schedule();
   }
 
+  /**
+   * Store the talk's slide timeline, coverage and skips. Creates the session
+   * only once a slide has been entered, so an unmatched talk leaves no empty one.
+   */
+  setPresentation(block) {
+    if (!this.isEnabled() || !block) return;
+    if (!this.session && !(block.timeline && block.timeline.length)) return;
+    this._ensure().presentation = block;
+    this._schedule();
+  }
+
   /** Continue a session cue was recording when it stopped (see planResume). */
   resume(session) {
     if (!this.isEnabled() || !hasContent(session)) return false;
@@ -360,6 +422,6 @@ class SessionRecorder {
 }
 
 module.exports = {
-  SessionStore, SessionRecorder, newSession, sessionTitle, summarize, sessionToMarkdown,
+  SessionStore, SessionRecorder, newSession, sessionTitle, kindLabel, presentationBlock, summarize, sessionToMarkdown,
   exportFileName, isValidId, hasContent, writeFileAtomic, planResume, RESUME_WINDOW_MS, QUIT_WHILE_LISTENING
 };

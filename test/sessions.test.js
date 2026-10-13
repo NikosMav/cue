@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  SessionStore, SessionRecorder, newSession, sessionTitle, sessionToMarkdown, exportFileName, isValidId, planResume, QUIT_WHILE_LISTENING
+  SessionStore, SessionRecorder, newSession, sessionTitle, kindLabel, presentationBlock, sessionToMarkdown, exportFileName, isValidId, planResume, QUIT_WHILE_LISTENING
 } = require('../src/sessions');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cue-sessions-'));
@@ -256,4 +256,111 @@ test('a session quit while listening is not resumed after the window', () => {
   const plan = planResume([old], { now, setupId: 'interview', saving: true });
   assert.equal(plan.resume, null);
   assert.deepEqual(plan.close, []);
+});
+
+// ---- presentation block ----
+function talk() {
+  const s = newSession({ now: Date.UTC(2026, 9, 13, 10), setupKind: 'presentation', setupName: 'Talk' });
+  const t0 = s.startedAt;
+  s.transcript.push({ channel: 'you', text: 'Welcome everyone.', ts: t0 + 1000 });
+  s.transcript.push({ channel: 'you', text: 'Now complexity.', ts: t0 + 61000 });
+  s.transcript.push({ channel: 'them', text: 'What about space?', ts: t0 + 121000 });
+  s.presentation = {
+    deckFileName: 'talk.pptx', slideCount: 3, durationMin: 45,
+    titles: { 1: 'Intro', 2: 'Big-O intuition' },
+    timeline: [
+      { n: 1, enterTs: t0, leaveTs: t0 + 60000 },
+      { n: 2, enterTs: t0 + 60000, leaveTs: t0 + 150000 },
+      { n: 3, enterTs: t0 + 150000, leaveTs: null }
+    ],
+    coverage: { 1: { status: 'covered', missing: [] } },
+    skipped: []
+  };
+  return s;
+}
+
+test('the presentation block round-trips through the store', () => {
+  const store = new SessionStore({ dir: path.join(tmp(), 'sessions') });
+  const s = talk();
+  store.save(s);
+  assert.deepEqual(store.get(s.id).presentation, s.presentation);
+});
+
+test('a presentation session is labelled Presentation', () => {
+  const s = talk();
+  assert.equal(kindLabel(s), 'Presentation');
+  assert.match(sessionTitle(s), /^Presentation/);
+  assert.match(sessionToMarkdown(s), /- \*\*Type:\*\* Presentation\n/);
+});
+
+test('markdown marks slide changes before the first line at or after each enter', () => {
+  const md = sessionToMarkdown(talk()).split('## Conversation')[1];
+  const i1 = md.indexOf('— Slide 1 · Intro —');
+  const w = md.indexOf('Welcome everyone.');
+  const i2 = md.indexOf('— Slide 2 · Big-O intuition —');
+  const c = md.indexOf('Now complexity.');
+  const q = md.indexOf('What about space?');
+  const i3 = md.indexOf('— Slide 3 —');
+  assert.ok(i1 >= 0 && i1 < w && w < i2 && i2 < c && c < q && q < i3, md);
+});
+
+test('visits with no transcript between them collapse to the last; trailing visits are appended', () => {
+  const s = talk();
+  const t0 = s.startedAt;
+  s.transcript = [{ channel: 'you', text: 'Hello.', ts: t0 + 10000 }];
+  s.presentation.timeline = [
+    { n: 1, enterTs: t0, leaveTs: t0 + 2000 },
+    { n: 2, enterTs: t0 + 2000, leaveTs: t0 + 5000 },
+    { n: 3, enterTs: t0 + 5000, leaveTs: t0 + 20000 },
+    { n: 1, enterTs: t0 + 20000, leaveTs: null }
+  ];
+  const md = sessionToMarkdown(s);
+  assert.ok(!md.includes('— Slide 1 · Intro —\n\n— Slide'), 'no stacked markers');
+  assert.equal((md.match(/— Slide 1/g) || []).length, 1, 'first Slide 1 visit collapsed away, trailing one kept');
+  assert.ok(!md.includes('— Slide 2'));
+  assert.ok(md.indexOf('— Slide 3 —') < md.indexOf('Hello.'));
+  assert.ok(md.indexOf('Hello.') < md.indexOf('— Slide 1 · Intro —'));
+});
+
+test('a session without the block renders as before', () => {
+  const s = newSession({ now: Date.UTC(2026, 0, 1, 10) });
+  s.transcript.push({ channel: 'them', text: 'Hi', ts: s.startedAt + 1 });
+  const md = sessionToMarkdown(s);
+  assert.ok(!md.includes('Slide'));
+  assert.match(md, /- \*\*Type:\*\* Live interview/);
+});
+
+test('presentationBlock keeps titles only for visited slides', () => {
+  const block = presentationBlock({
+    deck: { source: { fileName: 'talk.pptx' }, slides: [{ n: 1, title: 'A' }, { n: 2, title: 'B' }, { n: 3, title: 'C' }] },
+    snapshot: { slideCount: 3, skipped: [2], timeline: [{ n: 1, enterTs: 1, leaveTs: 2 }, { n: 3, enterTs: 2, leaveTs: null }] },
+    coverage: { 1: { status: 'covered', missing: [] } },
+    durationMin: 30
+  });
+  assert.deepEqual(block, {
+    deckFileName: 'talk.pptx', slideCount: 3, durationMin: 30,
+    titles: { 1: 'A', 3: 'C' },
+    timeline: [{ n: 1, enterTs: 1, leaveTs: 2 }, { n: 3, enterTs: 2, leaveTs: null }],
+    coverage: { 1: { status: 'covered', missing: [] } },
+    skipped: [2]
+  });
+  assert.equal(presentationBlock({ deck: null, snapshot: { slideCount: 0, skipped: [], timeline: [] }, coverage: {}, durationMin: 45 }).deckFileName, '');
+});
+
+test('setPresentation needs a timeline entry to create a session, and saves when enabled', () => {
+  const saved = [];
+  let on = true;
+  const recorder = new SessionRecorder({ store: { save: (s) => saved.push(s) }, isEnabled: () => on, debounceMs: 0, meta: () => ({ setupKind: 'presentation' }) });
+  recorder.setPresentation({ timeline: [], titles: {}, coverage: {}, skipped: [] });
+  assert.equal(recorder.current(), null);
+  const block = { deckFileName: '', slideCount: 1, durationMin: 45, titles: {}, timeline: [{ n: 1, enterTs: 5, leaveTs: null }], coverage: {}, skipped: [] };
+  on = false;
+  recorder.setPresentation(block);
+  assert.equal(recorder.current(), null, 'no-op when disabled');
+  on = true;
+  recorder.setPresentation(block);
+  assert.deepEqual(recorder.current().presentation, block);
+  recorder.addTurn({ channel: 'you', text: 'hi', ts: 6 });
+  recorder.flush();
+  assert.deepEqual(saved[saved.length - 1].presentation, block);
 });

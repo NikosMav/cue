@@ -11,7 +11,7 @@ const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
-const { SessionStore, SessionRecorder, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume, QUIT_WHILE_LISTENING, RESUME_WINDOW_MS } = require('./src/sessions');
+const { SessionStore, SessionRecorder, presentationBlock, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume, QUIT_WHILE_LISTENING, RESUME_WINDOW_MS } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
@@ -740,6 +740,19 @@ function sendPresentationUpdate() {
   if (presentationRuntime) send('presentation:update', presentationRuntime.update());
 }
 
+// Mirrors the talk's timeline, coverage and skips into the saved session.
+// Called on slide changes and coverage results, not on the 1 s tick.
+function recordPresentationSession() {
+  const rt = presentationRuntime;
+  if (!rt || !sessionRecorder) return;
+  sessionRecorder.setPresentation(presentationBlock({
+    deck: rt.deck,
+    snapshot: rt.state.snapshot(),
+    coverage: rt.coverage,
+    durationMin: currentSettings().durationMin
+  }));
+}
+
 // Writes the runtime's new cache entries into the latest deck on disk, so
 // enrichment and slide edits saved meanwhile are kept.
 function flushMatchCache() {
@@ -799,6 +812,7 @@ function checkCoverage(rt, left) {
     const flag = coverageFlag(left.n, result);
     if (flag) rt.state.addFlag(flag);
     sendPresentationUpdate();
+    recordPresentationSession();
   })().catch(e => console.log('[presentation] coverage check failed', (e && e.message) || e));
 }
 
@@ -874,7 +888,7 @@ async function pollPresentation() {
     if (res.message) send('status', { message: 'Slide matching paused: ' + res.message });
     else if (res.error) console.log('[presentation] slide match failed', res.error);
     checkCoverage(rt, res.left);
-    if (res.changed) sendPresentationUpdate();
+    if (res.changed) { sendPresentationUpdate(); recordPresentationSession(); }
   }).catch((e) => console.error('[presentation] slide match error', e));
 }
 
@@ -884,7 +898,7 @@ function stepPresentationSlide(delta) {
   if (!rt || !state.capturing) return;
   const res = rt.step(delta);
   checkCoverage(rt, res.left);
-  if (res.changed) sendPresentationUpdate();
+  if (res.changed) { sendPresentationUpdate(); recordPresentationSession(); }
 }
 
 function resetSlidesSession() {
