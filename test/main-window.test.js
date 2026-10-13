@@ -29,7 +29,7 @@ test('no moved handler resets the window to a fixed size', () => {
 });
 
 test('moves and resizes save bounds per display, debounced 500 ms', () => {
-  assert.match(main, /win\.on\('moved', scheduleBoundsSave\)/);
+  assert.match(main, /win\.on\('moved', onWindowMoved\)/);
   assert.match(main, /win\.on\('resized', scheduleBoundsSave\)/);
   assert.match(body('scheduleBoundsSave'), /setTimeout\(saveWindowBounds, 500\)/);
   const save = body('saveWindowBounds');
@@ -64,8 +64,38 @@ test('resize polls the cursor every 16 ms and stops on a destroyed window', () =
   assert.match(handler, /windowState\.hidden\) return/);
   assert.match(handler, /screen\.getCursorScreenPoint\(\)/);
   assert.match(handler, /clampBounds\(/);
-  assert.match(handler, /isDestroyed\(\)\) \{ stopResize\(\)/);
+  assert.match(handler, /isDestroyed\(\) \|\| !win\.isVisible\(\) \|\| Date\.now\(\) - startedAt > RESIZE_MAX_MS\) \{ endResize\(\)/);
   assert.match(handler, /, 16\)/);
+});
+
+test('a move re-applies the intended size after an OS rescale (mixed-DPI drag)', () => {
+  const moved = body('onWindowMoved');
+  assert.match(moved, /!windowState\.resize && !windowState\.hidden && !windowState\.overlayRestore && windowState\.size/);
+  assert.match(moved, /clampBounds\(\{ x: b\.x, y: b\.y, width: windowState\.size\.width, height: windowState\.size\.height \}, workAreaFor\(b\)\)/);
+  assert.match(moved, /win\.setBounds\(next\)/);
+  assert.ok(moved.indexOf('setBounds(next)') < moved.indexOf('scheduleBoundsSave()'), 'size is restored before the save is scheduled');
+});
+
+test('the intended size is recorded at create, resize end, show and overlay close', () => {
+  assert.match(body('createWindow'), /windowState\.size = \{ width: bounds\.width, height: bounds\.height \}/);
+  for (const fn of ['endResize', 'setWindowHidden', 'setWindowOverlay']) assert.match(body(fn), /windowState\.size = /, fn);
+});
+
+test('a lost grip resize ends on reload, renderer crash, hidden window or after 30 s', () => {
+  assert.match(main, /const RESIZE_MAX_MS = 30000;/);
+  assert.match(body('endResize'), /stopResize\(\);[\s\S]*scheduleBoundsSave\(\)/);
+  assert.match(main, /win\.webContents\.on\('did-start-loading', endResize\)/);
+  const gone = main.slice(main.indexOf("win.webContents.on('render-process-gone'"));
+  assert.match(gone.slice(0, gone.indexOf('\n  });')), /endResize\(\)/);
+});
+
+test('closing an overlay keeps the current position and restores only the size', () => {
+  assert.match(body('setWindowOverlay'), /clampBounds\(\{ x: current\.x, y: current\.y, width: restore\.width, height: restore\.height \}, workAreaFor\(current\)\)/);
+});
+
+test('the hidden height has a 24 px floor', () => {
+  assert.match(main, /const HIDDEN_MIN_HEIGHT = 24;/);
+  assert.match(body('setWindowHidden'), /Math\.max\(HIDDEN_MIN_HEIGHT, /);
 });
 
 test('hide and overlay sizes use restoreHeight and growForOverlay', () => {

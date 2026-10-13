@@ -316,8 +316,12 @@ async function getWhisperOverview() {
 // -------- window --------
 // Hidden (header height only) and overlay-grown sizes are temporary: bounds
 // are never saved while either is in effect. hiddenRestore and overlayRestore
-// hold the bounds to return to.
-const windowState = { hidden: false, hiddenRestore: null, overlayRestore: null, resize: null };
+// hold the bounds to return to. size is the last intended width/height, put
+// back after Windows rescales the window on a display with another scale factor.
+const windowState = { hidden: false, hiddenRestore: null, overlayRestore: null, resize: null, size: null };
+const HIDDEN_MIN_HEIGHT = 24;
+// Last resort when the renderer never sends window:resize-end.
+const RESIZE_MAX_MS = 30000;
 let boundsSaveTimer = null;
 
 // boundsForDisplay and displayForBounds treat the first display as primary.
@@ -364,13 +368,36 @@ function stopResize() {
   windowState.resize = null;
 }
 
+// A grip resize finished (or was abandoned): its size becomes the intended one.
+function endResize() {
+  if (!windowState.resize) return;
+  stopResize();
+  if (!win || win.isDestroyed()) return;
+  const b = win.getBounds();
+  windowState.size = { width: b.width, height: b.height };
+  scheduleBoundsSave();
+}
+
+// Dragging onto a monitor with a different scale factor makes Windows rescale
+// the window (700x600 became 467x401 entering a 150% screen). Put the intended
+// size back before the bounds are saved for that display.
+function onWindowMoved() {
+  if (win && !win.isDestroyed() && !windowState.resize && !windowState.hidden && !windowState.overlayRestore && windowState.size) {
+    const b = win.getBounds();
+    const next = clampBounds({ x: b.x, y: b.y, width: windowState.size.width, height: windowState.size.height }, workAreaFor(b));
+    if (next.width !== b.width || next.height !== b.height) win.setBounds(next);
+  }
+  scheduleBoundsSave();
+}
+
 // Hide shrinks the window to the header's height (the renderer measures it);
 // showing again restores the saved height.
 function setWindowHidden(hidden, headerHeight) {
   if (!win || win.isDestroyed()) return;
   if (hidden) {
-    const height = Math.round(Number(headerHeight));
-    if (!Number.isFinite(height) || height <= 0) return;
+    const requested = Math.round(Number(headerHeight));
+    if (!Number.isFinite(requested) || requested <= 0) return;
+    const height = Math.max(HIDDEN_MIN_HEIGHT, requested);
     if (!windowState.hidden) {
       stopResize();
       flushBoundsSave();
@@ -389,7 +416,9 @@ function setWindowHidden(hidden, headerHeight) {
   windowState.hidden = false;
   windowState.hiddenRestore = null;
   const current = win.getBounds();
-  win.setBounds(clampBounds(restoreHeight(saved, current), workAreaFor(current)));
+  const shown = clampBounds(restoreHeight(saved, current), workAreaFor(current));
+  windowState.size = { width: shown.width, height: shown.height };
+  win.setBounds(shown);
   win.setMinimumSize(MIN_SIZE.width, MIN_SIZE.height);
   scheduleBoundsSave();
 }
@@ -412,7 +441,12 @@ function setWindowOverlay(open) {
   const restore = windowState.overlayRestore;
   if (!restore) return;
   windowState.overlayRestore = null;
-  win.setBounds(clampBounds(restore, workAreaFor(restore)));
+  // Keep where the user moved the grown window; only the size goes back.
+  const current = win.getBounds();
+  const next = clampBounds({ x: current.x, y: current.y, width: restore.width, height: restore.height }, workAreaFor(current));
+  windowState.size = { width: next.width, height: next.height };
+  win.setBounds(next);
+  scheduleBoundsSave();
 }
 
 function createWindow() {
@@ -422,6 +456,8 @@ function createWindow() {
   const savedSettings = store.getSettings();
   const displays = displaysPrimaryFirst();
   const bounds = boundsForDisplay(savedSettings.windowBounds, displays, { windowX: savedSettings.windowX, windowY: savedSettings.windowY });
+
+  windowState.size = { width: bounds.width, height: bounds.height };
 
   // Migration: the old saved top-left position becomes its display's entry.
   if (Number.isFinite(savedSettings.windowX) && Number.isFinite(savedSettings.windowY)) {
@@ -523,7 +559,7 @@ function createWindow() {
   win.on('session-end', () => { quitConfirmed = true; });
 
   // Bounds are remembered per display (not while hidden or grown for an overlay).
-  win.on('moved', scheduleBoundsSave);
+  win.on('moved', onWindowMoved);
   win.on('resized', scheduleBoundsSave);
 
   win.setTitle('Cue'); // set before load
@@ -560,7 +596,10 @@ function createWindow() {
       });
     }
   });
+  // A reload or a crash loses the renderer's pointer-up: end any grip resize.
+  win.webContents.on('did-start-loading', endResize);
   win.webContents.on('render-process-gone', (_e, d) => {
+    endResize();
     console.log('[cue] renderer gone', JSON.stringify(d));
     recordEvent({ level: 'fatal', event: 'renderer_gone', code: d && d.reason, msg: 'renderer process ended: ' + JSON.stringify(d), frame: 'BrowserWindow' });
   });
@@ -1844,19 +1883,16 @@ ipcMain.on('window:resize-start', () => {
   const start = win.getBounds();
   const origin = screen.getCursorScreenPoint();
   const workArea = workAreaFor(start);
+  const startedAt = Date.now();
   windowState.resize = setInterval(() => {
-    if (!win || win.isDestroyed()) { stopResize(); return; }
+    if (!win || win.isDestroyed() || !win.isVisible() || Date.now() - startedAt > RESIZE_MAX_MS) { endResize(); return; }
     const p = screen.getCursorScreenPoint();
     const next = clampBounds({ ...start, width: start.width + p.x - origin.x, height: start.height + p.y - origin.y }, workArea);
     const b = win.getBounds();
     if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
   }, 16);
 });
-ipcMain.on('window:resize-end', () => {
-  if (!windowState.resize) return;
-  stopResize();
-  scheduleBoundsSave();
-});
+ipcMain.on('window:resize-end', endResize);
 ipcMain.on('window:set-hidden', (_e, payload) => {
   const p = payload || {};
   setWindowHidden(!!p.hidden, p.headerHeight);
