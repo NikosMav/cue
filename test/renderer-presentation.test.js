@@ -14,7 +14,7 @@ function helpers() {
   const start = src.indexOf('// ---- presentation helpers');
   const end = src.indexOf('// ---- end presentation helpers', start);
   assert.ok(start > -1 && end > start, 'presentation helpers not found');
-  return new Function(src.slice(start, end) + '\nreturn { parseLines, deckStatusText };')();
+  return new Function(src.slice(start, end) + '\nreturn { parseLines, deckStatusText, formatTimeLeft, pacingChip, toolbarStatus, stripStatusLine, displayOptions, visiblePoints };')();
 }
 
 test('deck status text', () => {
@@ -39,7 +39,7 @@ test('the kind selector offers Presentation', () => {
 
 test('presentation setups have duration, display, and a deck block', () => {
   assert.match(html, /<input id="setup-duration"[^>]*type="number"[^>]*min="5"[^>]*max="240"/);
-  assert.match(html, /<select id="setup-display"[^>]*class="[^"]*hidden/, 'display picker stays hidden until Task 11');
+  assert.match(html, /<div id="setup-display-block" class="hidden">[\s\S]*<select id="setup-display"/, 'display picker starts hidden');
   for (const id of ['deck-import', 'deck-status', 'deck-review']) assert.match(html, new RegExp('id="' + id + '"'));
 });
 
@@ -94,4 +94,110 @@ test('the deck block renders while Settings is still loading its form', () => {
   assert.ok(start > -1);
   const guard = src.slice(start, src.indexOf('\n', src.indexOf('return;', start)));
   assert.doesNotMatch(guard, /settingsFormReady/);
+});
+
+function update({ current = 7, slideCount = 32, offDeck = false, status = 'on', minutes = 0, title = 'Big-O intuition', matching = 'ok' } = {}) {
+  return {
+    snapshot: { current, slideCount, offDeck, remainingMs: 1120000, pacing: { status, minutes }, skipped: [], flags: [], timeline: [] },
+    slide: current ? { n: current, title, points: ['a', 'b'] } : null,
+    next: null,
+    matching
+  };
+}
+
+test('formatTimeLeft renders m:ss and never goes negative', () => {
+  const { formatTimeLeft } = helpers();
+  assert.equal(formatTimeLeft(0), '0:00');
+  assert.equal(formatTimeLeft(-5000), '0:00');
+  assert.equal(formatTimeLeft(1120000), '18:40');
+  assert.equal(formatTimeLeft(65000), '1:05');
+  assert.equal(formatTimeLeft(45 * 60000), '45:00');
+  assert.equal(formatTimeLeft(undefined), '0:00');
+});
+
+test('pacingChip', () => {
+  const { pacingChip } = helpers();
+  assert.equal(pacingChip({ status: 'on', minutes: 0 }), '✓ on track');
+  assert.equal(pacingChip({ status: 'ahead', minutes: 2 }), '▲ ahead 2 min');
+  assert.equal(pacingChip({ status: 'behind', minutes: 4 }), '▼ behind 4 min');
+  assert.equal(pacingChip({ status: 'none', minutes: 0 }), '');
+  assert.equal(pacingChip(null), '');
+});
+
+test('toolbarStatus', () => {
+  const { toolbarStatus } = helpers();
+  assert.equal(toolbarStatus(update()), '7/32 · ✓');
+  assert.equal(toolbarStatus(update({ status: 'ahead', minutes: 2 })), '7/32 · ▲');
+  assert.equal(toolbarStatus(update({ status: 'behind', minutes: 4 })), '7/32 · ▼');
+  assert.equal(toolbarStatus(update({ offDeck: true })), 'off-deck');
+  assert.equal(toolbarStatus(update({ current: null, slideCount: 0, status: 'none' })), '');
+  assert.equal(toolbarStatus(null), '');
+});
+
+test('stripStatusLine', () => {
+  const { stripStatusLine } = helpers();
+  assert.equal(stripStatusLine(update()), 'Slide 7 / 32 · Big-O intuition');
+  assert.equal(stripStatusLine(update({ current: null })), 'Slide – / 32');
+  assert.equal(stripStatusLine(update({ offDeck: true })), 'Slide 7 / 32 · Big-O intuition · off-deck');
+  assert.equal(stripStatusLine(update({ matching: 'failed' })), 'Slide 7 / 32 · Big-O intuition · ?');
+  assert.equal(stripStatusLine(update({ matching: 'disabled' })), 'Slide 7 / 32 · Big-O intuition · ?', 'deck but matching off');
+  assert.equal(stripStatusLine(update({ current: null, slideCount: 0, matching: 'disabled' })), '', 'no deck: no slide line');
+  assert.equal(stripStatusLine(update({ title: '' })), 'Slide 7 / 32');
+});
+
+test('visiblePoints collapse to the first bullet while an answer is shown', () => {
+  const { visiblePoints } = helpers();
+  assert.deepEqual(visiblePoints(['a', 'b', 'c'], false), ['a', 'b', 'c']);
+  assert.deepEqual(visiblePoints(['a', 'b', 'c'], true), ['a']);
+  assert.deepEqual(visiblePoints([], true), []);
+  assert.deepEqual(visiblePoints(undefined, false), []);
+});
+
+test('displayOptions: picker only with more than one display; a missing display is reported', () => {
+  const { displayOptions } = helpers();
+  const two = [{ id: '1', label: 'Built-in', width: 1512, height: 982 }, { id: '2', label: 'Display 2', width: 1920, height: 1080 }];
+  const a = displayOptions(two, '');
+  assert.equal(a.show, true);
+  assert.equal(a.missing, false);
+  assert.deepEqual(a.options.map((o) => o.value), ['', '1', '2']);
+  assert.equal(a.options[0].label, 'Primary display');
+  assert.equal(a.options[2].label, 'Display 2 · 1920×1080');
+  assert.equal(displayOptions([two[0]], '').show, false);
+  const gone = displayOptions(two, '99');
+  assert.equal(gone.missing, true);
+  assert.equal(gone.show, true);
+  assert.ok(gone.options.some((o) => o.value === '99'), 'the saved choice is kept until changed');
+  assert.equal(displayOptions([two[0]], '99').show, true, 'shown so a missing display can be cleared');
+  assert.equal(displayOptions([], '').show, false);
+});
+
+test('the presenter strip, toolbar pill and display note are in the page', () => {
+  assert.match(html, /<div id="panel-main">\s*<div id="presenter-strip" class="presenter-strip hidden"/);
+  for (const id of ['ps-status', 'ps-time', 'ps-pace', 'ps-points', 'ps-next', 'ps-flags', 'tb-presentation', 'setup-display-note']) {
+    assert.match(html, new RegExp('id="' + id + '"'));
+  }
+  assert.match(src, /'That display is not connected; watching the primary display\.'/);
+  assert.match(src, /'Share a window \(your slideshow\), not your whole screen, and keep cue on your laptop display\.'/);
+});
+
+test('the strip follows presentation:update and the active setup kind', () => {
+  assert.match(src, /cue\.on\('presentation:update'/);
+  assert.match(src, /setup\.kind === 'presentation'/);
+  assert.match(src, /cue\.displaysList\(\)/);
+});
+
+test('the first-use hint is remembered per setup with guarded storage', () => {
+  const start = src.indexOf('function maybeShowPresentationHint');
+  assert.ok(start > -1);
+  const body = src.slice(start, src.indexOf('\n  }\n', start));
+  assert.match(body, /try \{/);
+  assert.match(body, /localStorage/);
+  assert.match(body, /setup\.id/);
+});
+
+test('the strip adds no transitions or animations', () => {
+  const start = css.indexOf('/* Presenter strip');
+  assert.ok(start > -1, 'presenter strip styles not found');
+  const block = css.slice(start, css.indexOf('/* end presenter strip */', start));
+  assert.doesNotMatch(block, /transition|animation/);
 });

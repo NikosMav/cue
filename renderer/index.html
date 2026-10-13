@@ -17,6 +17,7 @@
       <button class="tb-logo" id="logo-btn" title="cue"></button>
       <div class="tb-divider"></div>
       <button class="tb-hide" id="hide-btn"><span class="chev"></span><span>Hide</span></button>
+      <span id="tb-presentation" class="tb-presentation hidden" title="Slide and pacing"></span>
       <div class="tb-divider"></div>
       <button class="tb-stop" id="stop-btn" title="Start / stop listening"></button>
       <div class="tb-divider"></div>
@@ -34,6 +35,15 @@
 
           <!-- Left column: AI responses -->
           <div id="panel-main">
+            <div id="presenter-strip" class="presenter-strip hidden" aria-live="polite">
+              <div class="ps-head">
+                <span id="ps-status" class="ps-status"></span>
+                <span class="ps-clock"><span id="ps-time" class="ps-time"></span><span id="ps-pace" class="ps-pace"></span></span>
+              </div>
+              <ul id="ps-points" class="ps-points"></ul>
+              <div id="ps-next" class="ps-next"></div>
+              <button id="ps-flags" class="ps-flags hidden" type="button" title="Show all flags"></button>
+            </div>
             <div id="messages"></div>
 
             <div id="action-row">
@@ -342,7 +352,11 @@
         <div class="presentation-only s-body hidden">
           <label class="s-label" for="setup-duration">Planned length <span class="s-hint">minutes, 5 to 240</span></label>
           <input id="setup-duration" class="s-input deck-duration" type="number" min="5" max="240" step="1" value="45" />
-          <select id="setup-display" class="s-select hidden" aria-label="Display to watch"></select>
+          <div id="setup-display-block" class="hidden">
+            <label class="s-label" for="setup-display">Watch display <span class="s-hint">the screen your slides are on</span></label>
+            <select id="setup-display" class="s-select" aria-label="Display to watch"></select>
+            <div id="setup-display-note" class="s-note hidden"></div>
+          </div>
           <label class="s-label">Slides <span class="s-hint">PPTX or PDF · talking points are generated from them</span></label>
           <div class="deck-bar">
             <span class="deck-status" id="deck-status" role="status"></span>

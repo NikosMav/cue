@@ -1817,6 +1817,14 @@ ipcMain.handle('deck:import', async (_e, setupId) => {
   }
 });
 
+// Connected displays for the Watch display picker (presentation setups).
+ipcMain.handle('displays:list', () => screen.getAllDisplays().map((d, i) => ({
+  id: String(d.id),
+  label: d.label || 'Display ' + (i + 1),
+  width: d.size.width,
+  height: d.size.height
+})));
+
 ipcMain.handle('deck:get', (_e, setupId) => {
   const setup = presentationSetup(setupId);
   if (!setup || !setup.deck) return null;

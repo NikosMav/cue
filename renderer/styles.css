@@ -1013,3 +1013,25 @@ button:focus { outline: none; }
 .setup-menu button:hover { background: rgba(255,255,255,0.08); }
 .setup-menu button.on::before { content: '✓ '; color: #86efac; }
 .setup-menu hr { border: none; border-top: 1px solid var(--bd-hair); margin: 4px 2px; }
+
+/* Presenter strip (presentation setups): compact, content swaps instantly */
+.presenter-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 2px 2px 10px; margin-bottom: 8px; border-bottom: 1px solid var(--bd-hair); }
+.presenter-strip.hidden { display: none; }
+.ps-head { display: flex; align-items: baseline; gap: 12px; font-size: 13px; color: var(--tx-mut); }
+.ps-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx-2); font-weight: 600; }
+.ps-clock { flex: 0 0 auto; display: inline-flex; gap: 8px; font-variant-numeric: tabular-nums; }
+.ps-pace.on { color: #86efac; }
+.ps-pace.ahead { color: #93c5fd; }
+.ps-pace.behind { color: #fca5a5; }
+.ps-points { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ps-points:empty { display: none; }
+.ps-points li { font-size: 22px; font-weight: 500; line-height: 1.35; color: var(--tx-1); padding-left: 18px; position: relative; }
+.ps-points li::before { content: '•'; position: absolute; left: 2px; color: var(--tx-mut); }
+.ps-next { font-size: 13px; color: var(--tx-mut); }
+.ps-next:empty { display: none; }
+.ps-flags { align-self: stretch; text-align: left; padding: 2px 0; border: none; background: transparent; color: #fcd34d; font: 500 13px var(--font); line-height: 1.45; white-space: pre-line; cursor: pointer; }
+.ps-flags.hidden { display: none; }
+.tb-presentation { padding: 3px 10px; border-radius: var(--r-pill); background: rgba(255,255,255,0.08); color: var(--tx-1); font: 600 12px var(--font); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tb-presentation.hidden { display: none; }
+#toast.wrap { white-space: normal; width: max-content; max-width: calc(100% - 32px); text-align: center; }
+/* end presenter strip */

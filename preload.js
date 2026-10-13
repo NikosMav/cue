@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('cue', {
   deckGet: (setupId) => ipcRenderer.invoke('deck:get', setupId),
   deckUpdateSlide: (setupId, n, patch) => ipcRenderer.invoke('deck:update-slide', setupId, n, patch),
   deckRegenerate: (setupId, which) => ipcRenderer.invoke('deck:regenerate', setupId, which),
+  displaysList: () => ipcRenderer.invoke('displays:list'),
   quit: () => ipcRenderer.send('app:quit'),
   permissionsCheck: () => ipcRenderer.invoke('permissions:check'),
   permissionsRequest: () => ipcRenderer.invoke('permissions:request'),

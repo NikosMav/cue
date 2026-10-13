@@ -188,7 +188,7 @@
   // Toast queue system — ensures latest toast wins cleanly without stacking
   let toastTimer = null;
   let toastFadeTimer = null;
-  function showToast(message, ms) {
+  function showToast(message, ms, opts) {
     let el = document.getElementById('toast');
     if (!el) {
       el = document.createElement('div');
@@ -200,6 +200,7 @@
     clearTimeout(toastFadeTimer);
     // Immediately update content (no stacking)
     el.textContent = message;
+    el.classList.toggle('wrap', !!(opts && opts.wrap));
     el.classList.add('show');
     toastTimer = setTimeout(() => {
       el.classList.remove('show');
@@ -630,6 +631,7 @@
     const collapsed = $('#panel').classList.toggle('collapsed');
     $('#hide-btn').classList.toggle('collapsed', collapsed);
     $('#live-dot').style.display = collapsed ? 'none' : '';
+    renderPresenterStrip();
     if (collapsed) {
       reopenSidebarOnExpand = sidebarOpen;
       if (sidebarOpen) hideSidebar();
@@ -1243,6 +1245,7 @@
     pinnedGroup = aiEl;
     requestAnimationFrame(keepPinnedInView);
     setBusy(true);
+    if (mode !== 'practiceQuestion') setPresentationAnswerShown(true);
   });
   const isStale = (id) => id !== undefined && id !== currentRequestId;
   cue.on('llm:token', ({ id, text }) => { if (!isStale(id)) appendToken(text); });
@@ -1383,6 +1386,8 @@
       el.title = labels[field] + (loaded[field] ? ' loaded — click to edit' : ' not set — click to add');
     });
     updateSavingIndicator();
+    renderPresenterStrip();
+    return maybeShowPresentationHint();
   }
 
   const setupMenu = $('#setup-menu');
@@ -1400,9 +1405,9 @@
         if (s.id === settings.activeSetupId) return;
         try {
           settings = await queueSettingsPatch({ activeSetupId: s.id });
-          updatePrepStatus();
+          const hinted = updatePrepStatus();
           if (messages.querySelector('.empty-state')) showEmptyState();
-          showToast('Setup: ' + s.name, 1500);
+          if (!hinted) showToast('Setup: ' + s.name, 1500);
         } catch (err) {
           showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3000);
         }
@@ -2096,7 +2101,163 @@
     }
     return parts.join(' · ');
   }
+  // Time left as m:ss, never below 0:00.
+  function formatTimeLeft(ms) {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+  }
+  function pacingChip(pacing) {
+    const status = pacing && pacing.status;
+    const minutes = (pacing && pacing.minutes) || 0;
+    if (status === 'on') return '✓ on track';
+    if (status === 'ahead') return '▲ ahead ' + minutes + ' min';
+    if (status === 'behind') return '▼ behind ' + minutes + ' min';
+    return '';
+  }
+  // The pill in the toolbar while the panel is collapsed.
+  function toolbarStatus(update) {
+    const snap = (update && update.snapshot) || {};
+    const count = snap.slideCount || 0;
+    if (!count) return '';
+    if (snap.offDeck) return 'off-deck';
+    const mark = { on: '✓', ahead: '▲', behind: '▼' }[snap.pacing && snap.pacing.status] || '';
+    return (update.slide ? update.slide.n : '–') + '/' + count + (mark ? ' · ' + mark : '');
+  }
+  // First line of the presenter strip; empty without a deck.
+  function stripStatusLine(update) {
+    const snap = (update && update.snapshot) || {};
+    const count = snap.slideCount || 0;
+    if (!count) return '';
+    const slide = update.slide;
+    let line = 'Slide ' + (slide ? slide.n : '–') + ' / ' + count;
+    if (slide && slide.title) line += ' · ' + slide.title;
+    if (snap.offDeck) line += ' · off-deck';
+    else if (update.matching === 'failed' || update.matching === 'disabled') line += ' · ?';
+    return line;
+  }
+  // While an answer is shown the talking points shrink to their first bullet.
+  function visiblePoints(points, answerShown) {
+    const list = Array.isArray(points) ? points : [];
+    return answerShown ? list.slice(0, 1) : list.slice();
+  }
+  // Watch display picker: shown with more than one display, or to clear a
+  // saved display that is not connected (main then watches the primary).
+  function displayOptions(displays, watchDisplayId) {
+    const list = Array.isArray(displays) ? displays : [];
+    const saved = String(watchDisplayId || '');
+    const missing = !!saved && !list.some((d) => String(d.id) === saved);
+    const options = [{ value: '', label: 'Primary display' }];
+    for (const d of list) options.push({ value: String(d.id), label: d.label + ' · ' + d.width + '×' + d.height });
+    if (missing) options.push({ value: saved, label: 'Not connected' });
+    return { show: list.length > 1 || missing, missing, options };
+  }
   // ---- end presentation helpers
+
+  // ---- presenter strip, toolbar pill and first-use hint -------------------
+  // main sends presentation:update only while listening with a presentation
+  // setup; the last one stays on screen after listening stops.
+  let presentationUpdate = null;
+  let presentationUpdateKey = '';
+  let presentationAnswerShown = false;
+  let presentationSlideN = null;
+  let presentationFlagsOpen = false;
+
+  function activePresentationSetup() {
+    const setup = settings && activeSetupOf(settings);
+    return setup && setup.kind === 'presentation' ? setup : null;
+  }
+  // An update belongs to one setup and one import of its deck.
+  function presentationKey(setup) {
+    return setup.id + '|' + (setup.deck ? setup.deck.importedAt : '');
+  }
+  // Before the first update: no slide yet, the full planned time.
+  function idlePresentationUpdate(setup) {
+    const count = setup.deck ? setup.deck.slideCount : 0;
+    return {
+      snapshot: { current: null, slideCount: count, offDeck: false, remainingMs: (setup.durationMin || 45) * 60000, pacing: { status: count ? 'on' : 'none', minutes: 0 }, skipped: [], flags: [], timeline: [] },
+      slide: null,
+      next: null,
+      matching: 'ok'
+    };
+  }
+
+  function renderPresenterStrip() {
+    const strip = $('#presenter-strip');
+    const pill = $('#tb-presentation');
+    const setup = activePresentationSetup();
+    if (!setup) {
+      strip.classList.add('hidden');
+      pill.classList.add('hidden');
+      return;
+    }
+    const update = presentationUpdate && presentationUpdateKey === presentationKey(setup) ? presentationUpdate : idlePresentationUpdate(setup);
+    const snap = update.snapshot || {};
+    const hasDeck = (snap.slideCount || 0) > 0;
+    const slideN = update.slide ? update.slide.n : null;
+    if (slideN !== presentationSlideN) {
+      presentationSlideN = slideN;
+      presentationAnswerShown = false;
+    }
+    $('#ps-status').textContent = stripStatusLine(update);
+    $('#ps-time').textContent = formatTimeLeft(snap.remainingMs) + ' left';
+    const pace = $('#ps-pace');
+    pace.textContent = pacingChip(snap.pacing);
+    pace.className = 'ps-pace ' + ((snap.pacing && snap.pacing.status) || '');
+    const points = $('#ps-points');
+    points.innerHTML = '';
+    if (hasDeck && update.slide) {
+      for (const text of visiblePoints(update.slide.points, presentationAnswerShown)) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        points.appendChild(li);
+      }
+    }
+    $('#ps-next').textContent = hasDeck && update.next ? 'next → ' + update.next.n + ' · ' + update.next.title : '';
+    const flags = Array.isArray(snap.flags) ? snap.flags : [];
+    const flagsEl = $('#ps-flags');
+    flagsEl.classList.toggle('hidden', !flags.length);
+    if (!flags.length) presentationFlagsOpen = false;
+    flagsEl.textContent = presentationFlagsOpen
+      ? flags.map((f) => '⚑ ' + f).join('\n')
+      : (flags.length ? '⚑ ' + flags[flags.length - 1] : '');
+    flagsEl.title = presentationFlagsOpen ? 'Show the newest flag only' : 'Show all flags';
+    strip.classList.remove('hidden');
+    const status = toolbarStatus(update);
+    pill.textContent = status;
+    pill.classList.toggle('hidden', !status || !$('#panel').classList.contains('collapsed'));
+  }
+  $('#ps-flags').addEventListener('click', () => {
+    presentationFlagsOpen = !presentationFlagsOpen;
+    renderPresenterStrip();
+  });
+  cue.on('presentation:update', (update) => {
+    const setup = activePresentationSetup();
+    if (!setup || !update || !update.snapshot) return;
+    presentationUpdate = update;
+    presentationUpdateKey = presentationKey(setup);
+    renderPresenterStrip();
+  });
+  // An answer on screen shrinks the talking points to their first bullet.
+  function setPresentationAnswerShown(shown) {
+    if (presentationAnswerShown === shown) return;
+    presentationAnswerShown = shown;
+    if (activePresentationSetup()) renderPresenterStrip();
+  }
+
+  // Once per setup, the first time it is the active one.
+  const presentationHintsShown = new Set();
+  function maybeShowPresentationHint() {
+    const setup = activePresentationSetup();
+    if (!setup || presentationHintsShown.has(setup.id)) return false;
+    presentationHintsShown.add(setup.id);
+    const key = 'cue.presentationHint.' + setup.id;
+    try {
+      if (window.localStorage.getItem(key)) return false;
+      window.localStorage.setItem(key, '1');
+    } catch (_) { /* storage unavailable: shown once per run */ }
+    showToast('Share a window (your slideshow), not your whole screen, and keep cue on your laptop display.', 8000, { wrap: true });
+    return true;
+  }
 
   // ---- About me and setups (data model: src/setups.js) --------------------
   const setupsModel = cue.setupsModel;
@@ -2440,7 +2601,37 @@
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
     if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
+    renderDisplayPicker(setup);
   }
+
+  // Watch display: filled from the connected displays each time the form is.
+  let displayPickerToken = 0;
+  async function renderDisplayPicker(setup) {
+    const token = ++displayPickerToken;
+    const select = $('#setup-display');
+    select.innerHTML = '';
+    $('#setup-display-block').classList.add('hidden');
+    let displays = [];
+    try { displays = await cue.displaysList(); } catch (_) { displays = []; }
+    if (token !== displayPickerToken) return;
+    const view = displayOptions(displays, setup.watchDisplayId);
+    for (const o of view.options) {
+      const option = document.createElement('option');
+      option.value = o.value;
+      option.textContent = o.label;
+      select.appendChild(option);
+    }
+    select.value = String(setup.watchDisplayId || '');
+    const note = $('#setup-display-note');
+    note.textContent = view.missing ? 'That display is not connected; watching the primary display.' : '';
+    note.classList.toggle('hidden', !view.missing);
+    $('#setup-display-block').classList.toggle('hidden', !view.show);
+  }
+  // The note is about the saved display; choosing another one answers it.
+  $('#setup-display').addEventListener('change', (e) => {
+    const option = e.target.selectedOptions[0];
+    if (!option || option.textContent !== 'Not connected') $('#setup-display-note').classList.add('hidden');
+  });
 
   // Writes the form into settings (not yet saved).
   function collectSetupForm() {
@@ -2462,6 +2653,8 @@
     if (patch.kind === 'presentation') {
       const minutes = Number.parseInt($('#setup-duration').value, 10);
       patch.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, minutes)) : (setup.durationMin || 45);
+      // Before the display list arrives the select is empty: keep the saved choice.
+      if ($('#setup-display').options.length) patch.watchDisplayId = $('#setup-display').value;
     }
     settings.setups = settings.setups.map((s) => (s.id === setup.id ? { ...s, ...patch } : s));
   }
@@ -2646,6 +2839,7 @@
   }
   function showEmptyState() {
     clearMessages();
+    setPresentationAnswerShown(false); // the answers were cleared
     const box = document.createElement('div');
     box.className = 'empty-state';
     if (!providerReady(settings)) {
