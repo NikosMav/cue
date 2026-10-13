@@ -8,7 +8,9 @@ const { MAX_AI_RULES_CHARS } = require('./profile-context');
 
 const BUILTIN_SETUP_ID = 'any';
 const SETUPS_VERSION = 1;
-const KINDS = ['interview', 'general'];
+const KINDS = ['interview', 'general', 'presentation'];
+const PRESENTATION_DEFAULTS = { durationMin: 45, watchDisplayId: '', deck: null };
+const DECK_FILE_RE = /^[A-Za-z0-9_-]+.json$/;
 const ABOUT_ME_FIELDS = ['resumeText', 'stories', 'workStyle'];
 const SETUP_TEXT_FIELDS = ['conversation', 'notes', 'whyCompany', 'whyLeaving', 'salaryTarget', 'questionsToAsk', 'instructions'];
 const INTERVIEW_ONLY_FIELDS = ['whyCompany', 'whyLeaving', 'salaryTarget', 'questionsToAsk'];
@@ -29,12 +31,24 @@ function newSetupId() {
 function makeSetup({ id, name, kind = 'general', saveSessions } = {}) {
   const setup = { id: id || newSetupId(), name: name || 'New setup', kind: KINDS.includes(kind) ? kind : 'general' };
   for (const field of SETUP_TEXT_FIELDS) setup[field] = '';
-  setup.saveSessions = typeof saveSessions === 'boolean' ? saveSessions : setup.kind === 'interview';
+  setup.saveSessions = typeof saveSessions === 'boolean' ? saveSessions : setup.kind !== 'general';
+  if (setup.kind === 'presentation') Object.assign(setup, PRESENTATION_DEFAULTS);
   return setup;
 }
 
 function builtinSetup() {
   return makeSetup({ id: BUILTIN_SETUP_ID, name: 'Any conversation', kind: 'general', saveSessions: false });
+}
+
+// A deck pointer names a file inside the decks folder; it never carries a path.
+function normalizeDeckPointer(deck) {
+  if (!deck || typeof deck !== 'object') return null;
+  const { file, fileName, slideCount, importedAt } = deck;
+  if (typeof file !== 'string' || !DECK_FILE_RE.test(file)) return null;
+  if (typeof fileName !== 'string') return null;
+  if (!Number.isInteger(slideCount) || slideCount < 0 || slideCount > 150) return null;
+  if (typeof importedAt !== 'number' || !Number.isFinite(importedAt)) return null;
+  return { file, fileName, slideCount, importedAt };
 }
 
 // Repairs whatever the file or the renderer handed over: known fields only,
@@ -50,6 +64,12 @@ function normalizeSetups(settings) {
     if (!raw || typeof raw !== 'object' || !str(raw.id) || ids.has(raw.id)) continue;
     const setup = makeSetup({ id: raw.id, name: str(raw.name).trim() || 'Untitled setup', kind: raw.kind, saveSessions: raw.saveSessions });
     for (const field of SETUP_TEXT_FIELDS) setup[field] = str(raw[field]);
+    if (setup.kind === 'presentation') {
+      const minutes = Number(raw.durationMin);
+      setup.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, Math.round(minutes))) : PRESENTATION_DEFAULTS.durationMin;
+      setup.watchDisplayId = str(raw.watchDisplayId);
+      setup.deck = normalizeDeckPointer(raw.deck);
+    }
     // The import and the Settings form cap this too; a hand-edited file may not.
     setup.instructions = setup.instructions.slice(0, MAX_AI_RULES_CHARS);
     ids.add(setup.id);
@@ -120,7 +140,10 @@ function effectiveSettings(settings) {
     saveSessions: !!setup.saveSessions,
     setupKind: setup.kind,
     setupName: setup.name,
-    setupId: setup.id
+    setupId: setup.id,
+    ...(setup.kind === 'presentation'
+      ? { durationMin: setup.durationMin, watchDisplayId: setup.watchDisplayId, deck: setup.deck }
+      : {})
   };
 }
 
@@ -154,7 +177,7 @@ function settingsForSession(settings, session) {
     const current = s.setups.find((x) => x.id === s.activeSetupId) || s.setups.find((x) => x.id === BUILTIN_SETUP_ID);
     if (current && current.kind === 'interview') return effectiveSettings({ ...s, activeSetupId: current.id });
   }
-  const kind = practice || meta.setupKind !== 'general' ? 'interview' : 'general';
+  const kind = practice || !KINDS.includes(meta.setupKind) ? 'interview' : meta.setupKind;
   const stand = makeSetup({ kind, name: str(meta.setupName).trim() || undefined });
   return effectiveSettings({ ...s, setups: [...s.setups, stand], activeSetupId: stand.id });
 }
@@ -166,6 +189,6 @@ function updateSetup(settings, id, patch) {
 }
 
 module.exports = {
-  BUILTIN_SETUP_ID, SETUPS_VERSION, KINDS, ABOUT_ME_FIELDS, SETUP_TEXT_FIELDS, INTERVIEW_ONLY_FIELDS,
+  BUILTIN_SETUP_ID, SETUPS_VERSION, KINDS, PRESENTATION_DEFAULTS, ABOUT_ME_FIELDS, SETUP_TEXT_FIELDS, INTERVIEW_ONLY_FIELDS,
   makeSetup, normalizeSetups, migrateSettings, activeSetup, effectiveSettings, settingsForSession, updateSetup
 };

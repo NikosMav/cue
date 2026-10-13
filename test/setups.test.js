@@ -219,3 +219,42 @@ test('updateSetup patches one setup and returns a new array', () => {
   assert.equal(next.find((x) => x.id === 'interview').saveSessions, false);
   assert.equal(s.setups.find((x) => x.id === 'interview').saveSessions, true);
 });
+
+test('a presentation setup saves sessions by default and carries its own fields', () => {
+  const s = makeSetup({ kind: 'presentation' });
+  assert.equal(s.kind, 'presentation');
+  assert.equal(s.saveSessions, true);
+  assert.equal(s.durationMin, 45);
+  assert.equal(s.watchDisplayId, '');
+  assert.equal(s.deck, null);
+});
+
+test('normalization clamps duration and rejects a deck pointer with a path', () => {
+  const out = normalizeSetups({ setups: [
+    { id: 'p1', name: 'Lecture', kind: 'presentation', durationMin: 999, deck: { file: '..\\x.json', fileName: 'a.pptx', slideCount: 3, importedAt: 1 } },
+    { id: 'p2', name: 'Talk', kind: 'presentation', durationMin: 1, deck: { file: 'p2.json', fileName: 'b.pdf', slideCount: 12, importedAt: 2 } },
+    { id: 'g', name: 'Chat', kind: 'general', durationMin: 30, deck: { file: 'g.json' } }
+  ] });
+  const [, p1, p2, g] = out.setups;
+  assert.equal(p1.durationMin, 240);
+  assert.equal(p1.deck, null);
+  assert.equal(p2.durationMin, 5);
+  assert.deepEqual(p2.deck, { file: 'p2.json', fileName: 'b.pdf', slideCount: 12, importedAt: 2 });
+  assert.equal('durationMin' in g, false);
+  assert.equal('deck' in g, false);
+});
+
+test('effective settings expose presentation fields and hide interview-only ones', () => {
+  const settings = { setupsVersion: 1, activeSetupId: 'p', setups: [{ id: 'p', name: 'L', kind: 'presentation', whyCompany: 'x', durationMin: 50 }] };
+  const e = effectiveSettings(settings);
+  assert.equal(e.setupKind, 'presentation');
+  assert.equal(e.durationMin, 50);
+  assert.equal(e.whyCompany, '');
+  assert.equal(e.deck, null);
+});
+
+test('a presentation session whose setup was deleted is debriefed as a presentation', () => {
+  const { settingsForSession } = require('../src/setups');
+  const e = settingsForSession({ setupsVersion: 1, setups: [] }, { setupId: 'gone', setupName: 'Old lecture', setupKind: 'presentation' });
+  assert.equal(e.setupKind, 'presentation');
+});
