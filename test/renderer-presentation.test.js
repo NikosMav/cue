@@ -6,9 +6,9 @@ const path = require('node:path');
 // renderer.js is a browser script with no harness: the pure helpers are
 // evaluated from their source, the wiring is guarded by inspection.
 const root = path.join(__dirname, '..');
-const src = fs.readFileSync(path.join(root, 'renderer/renderer.js'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8');
-const css = fs.readFileSync(path.join(root, 'renderer/styles.css'), 'utf8');
+const src = fs.readFileSync(path.join(root, 'renderer/renderer.js'), 'utf8').replace(/\r\n/g, '\n');
+const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8').replace(/\r\n/g, '\n');
+const css = fs.readFileSync(path.join(root, 'renderer/styles.css'), 'utf8').replace(/\r\n/g, '\n');
 
 function helpers() {
   const start = src.indexOf('// ---- presentation helpers');
@@ -252,8 +252,8 @@ test('the debrief view offers one checkbox per question and an Add selected butt
 });
 
 test('preload exposes deckAddQuestions and main validates against the setup deck', () => {
-  const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8').replace(/\r\n/g, '\n');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(preload, /deckAddQuestions: \(setupId, items\) => ipcRenderer\.invoke\('deck:add-questions', setupId, items\)/);
   const at = main.indexOf("ipcMain.handle('deck:add-questions'");
   assert.ok(at > -1, 'deck:add-questions handler');
@@ -266,7 +266,7 @@ test('preload exposes deckAddQuestions and main validates against the setup deck
 });
 
 test('presentation debriefs save the prose and the questions separately, with the deck outline', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const at = main.indexOf("ipcMain.handle('sessions:debrief'");
   const handler = main.slice(at, main.indexOf('\n});', at));
   assert.match(handler, /splitDebrief\(/);
@@ -287,7 +287,7 @@ test('only the status line is a live region, not the whole ticking strip', () =>
 });
 
 test('slide shortcuts are registered only in a presentation setup and reported inactive elsewhere', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const reg = mainBlock(main, 'function registerShortcuts()');
   assert.match(main, /const PRESENTATION_SHORTCUTS = new Set\(\['slidePrev', 'slideNext'\]\)/);
   assert.match(reg, /shortcutsForPresentation = currentSettings\(\)\.setupKind === 'presentation'/);
@@ -301,7 +301,7 @@ test('slide shortcuts are registered only in a presentation setup and reported i
 });
 
 test('a changed import aborts any running enrichment, even with nothing to enrich', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const at = main.indexOf("ipcMain.handle('deck:import'");
   const handler = main.slice(at, main.indexOf('\n});', at));
   const changed = handler.slice(handler.indexOf('if (!unchanged) {'));
@@ -311,14 +311,14 @@ test('a changed import aborts any running enrichment, even with nothing to enric
 });
 
 test('presentation polling skips the frame capture without a matcher', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const poll = mainBlock(main, 'async function pollPresentation()');
   assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') > -1);
   assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') < poll.indexOf('captureHashFrame('));
 });
 
 test('coverage checks wait for speech-to-text and keep one flag per slide', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(main, /const COVERAGE_GRACE_MS = 3000;/);
   assert.match(mainBlock(main, 'function checkCoverage('), /setTimeout\(\(\) => runCoverageCheck\(rt, left\), COVERAGE_GRACE_MS\)/);
   const run = mainBlock(main, 'function runCoverageCheck(');
@@ -328,7 +328,7 @@ test('coverage checks wait for speech-to-text and keep one flag per slide', () =
 });
 
 test('a Settings save applies a changed planned length to the live runtime', () => {
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
   const load = mainBlock(main, 'function loadPresentationRuntime(');
   assert.match(load, /if \(prev\.durationMin !== s\.durationMin\) prev\.setDurationMin\(s\.durationMin\);/);
 });

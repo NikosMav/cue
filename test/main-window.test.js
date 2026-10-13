@@ -6,8 +6,8 @@ const path = require('node:path');
 // main.js and preload.js need Electron to run, so the window wiring is
 // guarded by inspecting their source.
 const root = path.join(__dirname, '..');
-const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
+const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function body(name) {
   const start = main.indexOf(`function ${name}(`);

@@ -169,7 +169,6 @@ button:focus { outline: none; }
   backdrop-filter: blur(40px) saturate(180%);
   border: 1px solid var(--bd-hair);
   border-radius: var(--r-panel);
-  box-shadow: 0 16px 48px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.10);
 }
 /* Background opacity (Settings → Style) applies to the panel; dialogs keep theirs. */
 #panel.glass { background: rgba(20,22,28,var(--panel-alpha, 0.72)); }
@@ -570,7 +569,6 @@ button:focus { outline: none; }
   backdrop-filter: blur(40px) saturate(180%);
   border-left: 1px solid var(--bd-strong);
   border-radius: 0 var(--r-panel) var(--r-panel) 0;
-  box-shadow: -12px 0 32px rgba(0,0,0,0.35);
   padding: 14px;
   z-index: 10;
   pointer-events: auto;

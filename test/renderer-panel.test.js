@@ -7,10 +7,10 @@ const panelLayout = require('../src/panel-layout');
 // renderer.js is a browser script with no harness: the pure helpers are
 // evaluated from their source, the wiring is guarded by inspection.
 const root = path.join(__dirname, '..');
-const src = fs.readFileSync(path.join(root, 'renderer/renderer.js'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8');
-const css = fs.readFileSync(path.join(root, 'renderer/styles.css'), 'utf8');
-const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+const src = fs.readFileSync(path.join(root, 'renderer/renderer.js'), 'utf8').replace(/\r\n/g, '\n');
+const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8').replace(/\r\n/g, '\n');
+const css = fs.readFileSync(path.join(root, 'renderer/styles.css'), 'utf8').replace(/\r\n/g, '\n');
+const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function section(startMarker, endMarker, names, prelude = '') {
   const start = src.indexOf(startMarker);
@@ -491,13 +491,13 @@ test('layout, grip and drawer add no transitions or animations', () => {
 });
 
 test('the empty state names the Start button, not the old ■ icon', () => {
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.doesNotMatch(src, /■ button above/);
   assert.match(src, /Press <strong>Start<\/strong> above to listen/);
 });
 
 test('a button-started answer is labelled with the button name for the active setup', () => {
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /userBubble === modeLabel\(mode\) \? modeLabel\(mode, setup && setup\.kind\) : userBubble/);
 });
 
@@ -533,4 +533,14 @@ test('Hide is ignored while Settings, Sessions, the publik card or the consent s
 
 test('"Use my own key" waits for Settings to fill before choosing the provider', () => {
   assert.match(src, /action: async \(\) => \{ hidePublikDialog\(\); await openSettings\(\); selectByoProvider\(\); \}/);
+});
+
+test('the panel, dialogs and history drawer have no drop shadow', () => {
+  const rule = (selector) => {
+    const start = css.indexOf(selector + ' {');
+    assert.ok(start > -1, selector + ' rule not found');
+    return css.slice(start, css.indexOf('}', start));
+  };
+  assert.doesNotMatch(rule('.glass'), /box-shadow/);
+  assert.doesNotMatch(rule('.transcript-sidebar'), /box-shadow/);
 });
