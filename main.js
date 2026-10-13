@@ -1537,7 +1537,7 @@ function deckStore() {
   if (!deckStoreInstance) deckStoreInstance = new DeckStore({ dir: path.join(app.getPath('userData'), 'decks') });
   return deckStoreInstance;
 }
-const deckEnrichments = new Map(); // setupId -> AbortController (one enrichment per setup)
+const deckEnrichments = new Map(); // setupId -> { controller, pending: Set<n> } (one enrichment per setup)
 const NOT_PRESENTATION = 'Choose a presentation setup first.';
 
 function presentationSetup(setupId) {
@@ -1558,8 +1558,9 @@ function removeOrphanedDecks(before, after) {
     for (const setup of (before && before.setups) || []) {
       if (kept.has(setup.id)) continue;
       const running = deckEnrichments.get(setup.id);
-      if (running) { running.abort(); deckEnrichments.delete(setup.id); }
-      if (setup.deck && setup.deck.file) deckStore().remove(setup.deck.file);
+      if (running) { running.controller.abort(); deckEnrichments.delete(setup.id); }
+      // Never trust the stored pointer for the path: the file name derives from the id.
+      if (setup.deck) deckStore().remove(deckStore().fileFor(setup.id));
     }
   } catch (e) { console.error('[deck] cleanup failed', e); }
 }
@@ -1570,11 +1571,17 @@ function deckSummary(deck) {
 
 // Enriches `ns` in the background, saving and reporting after every batch.
 // Starting a new run for the same setup aborts the old one's remaining batches.
-async function runDeckEnrichment(setupId, file, deck, ns) {
+// A regenerate that supersedes a running enrichment inherits that run's
+// unprocessed slides; a new import replaces the deck, so it just aborts.
+async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false } = {}) {
   const previous = deckEnrichments.get(setupId);
-  if (previous) previous.abort();
+  if (previous) {
+    previous.controller.abort();
+    if (!fromImport) ns = [...new Set([...ns, ...previous.pending])].sort((a, b) => a - b);
+  }
   const controller = new AbortController();
-  deckEnrichments.set(setupId, controller);
+  const run = { controller, pending: new Set(deck.slides.filter(s => ns.includes(s.n) && !s.edited).map(s => s.n)) };
+  deckEnrichments.set(setupId, run);
   try {
     const setup = presentationSetup(setupId);
     if (!setup) return;
@@ -1599,13 +1606,17 @@ async function runDeckEnrichment(setupId, file, deck, ns) {
         effort: request.effort,
         onToken: () => {}
       }, STREAM_INACTIVITY_MS, controller.signal),
-      onBatch: (d, done, count) => {
+      onBatch: (d, done, count, batchNs) => {
         if (controller.signal.aborted) return;
-        // Edits made while a batch was in flight win over the batch result.
-        const latest = deckStore().load(file) || d;
-        const merged = { ...d, slides: d.slides.map(s => {
-          const cur = latest.slides.find(x => x.n === s.n);
-          return cur && cur.edited ? cur : s;
+        for (const n of batchNs) run.pending.delete(n);
+        // Merge into the latest deck on disk: only this batch's enrichment
+        // fields change, and slides edited meanwhile are left alone.
+        const latest = deckStore().load(file);
+        if (!latest) return;
+        const merged = { ...latest, slides: latest.slides.map(cur => {
+          const mine = batchNs.includes(cur.n) ? d.slides.find(x => x.n === cur.n) : null;
+          if (!mine || cur.edited) return cur;
+          return { ...cur, points: mine.points, questions: mine.questions, keyIdea: mine.keyIdea, enrichError: mine.enrichError };
         }) };
         deckStore().save(file, merged);
         send('deck:progress', { setupId, done, total: count });
@@ -1614,7 +1625,7 @@ async function runDeckEnrichment(setupId, file, deck, ns) {
   } catch (e) {
     console.error('[deck] enrichment failed', e);
   } finally {
-    if (deckEnrichments.get(setupId) === controller) deckEnrichments.delete(setupId);
+    if (deckEnrichments.get(setupId) === run) deckEnrichments.delete(setupId);
   }
 }
 
@@ -1638,7 +1649,7 @@ ipcMain.handle('deck:import', async (_e, setupId) => {
     if (!unchanged) {
       deckStore().save(file, deck);
       setDeckPointer(setupId, deck, file, Date.now());
-      if (toEnrich.length) runDeckEnrichment(setupId, file, deck, toEnrich);
+      if (toEnrich.length) runDeckEnrichment(setupId, file, deck, toEnrich, { fromImport: true });
     }
     return { deck: deckSummary(deck), unchanged };
   } catch (e) {
@@ -1649,13 +1660,14 @@ ipcMain.handle('deck:import', async (_e, setupId) => {
 ipcMain.handle('deck:get', (_e, setupId) => {
   const setup = presentationSetup(setupId);
   if (!setup || !setup.deck) return null;
-  return deckStore().load(setup.deck.file);
+  return deckStore().load(deckStore().fileFor(setupId));
 });
 
 ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   const setup = presentationSetup(setupId);
   if (!setup || !setup.deck) return { error: NOT_PRESENTATION };
-  const deck = deckStore().load(setup.deck.file);
+  const file = deckStore().fileFor(setupId);
+  const deck = deckStore().load(file);
   const slide = deck && deck.slides.find(s => s.n === n);
   if (!slide) return { error: 'That slide no longer exists.' };
   const list = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
@@ -1665,14 +1677,14 @@ ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   slide.keyIdea = typeof p.keyIdea === 'string' ? p.keyIdea : '';
   slide.edited = true;
   slide.enrichError = false;
-  deckStore().save(setup.deck.file, deck);
+  deckStore().save(file, deck);
   return { deck };
 });
 
 ipcMain.handle('deck:regenerate', (_e, setupId, which) => {
   const setup = presentationSetup(setupId);
   if (!setup || !setup.deck) return { error: NOT_PRESENTATION };
-  const file = setup.deck.file;
+  const file = deckStore().fileFor(setupId);
   const deck = deckStore().load(file);
   if (!deck) return { error: 'Import a deck first.' };
   let ns;

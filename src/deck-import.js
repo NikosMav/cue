@@ -69,7 +69,7 @@ async function enrichDeck(deck, { ns, call, conversation, notes, onBatch, signal
         return r ? { ...s, points: r.points, questions: r.questions, keyIdea: r.keyIdea, enrichError: false } : { ...s, enrichError: true };
       }),
     };
-    if (onBatch) onBatch(current, i + 1, total);
+    if (onBatch) onBatch(current, i + 1, total, batchNs);
   }
   return current;
 }

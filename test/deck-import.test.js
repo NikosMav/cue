@@ -108,3 +108,37 @@ test('appendQuestions dedupes, caps at 6 and marks edited', () => {
   assert.equal(out.slides[0].edited, true);
   assert.equal(out.slides[1].edited, false);
 });
+
+test('a slide omitted from a successful batch reply gets enrichError', async () => {
+  const out = await enrichDeck(tenSlides(), {
+    ns: [1, 2],
+    call: async () => JSON.stringify([{ n: 1, points: ['p'], questions: [], keyIdea: '' }]),
+    onBatch() {},
+  });
+  assert.equal(out.slides[0].enrichError, false);
+  assert.equal(out.slides[1].enrichError, true);
+});
+
+test('onBatch reports the batch ns so callers can track what is left', async () => {
+  const seen = [];
+  await enrichDeck(tenSlides(), {
+    ns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    call: async (r) => okResponse(batchNs(r)),
+    onBatch: (d, done, total, ns) => seen.push(ns),
+  });
+  assert.deepEqual(seen, [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10]]);
+});
+
+test('an aborted run stops calling call and onBatch', async () => {
+  const controller = new AbortController();
+  let calls = 0, batches = 0;
+  const out = await enrichDeck(tenSlides(), {
+    ns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    signal: controller.signal,
+    call: async (r) => { calls++; controller.abort(); return okResponse(batchNs(r)); },
+    onBatch() { batches++; },
+  });
+  assert.equal(calls, 1);
+  assert.equal(batches, 0);
+  assert.deepEqual(out.slides[0].points, []);
+});
