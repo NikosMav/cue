@@ -284,8 +284,17 @@
   });
 
   // ---- heard caption helpers (pure; test/renderer-panel.test.js evaluates them)
+  // Long questions keep their latest words (about three lines): the end is
+  // what is being answered.
   function heardCaption(text) {
-    return 'Heard: “' + text + '”';
+    const max = 240;
+    let shown = text;
+    if (shown.length > max) {
+      const tail = shown.slice(-max);
+      const cut = tail.indexOf(' ');
+      shown = '… ' + (cut > -1 ? tail.slice(cut + 1) : tail);
+    }
+    return 'Heard: “' + shown + '”';
   }
   // ---- end heard caption helpers
 
@@ -300,6 +309,9 @@
     heardEl.textContent = '';
     heardEl.classList.add('hidden');
   }
+  // The full transcript, for more than the current question.
+  heardEl.title = 'Show the full transcript';
+  heardEl.addEventListener('click', () => showSidebar());
 
   // Smart toggle
   const smartBtn = $('#smart-toggle');
@@ -946,12 +958,12 @@
       if (text && text.trim().length >= 2) appendTranscriptHistoryTurn(channel, text, false);
     }
   });
-  cue.on('transcript', ({ channel, text }) => {
+  cue.on('transcript', ({ channel, text, question }) => {
     if (!text || text.trim().length < 2 || /^[?!.,;:\-…]+$/.test(text.trim())) return;
     appendTranscriptHistoryTurn(channel, text, false);
     // In practice the "interviewer" is cue itself, and its question is already on screen.
     if (practiceActive) return;
-    if (channel === 'them' && capturing) showHeard(text);
+    if (channel === 'them' && capturing) showHeard(question || text);
   });
   let statusTimer = null;
   function showStatus(message, button) {

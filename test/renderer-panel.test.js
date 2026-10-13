@@ -11,6 +11,7 @@ const src = fs.readFileSync(path.join(root, 'renderer/renderer.js'), 'utf8').rep
 const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8').replace(/\r\n/g, '\n');
 const css = fs.readFileSync(path.join(root, 'renderer/styles.css'), 'utf8').replace(/\r\n/g, '\n');
 const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8').replace(/\r\n/g, '\n');
+const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function section(startMarker, endMarker, names, prelude = '') {
   const start = src.indexOf(startMarker);
@@ -332,11 +333,10 @@ test('no category pill, separators or speech auto-fill remain', () => {
   }
 });
 
-test('the question above an answer is one muted line', () => {
+test('the question above an answer is muted and clipped', () => {
   const bubble = cssRule('.user-bubble');
-  assert.match(bubble, /white-space: nowrap;/);
-  assert.match(bubble, /text-overflow: ellipsis;/);
   assert.match(bubble, /overflow: hidden;/);
+  assert.match(bubble, /color: var\(--tx-mut\)/);
 });
 
 test('Previous answers lists earlier answers newest first, collapsed when a new one starts', () => {
@@ -366,8 +366,14 @@ test('the Ask field sends through the ask path; Enter sends, Esc closes', () => 
 test('the heard caption shows only final Them lines while listening', () => {
   const { heardCaption } = section('// ---- heard caption helpers', '// ---- end heard caption helpers', ['heardCaption']);
   assert.equal(heardCaption('Why us?'), 'Heard: “Why us?”');
+  // A long question keeps its latest words: the end is what is being answered.
+  const long = Array.from({ length: 80 }, (_, i) => 'word' + i).join(' ');
+  const capped = heardCaption(long);
+  assert.ok(capped.startsWith('Heard: “… '), capped.slice(0, 20));
+  assert.ok(capped.endsWith('word79”'));
+  assert.ok(capped.length <= 'Heard: “… ”'.length + 240);
   const handler = src.slice(src.indexOf("cue.on('transcript',"), src.indexOf("cue.on('", src.indexOf("cue.on('transcript',") + 10));
-  assert.match(handler, /if \(channel === 'them' && capturing\) showHeard\(text\);/);
+  assert.match(handler, /if \(channel === 'them' && capturing\) showHeard\(question \|\| text\);/);
   assert.equal(src.split('showHeard(').length - 1, 2, 'showHeard is defined once and called only from the transcript handler');
   assert.match(functionBody('showHeard'), /\.textContent = heardCaption\(/);
   assert.doesNotMatch(functionBody('showHeard'), /innerHTML/);
@@ -375,8 +381,7 @@ test('the heard caption shows only final Them lines while listening', () => {
   assert.match(capture, /clearHeard\(\)/);
   assert.match(functionBody('clearConversationUI'), /clearHeard\(\)/);
   const heard = cssRule('#heard');
-  assert.match(heard, /white-space: nowrap;/);
-  assert.match(heard, /text-overflow: ellipsis;/);
+  assert.match(heard, /overflow: hidden;/);
 });
 
 test('the scroll shortcuts scroll the reading area', () => {
@@ -560,4 +565,28 @@ test('the ⋯ menu opens under its button, not at the window edge', () => {
   assert.match(src, /function placePanelMenu\(\)/);
   const open = src.slice(src.indexOf("panelMenu.classList.remove('hidden');") - 200, src.indexOf("panelMenu.classList.remove('hidden');") + 120);
   assert.match(open, /placePanelMenu\(\)/);
+});
+
+test('Heard shows the whole current question, up to three readable lines, and opens the transcript', () => {
+  assert.match(main, /send\('transcript', \{ \.\.\.turn, question: channel === 'them' \? currentQuestion\(transcript\) : '' \}\)/);
+  assert.match(src, /showHeard\(question \|\| text\)/);
+  const rule = css.slice(css.indexOf('#heard {'), css.indexOf('}', css.indexOf('#heard {')));
+  assert.match(rule, /-webkit-line-clamp:\s*3/);
+  assert.match(rule, /font-size:\s*15px/);
+  assert.doesNotMatch(rule, /white-space:\s*nowrap/);
+  assert.match(src, /heardEl\.addEventListener\('click', \(\) => showSidebar\(\)\)/);
+});
+
+test('the question above an answer shows up to two lines', () => {
+  const rule = css.slice(css.indexOf('.user-bubble {'), css.indexOf('}', css.indexOf('.user-bubble {')));
+  assert.match(rule, /-webkit-line-clamp:\s*2/);
+  assert.doesNotMatch(rule, /white-space:\s*nowrap/);
+});
+
+test('dialog overlays do not darken or blur the window behind them', () => {
+  for (const sel of ['#settings-scrim {', '#sessions-scrim {', '#publik-scrim {', '#consent-scrim {']) {
+    const rule = css.slice(css.indexOf(sel), css.indexOf('}', css.indexOf(sel)));
+    assert.doesNotMatch(rule, /background:\s*rgba\(0,\s*0,\s*0/, sel + ' darkens the window');
+    assert.doesNotMatch(rule, /backdrop-filter/, sel + ' blurs the window');
+  }
 });

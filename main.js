@@ -241,7 +241,9 @@ function publishTranscript(channel, text) {
   if (!text || !text.trim()) return;
   const turn = { channel, text: text.trim(), ts: Date.now() };
   pushTranscript(turn);
-  send('transcript', turn);
+  // The renderer's "Heard:" block shows the whole question the answer is built
+  // from (consecutive segments joined), not only this last fragment.
+  send('transcript', { ...turn, question: channel === 'them' ? currentQuestion(transcript) : '' });
   send('stt:final', { channel, text: turn.text });
   autoAnswer.noteFinal(channel, turn.text);
 }

@@ -250,3 +250,24 @@ test('splitDebrief without a block returns the prose and no questions', () => {
   assert.deepEqual(splitDebrief(''), { prose: '', questions: [] });
   assert.deepEqual(splitDebrief(undefined), { prose: '', questions: [] });
 });
+
+// Speech-to-text cannot tell a mishearing from a slip, so feedback never blames
+// the candidate for a name and states a differing fact neutrally.
+test('practice feedback and interview debriefs treat transcript names and facts neutrally', () => {
+  const feedback = MODES.practiceFeedback.buildSystem('', '');
+  const debrief = buildDebriefRequest({ setupKind: 'interview' }, { kind: 'interview', transcript: [{ channel: 'them', text: 'Hi', ts: 1 }], answers: [] }).system;
+  const practice = buildDebriefRequest({ setupKind: 'interview' }, { kind: 'practice', transcript: [{ channel: 'them', text: 'Hi', ts: 1 }], answers: [] }).system;
+  for (const system of [feedback, debrief, practice]) {
+    assert.match(system, /sounds like a name or term in the reference.*use the reference spelling and do not mention it/);
+    assert.match(system, /The transcript has .*; your notes say .* worth checking which you said/);
+  }
+  const general = buildDebriefRequest({ setupKind: 'general' }, { transcript: [], answers: [] }).system;
+  assert.doesNotMatch(general, /worth checking which you said/, 'general debriefs are unchanged');
+});
+
+test('interview answers do not end with a question back to the interviewer', () => {
+  const r = buildPromptRequest({ setupKind: 'interview' }, 'say', [{ channel: 'them', text: 'Tell me about yourself.', ts: 1 }]);
+  assert.match(r.system, /Do not end with a question to the interviewer unless they asked whether you have questions/);
+  const g = buildPromptRequest({ setupKind: 'general' }, 'say', [{ channel: 'them', text: 'Tell me about yourself.', ts: 1 }]);
+  assert.doesNotMatch(g.system, /question to the interviewer/);
+});

@@ -22,6 +22,7 @@ function answerStyle(length = 'brief') {
     'For a past event, compress the situation, your action and the supported outcome into one small story; do not label STAR sections. ' +
     'For future goals, describe only documented aspirations, without inventing a title or management ambition. ' +
     'Do not append a second example, a generic lesson, a sales pitch for the role, or a summary that repeats the opening. ' +
+    'Do not end with a question to the interviewer unless they asked whether you have questions. ' +
     'Do not open by thanking them, praising what they said, or restating it. ' +
     'Use the reference selectively; having more notes is not a reason to include more facts. ' +
     'Use earlier conversation only to resolve references in the current question and to avoid asking what was already asked or answered, not to answer earlier questions again. ' +
@@ -157,6 +158,14 @@ function checklistLine() {
 const SPEECH_TO_TEXT_RULE =
   'The transcript comes from speech-to-text and may mishear names and terms as similar-sounding words; ' +
   'when a heard word plausibly matches a name or term in the reference, use the reference spelling and meaning. ';
+
+// Feedback on what the candidate said. A transcript cannot show whether a
+// wrong word was a mishearing or a slip, so it never blames the candidate:
+// near-miss names are silently corrected, differing facts are a neutral check.
+const TRANSCRIPT_FEEDBACK_RULE =
+  'When a word in the transcript sounds like a name or term in the reference (an employer, product, tool or place), treat it as speech-to-text: use the reference spelling and do not mention it. ' +
+  'When the transcript states a fact that differs from the reference (a number, date, employer, title or result), do not say the candidate got it wrong; ' +
+  'note it neutrally as a check, for example: "The transcript has \'five years\'; your notes say about three. This is worth checking which you said." ';
 
 function buildSystem(base, contextBlock) {
   return (contextBlock ? contextBlock + '\n\n' : '') + base + '\n\n' +
@@ -655,6 +664,7 @@ const MODES = {
         'Reply in Markdown with exactly three short parts: **What worked** (one or two bullets), **What to tighten** (one or two concrete bullets), ' +
         'and **A stronger answer** (a spoken answer of about 60–90 words the candidate could give, using only facts from their answer and the reference material). ' +
         'The answer comes from speech-to-text, so ignore filler words and transcription errors. ' +
+        TRANSCRIPT_FEEDBACK_RULE +
         'If the candidate\'s answer is missing or only a few words, say so in one sentence and give only the stronger answer.',
         contextBlock
       ), aiRules, 'practiceFeedback');
@@ -978,6 +988,7 @@ function buildDebriefRequest(settings, session) {
     'You are an experienced interview coach writing a debrief of ' + (practice ? 'a practice interview' : 'a job interview') + ' for the candidate. ' +
     BASE_RULES +
     '"Them" is the interviewer and "You" is the candidate, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
+    TRANSCRIPT_FEEDBACK_RULE +
     'Lines marked [cue suggested] are suggestions the candidate saw on screen, not things they said. ' +
     'Write Markdown with these sections, in order: ' +
     '## Summary (two or three sentences: the role, the main topics, overall impression). ' +

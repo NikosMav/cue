@@ -199,7 +199,7 @@ button:focus { outline: none; }
 #reading.fade-bottom { -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22px); }
 #reading.fade-top.fade-bottom { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); }
 /* The question above an answer: one muted line (its title holds the whole text). */
-.user-bubble { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--tx-mut); font-size: 13px; font-weight: 500; line-height: 1.4; }
+.user-bubble { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--tx-mut); font-size: 13px; font-weight: 500; line-height: 1.4; }
 .ai-text {
   color: var(--tx-1);
   font-size: var(--answer-px, 18px);
@@ -263,7 +263,9 @@ button:focus { outline: none; }
    when the row would overflow, Assist, Follow-up and Recap show only their
    icons (renderer fitActionRow). */
 #footer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-#heard { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--tx-mut); font-size: 12.5px; line-height: 1.4; -webkit-user-select: text; user-select: text; }
+/* What cue heard: the whole current question, up to three lines; click for the transcript. */
+#heard { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--tx-2); font-size: 15px; line-height: 1.45; cursor: pointer; -webkit-user-select: text; user-select: text; }
+#heard:hover { color: var(--tx-1); }
 .ask-field { display: flex; }
 #ask-input {
   flex: 1 1 auto; min-width: 0; padding: 7px 12px;
@@ -317,7 +319,7 @@ button:focus { outline: none; }
 #settings-scrim {
   position: fixed; inset: 0; z-index: 20;
   display: grid; place-items: center;
-  background: rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+  background: transparent;
 }
 #settings-scrim.hidden { display: none; }
 #sessions-scrim.hidden { display: none; }
@@ -463,7 +465,7 @@ button:focus { outline: none; }
 
 
 /* Sessions */
-#sessions-scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,0.35); }
+#sessions-scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: transparent; }
 #sessions { width: min(560px, 95vw); padding: 18px 20px 20px; -webkit-app-region: no-drag; height: 86vh; display: flex; flex-direction: column; }
 .sess-pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
 .sess-pane.hidden { display: none; }
@@ -522,7 +524,7 @@ button:focus { outline: none; }
 .shortcut-more .s-action { padding: 4px 8px; font-size: 11px; }
 
 /* ============================ publik consent dialog ============================ */
-#publik-scrim { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(0,0,0,0.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#publik-scrim { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: transparent; }
 #publik-scrim.hidden { display: none; }
 #publik-dialog { width: min(470px, 93vw); padding: 26px 28px 18px; text-align: center; -webkit-app-region: no-drag; }
 .pd-icon { display: flex; justify-content: center; margin-bottom: 14px; font-size: 34px; line-height: 1; }
@@ -709,7 +711,7 @@ button:focus { outline: none; }
 /* Anything full-screen added here must ALSO be listed in the pointer-events
    rule near the top and in the click-through selector in renderer.js, or the
    window stays transparent to the mouse and the buttons cannot be clicked. */
-#consent-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0,0,0,0.5); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#consent-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: transparent; }
 #consent-scrim.hidden { display: none; }
 #consent { width: min(430px, 92vw); padding: 24px 26px 16px; text-align: center; -webkit-app-region: no-drag; }
 .cs-title { font-size: 15px; font-weight: 620; color: var(--tx-1); line-height: 1.35; }
