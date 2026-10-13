@@ -63,4 +63,22 @@ function relevantSlides(question, slides, currentN, limit = 3) {
   return scored.slice(0, Math.max(0, limit)).map((x) => x.slide);
 }
 
-module.exports = { deckOutline, relevantSlides };
+/**
+ * Slide context for a prompt: the current slide, the slides either side of it
+ * and the other slides the question may be about.
+ * @param {{ slides?: object[] } | null} deck
+ * @param {number|null} currentN
+ * @param {string} question
+ * @returns {{ current: object|null, neighbours: object[], relevant: object[] }}
+ */
+function slideContext(deck, currentN, question) {
+  const slides = deck && Array.isArray(deck.slides) ? deck.slides : [];
+  if (!slides.length) return { current: null, neighbours: [], relevant: [] };
+  const byN = (n) => slides.find((s) => s && s.n === n) || null;
+  const current = Number.isFinite(currentN) ? byN(currentN) : null;
+  if (!current) return { current: null, neighbours: [], relevant: relevantSlides(question, slides, 0) };
+  const neighbours = [byN(currentN - 1), byN(currentN + 1)].filter(Boolean);
+  return { current, neighbours, relevant: relevantSlides(question, slides, currentN) };
+}
+
+module.exports = { deckOutline, relevantSlides, slideContext };

@@ -20,6 +20,7 @@ const { effectiveSettings, settingsForSession, updateSetup } = require('./src/se
 const { DeckStore } = require('./src/deck-store');
 const { importDeck, enrichDeck } = require('./src/deck-import');
 const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
+const { deckOutline, slideContext } = require('./src/deck-relevance');
 const { createPresentationRuntime, deckChanged } = require('./src/presentation-runtime');
 
 // Settings as every feature reads them: About me + the active setup projected
@@ -1079,7 +1080,14 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
   try {
     const settings = currentSettings();
     const llm = createLLM(settings);
-    const request = buildPromptRequest(settings, requestedMode, transcript, text, { answers: sessionAnswers });
+    const session = { answers: sessionAnswers };
+    if (settings.setupKind === 'presentation') {
+      const deck = presentationRuntime ? presentationRuntime.deck : null;
+      const asked = requestedMode === 'ask' || requestedMode === 'answerThis' ? text : currentQuestion(transcript) || text;
+      settings.deckOutline = deckOutline(deck);
+      session.slides = slideContext(deck, presentationRuntime ? presentationRuntime.state.snapshot().current : null, asked);
+    }
+    const request = buildPromptRequest(settings, requestedMode, transcript, text, session);
     const mode = request.mode;
     const def = MODES[mode];
     const queuedScreens = mode === 'leetcode' ? screenshotQueue.slice() : [];

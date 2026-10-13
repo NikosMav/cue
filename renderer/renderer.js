@@ -2153,6 +2153,23 @@
   }
   // ---- end presentation helpers
 
+  // ---- mode label
+  function modeLabel(mode, setupKind) {
+    if (setupKind === 'presentation') {
+      if (mode === 'say') return 'Answer audience';
+      if (mode === 'followup') return 'Check understanding';
+    }
+    return { say: 'What should I say?', followup: 'Follow-up', assist: 'Assist', recap: 'Recap' }[mode] || '';
+  }
+  // ---- end mode label
+  function applyModeLabels() {
+    const setup = settings && activeSetupOf(settings);
+    for (const mode of ['say', 'followup']) {
+      const label = document.querySelector('.act[data-mode="' + mode + '"] > span:not(.ic):not(.shortcut-hint)');
+      if (label) label.textContent = modeLabel(mode, setup && setup.kind);
+    }
+  }
+
   // ---- presenter strip, toolbar pill and first-use hint -------------------
   // main sends presentation:update only while listening with a presentation
   // setup; the last one stays on screen after listening stops.
@@ -2182,6 +2199,7 @@
   }
 
   function renderPresenterStrip() {
+    applyModeLabels();
     const strip = $('#presenter-strip');
     const pill = $('#tb-presentation');
     const setup = activePresentationSetup();

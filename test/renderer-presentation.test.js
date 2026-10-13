@@ -201,3 +201,17 @@ test('the strip adds no transitions or animations', () => {
   const block = css.slice(start, css.indexOf('/* end presenter strip */', start));
   assert.doesNotMatch(block, /transition|animation/);
 });
+
+test('modeLabel relabels say and followup for presentation setups only', () => {
+  const start = src.indexOf('// ---- mode label');
+  const end = src.indexOf('// ---- end mode label', start);
+  assert.ok(start > -1 && end > start, 'mode label helper not found');
+  const { modeLabel } = new Function(src.slice(start, end) + '\nreturn { modeLabel };')();
+  assert.equal(modeLabel('say', 'presentation'), 'Answer audience');
+  assert.equal(modeLabel('followup', 'presentation'), 'Check understanding');
+  assert.equal(modeLabel('say', 'interview'), 'What should I say?');
+  assert.equal(modeLabel('say', 'general'), 'What should I say?');
+  assert.equal(modeLabel('followup', undefined), 'Follow-up');
+  assert.equal(modeLabel('recap', 'presentation'), 'Recap');
+  assert.match(src, /applyModeLabels\(\)/);
+});

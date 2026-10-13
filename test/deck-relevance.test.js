@@ -55,3 +55,25 @@ test('relevantSlides ranks the higher score first', () => {
   ];
   assert.deepEqual(relevantSlides('pivot partition array', s, 20).map((x) => x.n), [8, 1]);
 });
+
+test('slideContext: current, existing neighbours and relevant slides', () => {
+  const { slideContext } = require('../src/deck-relevance');
+  const ctx = slideContext({ slides }, 5, PIVOT);
+  assert.equal(ctx.current.n, 5);
+  assert.deepEqual(ctx.neighbours.map((s) => s.n), [4, 6]);
+  assert.deepEqual(ctx.relevant.map((s) => s.n), []);
+  const first = slideContext({ slides }, 1, PIVOT);
+  assert.deepEqual(first.neighbours.map((s) => s.n), [2]);
+  assert.deepEqual(first.relevant.map((s) => s.n), [4, 6]);
+  assert.deepEqual(slideContext({ slides }, 7, 'x').neighbours.map((s) => s.n), [6]);
+});
+
+test('slideContext: no current slide or no deck', () => {
+  const { slideContext } = require('../src/deck-relevance');
+  const noCurrent = slideContext({ slides }, null, PIVOT);
+  assert.equal(noCurrent.current, null);
+  assert.deepEqual(noCurrent.neighbours, []);
+  assert.deepEqual(noCurrent.relevant.map((s) => s.n), [4, 6]);
+  assert.deepEqual(slideContext(null, 3, PIVOT), { current: null, neighbours: [], relevant: [] });
+  assert.deepEqual(slideContext({ slides }, 99, 'x').current, null);
+});
