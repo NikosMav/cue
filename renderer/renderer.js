@@ -19,7 +19,6 @@
   document.querySelector('.act[data-mode="recap"] .ic').innerHTML = icon('refresh-cw', { size: 16 });
   $('#smart-toggle .ic').innerHTML = icon('zap', { size: 14 });
   $('#auto-toggle .ic').innerHTML = icon('wand-sparkles', { size: 14 });
-  $('#send-btn').innerHTML = icon('play', { size: 15 });
   const clearIC = document.querySelector('#clear-transcript-btn .ic');
   if (clearIC) clearIC.innerHTML = icon('trash-2', { size: 15 });
 
@@ -33,32 +32,34 @@
   let aiEl = null;       // current streaming <div class="ai-text">
   let currentRequestId = null; // events from any other request are stale
   let caretEl = null;
-  let responseCount = 0;
-  const MAX_RESPONSES = 20;
-  // Answers to what was said aloud; they use up the speech in the question box.
-  const SPOKEN_ANSWER_MODES = new Set(['assist', 'say', 'answerThis']);
+  const MAX_RESPONSES = 20; // the latest answer plus the previous ones kept
 
-  const messages = $('#messages');
+  // The reading area is the panel's only scrolling zone: the latest answer
+  // (#latest) and, folded below it, the earlier ones (#previous-list).
+  const reading = $('#reading');
+  const latest = $('#latest');
+  const previousList = $('#previous-list');
+  const previousToggle = $('#previous-toggle');
 
-  // Fade whichever edge of the answer list has text scrolled out of view.
+  // Fade whichever edge of the reading area has text scrolled out of view.
   function updateMessageFades() {
-    const hidden = messages.scrollHeight - messages.clientHeight;
-    messages.classList.toggle('fade-top', messages.scrollTop > 2);
-    messages.classList.toggle('fade-bottom', hidden - messages.scrollTop > 2);
+    const hidden = reading.scrollHeight - reading.clientHeight;
+    reading.classList.toggle('fade-top', reading.scrollTop > 2);
+    reading.classList.toggle('fade-bottom', hidden - reading.scrollTop > 2);
   }
-  messages.addEventListener('scroll', updateMessageFades, { passive: true });
-  new MutationObserver(updateMessageFades).observe(messages, { childList: true, subtree: true, characterData: true });
+  reading.addEventListener('scroll', updateMessageFades, { passive: true });
+  new MutationObserver(updateMessageFades).observe(reading, { childList: true, subtree: true, characterData: true });
   // A resize (sidebar opened, practice row shown) re-wraps the text; keep the
   // pinned answer in place too. pinnedGroup/keepPinnedInView are defined below
   // and only read when the observer fires.
-  new ResizeObserver(() => { keepPinnedInView(); updateMessageFades(); }).observe(messages);
+  new ResizeObserver(() => { keepPinnedInView(); updateMessageFades(); }).observe(reading);
 
   function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   const renderMarkdown = window.CueMarkdown.renderMarkdown; // renderer/markdown.js
 
   // Copy buttons: one per code block, one per finished answer.
-  messages.addEventListener('click', (e) => {
+  reading.addEventListener('click', (e) => {
     const codeBtn = e.target.closest && e.target.closest('.copy-code');
     const answerBtn = e.target.closest && e.target.closest('.copy-answer');
     const btn = codeBtn || answerBtn;
@@ -72,41 +73,69 @@
     setTimeout(() => { btn.textContent = label; }, 1200);
   });
 
-  function clearMessages() { messages.innerHTML = ''; aiEl = null; caretEl = null; }
+  // ---- previous answers helpers (pure; test/renderer-panel.test.js evaluates them)
+  function previousLabel(count, open) {
+    return (open ? '▾' : '▸') + ' Previous answers (' + count + ')';
+  }
+  // ---- end previous answers helpers
 
-  function addUserBubble(text) {
-    const b = document.createElement('div');
-    b.className = 'user-bubble';
-    b.textContent = text;
-    messages.appendChild(b);
+  function setPreviousOpen(open) {
+    const count = previousList.children.length;
+    const shown = !!open && count > 0;
+    previousList.classList.toggle('hidden', !shown);
+    previousToggle.classList.toggle('hidden', count === 0);
+    previousToggle.textContent = previousLabel(count, shown);
+    previousToggle.setAttribute('aria-expanded', String(shown));
+    updateMessageFades();
+  }
+  previousToggle.addEventListener('click', () => setPreviousOpen(previousList.classList.contains('hidden')));
+
+  // A new answer takes the answer on screen to the top of Previous answers
+  // (newest first) and folds the list again.
+  function archiveLatest() {
+    for (const group of [...latest.querySelectorAll(':scope > .response-group')]) previousList.prepend(group);
+    while (previousList.children.length > MAX_RESPONSES - 1) previousList.lastElementChild.remove();
+    setPreviousOpen(false);
+  }
+
+  function clearMessages() {
+    latest.innerHTML = '';
+    previousList.innerHTML = '';
+    setPreviousOpen(false);
+    aiEl = null; caretEl = null;
   }
 
   // The answer being written stays in view: its first line is kept at the top
-  // of the list while it grows, until the user scrolls by hand. Scrolling once
-  // at the start was not enough, because an empty answer cannot be scrolled
-  // to the top yet, and the text then streamed in below the visible area.
-  // The question bubble above it stays one short scroll away.
+  // of the reading area while it grows, until the user scrolls by hand.
+  // Scrolling once at the start was not enough, because an empty answer
+  // cannot be scrolled to the top yet, and the text then streamed in below
+  // the visible area.
   let pinnedGroup = null;
   const PIN_MARGIN = 26; // clears the top fade so the first line is not dimmed
   function keepPinnedInView() {
     if (!pinnedGroup || !pinnedGroup.isConnected) return;
-    const offset = pinnedGroup.getBoundingClientRect().top - messages.getBoundingClientRect().top - PIN_MARGIN;
-    if (Math.abs(offset) > 1) messages.scrollTop += offset;
+    const offset = pinnedGroup.getBoundingClientRect().top - reading.getBoundingClientRect().top - PIN_MARGIN;
+    if (Math.abs(offset) > 1) reading.scrollTop += offset;
   }
   const releasePin = () => { pinnedGroup = null; };
-  messages.addEventListener('wheel', releasePin, { passive: true });
-  messages.addEventListener('pointerdown', (e) => { if (e.offsetX > messages.clientWidth) releasePin(); }); // scrollbar drag
-  messages.addEventListener('keydown', releasePin);
+  reading.addEventListener('wheel', releasePin, { passive: true });
+  reading.addEventListener('pointerdown', (e) => { if (e.offsetX > reading.clientWidth) releasePin(); }); // scrollbar drag
+  reading.addEventListener('keydown', releasePin);
 
+  // An answer that arrives without llm:start (an early error) gets its own group.
   function startAi(small) {
     clearEmptyState();
+    archiveLatest();
+    const group = document.createElement('div');
+    group.className = 'response-group';
     aiEl = document.createElement('div');
     aiEl.className = 'ai-text' + (small ? ' small' : '');
     aiEl.dataset.raw = '';
     caretEl = document.createElement('span');
     caretEl.className = 'ai-caret';
     aiEl.appendChild(caretEl);
-    messages.appendChild(aiEl);
+    group.appendChild(aiEl);
+    latest.appendChild(group);
   }
 
   // Streaming renders the partial answer as markdown on each animation frame,
@@ -143,7 +172,7 @@
       aiEl.appendChild(n);
     }
     const group = aiEl.closest('.response-group');
-    if (group && raw.trim() && !group.querySelector('.copy-answer')) {
+    if (group && raw.trim() && !group.dataset.noCopy && !group.querySelector('.copy-answer')) {
       const copy = document.createElement('button');
       copy.className = 'copy-answer';
       copy.type = 'button';
@@ -158,26 +187,10 @@
   let busyFailsafe = null;
   function setBusy(v) {
     busy = v;
-    $('#send-btn').classList.toggle('busy', v);
     clearTimeout(busyFailsafe);
     // Failsafe: main has a 25s stream watchdog that always sends llm:done/llm:error, but if a
     // terminal event is ever lost the whole UI stays frozen — self-clear after a generous window.
-    if (v) busyFailsafe = setTimeout(() => { busy = false; $('#send-btn').classList.toggle('busy', false); }, 40000);
-  }
-
-  // ---- transcript helpers ------------------------------------------------
-  // NOTE: The old transcript-list element was renamed to ts-list.
-  // These helpers are now deprecated but kept for compatibility.
-  // The main sidebar uses appendTranscriptHistoryTurn() instead.
-  let transcriptInterimEl = null;
-
-  // Updated to use ts-list instead of non-existent transcript-list
-
-  function clearTranscriptInterim() {
-    if (transcriptInterimEl) {
-      transcriptInterimEl.remove();
-      transcriptInterimEl = null;
-    }
+    if (v) busyFailsafe = setTimeout(() => { busy = false; }, 40000);
   }
 
   // ---- toast helper ------------------------------------------------------
@@ -215,359 +228,76 @@
     btn.addEventListener('click', () => runMode(btn.dataset.mode, ''));
   });
 
-  const input = $('#input');
-  const placeholder = $('#placeholder');
-  const composer = $('#composer');
+  // ---- Ask field ---------------------------------------------------------
+  // Typing is rare: ✎ Ask opens a one-line field above the footer. It sends
+  // what the old composer sent for typed text, an 'ask' request with the
+  // question. Speech never fills it.
+  const askField = $('#ask-field');
+  const askInput = $('#ask-input');
+  const askBtn = $('#ask-btn');
 
-  // ========== SMART AUTO-FILL SYSTEM ==========
-  // Track whether the current input text came from STT auto-fill (Them channel)
-  let inputFromSTT = false;
-  let sttFillTimer = null;
-  let questionFinalizeTimer = null;
-  let softClearTimer = null;
-  let userSpeechStart = null;
-
-  // Question history for undo (Ctrl+Z)
+  // Sent questions, newest last: Ctrl+Z in the empty field brings one back.
   const questionHistory = [];
   const MAX_QUESTION_HISTORY = 10;
-
-  // ---- Question completeness detection ----
-  // Shared with the main process's auto-answer (src/question-detector.js).
-  function isLikelyCompleteQuestion(text) {
-    return cue.isLikelyCompleteQuestion(text);
-  }
-
-  // ---- Get question confidence level ----
-  function getQuestionConfidence(text) {
-    const trimmed = (text || '').trim();
-    if (trimmed.length < 8) return 'low';
-    if (/\?$/.test(trimmed)) return 'high';
-    if (isLikelyCompleteQuestion(trimmed)) return 'medium';
-    if (trimmed.length > 20) return 'accumulating';
-    return 'low';
-  }
-
-  // ---- Update visual state based on question readiness ----
-  // Batch class updates to avoid flicker
-  function updateQuestionReadyState() {
-    const text = input.value;
-    const confidence = getQuestionConfidence(text);
-    
-    // Batch the class changes to minimize repaints
-    const shouldBeReady = confidence === 'high' || confidence === 'medium';
-    const shouldBeAccumulating = confidence === 'accumulating';
-    
-    // Only update if state actually changed
-    const isReady = composer.classList.contains('stt-ready');
-    const isAccumulating = composer.classList.contains('stt-accumulating');
-    
-    if (shouldBeReady !== isReady || shouldBeAccumulating !== isAccumulating) {
-      composer.classList.remove('stt-ready', 'stt-accumulating');
-      if (shouldBeReady) {
-        composer.classList.add('stt-ready');
-      } else if (shouldBeAccumulating) {
-        composer.classList.add('stt-accumulating');
-      }
-    }
-    
-    updateSendButtonState(); // Keep send button in sync
-  }
-  
-  // Send button visual "ready" state
-  function updateSendButtonState() {
-    const sendBtn = document.getElementById('send-btn');
-    if (!sendBtn) return;
-    
-    const hasText = input.value.trim().length > 0;
-    const isReady = composer.classList.contains('stt-ready');
-    
-    sendBtn.classList.toggle('ready', hasText && isReady);
-    sendBtn.classList.toggle('has-text', hasText);
-  }
-
-  // ---- Save question to history for undo ----
   function saveToQuestionHistory(text) {
-    if (!text || text.trim().length < 5) return;
-    
-    // Don't save duplicates
-    const last = questionHistory[questionHistory.length - 1];
-    if (last && last.text === text.trim()) return;
-    
-    questionHistory.push({
-      text: text.trim(),
-      timestamp: Date.now()
-    });
-    
-    // Keep only recent history
-    while (questionHistory.length > MAX_QUESTION_HISTORY) {
-      questionHistory.shift();
-    }
+    const t = (text || '').trim();
+    if (t.length < 5 || questionHistory[questionHistory.length - 1] === t) return;
+    questionHistory.push(t);
+    while (questionHistory.length > MAX_QUESTION_HISTORY) questionHistory.shift();
   }
-
-  // ---- Restore last question from history (Ctrl+Z) ----
   function restoreLastQuestion() {
     const last = questionHistory.pop();
-    if (last) {
-      input.value = last.text;
-      inputFromSTT = true;
-      lastSTTValue = last.text; // Track restored value for edit detection
-      composer.classList.add('stt-filling');
-      updateQuestionReadyState();
-      syncPlaceholder();
-      showToast('Question restored', 1500);
-      return true;
+    if (!last) { showToast('No question to restore', 1500); return; }
+    askInput.value = last;
+  }
+
+  function openAsk() {
+    showPanel();
+    askField.classList.remove('hidden');
+    askBtn.classList.add('on');
+    askBtn.setAttribute('aria-expanded', 'true');
+    askInput.focus();
+  }
+  function closeAsk() {
+    askField.classList.add('hidden');
+    askBtn.classList.remove('on');
+    askBtn.setAttribute('aria-expanded', 'false');
+    askInput.blur();
+  }
+  function sendAsk() {
+    const text = askInput.value.trim();
+    if (text) {
+      saveToQuestionHistory(text);
+      askInput.value = '';
+      runMode('ask', text);
     }
-    showToast('No question to restore', 1500);
-    return false;
+    closeAsk();
   }
-
-  // The box shows only the end of what they are saying: during a long
-  // explanation it used to grow until it pushed the answers off the panel.
-  // Everything they said stays in the transcript history, and Assist reads
-  // the transcript, not this box.
-  const STT_FILL_MAX_CHARS = 240;
-  const TRIMMED_MARK = '… ';
-  function latestSpeech(text) {
-    if (text.length <= STT_FILL_MAX_CHARS) return text;
-    const tail = text.slice(-STT_FILL_MAX_CHARS);
-    // Start at a sentence that begins early in the kept part, else at a word.
-    const sentence = tail.search(/[.?!]\s+\S/);
-    const start = sentence >= 0 && sentence < STT_FILL_MAX_CHARS / 2
-      ? tail.slice(sentence + 1).trimStart()
-      : tail.slice(tail.indexOf(' ') + 1);
-    return TRIMMED_MARK + start;
-  }
-  function withoutTrimmedMark(text) {
-    return text.startsWith(TRIMMED_MARK.trim()) ? text.slice(TRIMMED_MARK.trim().length).trimStart() : text;
-  }
-
-  // ---- Auto-fill the input box with transcribed speech from interviewer ----
-  function autoFillInputFromSTT(text) {
-    // If user has manually typed something different, don't overwrite
-    if (!inputFromSTT && input.value.trim().length > 0) return;
-
-    // Cancel any pending soft-clear (interviewer is still talking)
-    clearTimeout(softClearTimer);
-    composer.classList.remove('stt-dimmed');
-
-    const current = input.value.trim();
-    const newText = latestSpeech(current ? current + ' ' + text : text);
-    input.value = newText;
-    inputFromSTT = true;
-    lastSTTValue = newText; // Track the STT value for edit detection
-    syncPlaceholder();
-    input.scrollTop = input.scrollHeight; // newest words in view
-
-    // Show filling state
-    composer.classList.add('stt-filling');
-    updateQuestionReadyState();
-    updateSendButtonState(); // Update send button state
-
-    // Reset the idle timer — after 2s of silence, check if question is complete
-    clearTimeout(questionFinalizeTimer);
-    questionFinalizeTimer = setTimeout(() => {
-      if (isLikelyCompleteQuestion(input.value)) {
-        composer.classList.add('stt-ready');
-        updateSendButtonState(); // Update send button when ready
-        // Subtle notification that question is ready
-        showToast('Press Enter to answer', 2500);
-      }
-    }, 1800);
-
-    // After 8s of no new words, save to history and keep stable
-    clearTimeout(sttFillTimer);
-    sttFillTimer = setTimeout(() => {
-      saveToQuestionHistory(input.value);
-      composer.classList.remove('stt-filling');
-      // Keep stt-ready if applicable
-      updateQuestionReadyState();
-      updateSendButtonState();
-    }, 8000);
-  }
-
-  // ---- Soft clear: don't immediately wipe question when user speaks ----
-  function softClearSTTFill() {
-    // When the user speaks (You channel), don't immediately clear
-    // Instead, dim the input and wait — they might just be acknowledging
-    if (!inputFromSTT) return;
-    
-    // Reset userSpeechStart at the beginning before setting new timestamp
-    // This ensures we always track from fresh when a new soft-clear cycle begins
-    const now = Date.now();
-    if (!userSpeechStart) {
-      userSpeechStart = now;
-    }
-
-    // Dim the input to show it's in "pending clear" state
-    composer.classList.add('stt-dimmed');
-    
-    // Clear the finalization timer (user is responding)
-    clearTimeout(questionFinalizeTimer);
-
-    // Re-armed on every 'you' final, so this fires ~800ms after the user stops.
-    // The 2s test below is measured from the FIRST final of this cycle, so a brief
-    // acknowledgement ("mm-hm") leaves the question on screen while a sustained
-    // answer clears it. Firing at 2.5s instead would make that test always true.
-    clearTimeout(softClearTimer);
-    softClearTimer = setTimeout(() => {
-      const speechDuration = userSpeechStart ? Date.now() - userSpeechStart : 0;
-      if (speechDuration > 2000) {
-        // User has been speaking for a while — they're answering, clear the box
-        saveToQuestionHistory(input.value);
-        input.value = '';
-        inputFromSTT = false;
-        composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
-        syncPlaceholder();
-        updateSendButtonState(); // Update send button state
-        userSpeechStart = null;
-      }
-    }, 800);
-  }
-
-  // ---- Hard clear (called when user explicitly clears or types) ----
-  // Add option to show toast when clearing
-  function hardClearSTTFill(showUndoHint = false) {
-    const hadContent = input.value.trim().length > 0;
-    saveToQuestionHistory(input.value);
-    input.value = '';
-    inputFromSTT = false;
-    lastSTTValue = ''; // Clear the tracked STT value
-    userSpeechStart = null;
-    composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
-    clearTimeout(softClearTimer);
-    clearTimeout(questionFinalizeTimer);
-    clearTimeout(sttFillTimer);
-    clearInputInterim(); // Clear interim when clearing input
-    syncPlaceholder();
-    updateSendButtonState();
-    
-    // Show undo hint when explicitly cleared
-    if (showUndoHint && hadContent) {
-      const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
-      showToast(`Cleared · ${undoHint}`, 2000);
-    }
-  }
-
-  // ---- Reset soft-clear state (interviewer spoke again) ----
-  // Reset userSpeechStart properly when cancelSoftClear is called
-  function cancelSoftClear() {
-    userSpeechStart = null; // Reset timestamp so next soft-clear starts fresh
-    clearTimeout(softClearTimer);
-    composer.classList.remove('stt-dimmed');
-  }
-
-  const STT_INPUT_MAX_HEIGHT = 66; // three 22px lines
-  const TYPED_INPUT_MAX_HEIGHT = 140;
-  function syncPlaceholder() {
-    placeholder.classList.toggle('hidden', input.value.length > 0 || document.activeElement === input);
-    // Speech fills at most three lines so the answers keep their room; a
-    // question typed by hand may use more.
-    const max = inputFromSTT ? STT_INPUT_MAX_HEIGHT : TYPED_INPUT_MAX_HEIGHT;
-    input.style.maxHeight = max + 'px';
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, max) + 'px';
-  }
-  
-  // Track last STT value to detect substantial edits vs minor corrections
-  let lastSTTValue = '';
-  
-  input.addEventListener('input', () => {
-    const currentValue = input.value;
-    
-    // Clear interim text when user starts typing
-    clearInputInterim();
-    
-    // Only detach from STT mode if edit is substantial
-    // Minor corrections (typo fixes, small additions) should keep STT mode
-    if (inputFromSTT && lastSTTValue) {
-      const lengthDiff = Math.abs(currentValue.length - lastSTTValue.length);
-      const isCleared = currentValue.trim().length === 0;
-      const isSubstantialChange = lengthDiff > lastSTTValue.length * 0.3 || isCleared;
-      
-      if (isSubstantialChange) {
-        // User made a major change — detach from STT mode
-        saveToQuestionHistory(lastSTTValue);
-        inputFromSTT = false;
-        lastSTTValue = '';
-        composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
-        clearTimeout(softClearTimer);
-        clearTimeout(questionFinalizeTimer);
-      }
-      // Minor edits: keep inputFromSTT = true, just update visual state
-    } else if (!inputFromSTT) {
-      // User typing from scratch — standard behavior
-      composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
-    }
-    
-    syncPlaceholder();
-    updateSendButtonState(); // Update send button on input change
+  $('#ask-btn').addEventListener('click', () => (askField.classList.contains('hidden') ? openAsk() : closeAsk()));
+  askInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); closeAsk(); runMode('assist', ''); return; }
+    if (e.key === 'Enter') { e.preventDefault(); sendAsk(); return; }
+    // Esc closes the field only; it does not also stop the answer being written.
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAsk(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !askInput.value) { e.preventDefault(); restoreLastQuestion(); }
   });
-  input.addEventListener('focus', () => { composer.classList.add('focused'); placeholder.classList.add('hidden'); });
-  input.addEventListener('blur', () => { composer.classList.remove('focused'); syncPlaceholder(); });
-  $('#input-area').addEventListener('click', () => input.focus());
 
-  function send() {
-    const text = withoutTrimmedMark(input.value.trim());
-    if (!text) { runMode('assist', ''); return; }
-    const wasFromSTT = inputFromSTT;
-    
-    // Save to history before clearing (in case user wants to redo)
-    saveToQuestionHistory(text);
-    
-    input.value = '';
-    inputFromSTT = false;
-    lastSTTValue = ''; // Clear tracked STT value
-    userSpeechStart = null;
-    composer.classList.remove('stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating');
-    clearTimeout(softClearTimer);
-    clearTimeout(questionFinalizeTimer);
-    clearTimeout(sttFillTimer);
-    syncPlaceholder();
-    updateSendButtonState();
-    
-    // If text came from STT (interviewer question), use answerThis mode
-    // Otherwise use ask mode (user typed their own question)
-    runMode(wasFromSTT ? 'answerThis' : 'ask', text);
+  // ---- heard caption helpers (pure; test/renderer-panel.test.js evaluates them)
+  function heardCaption(text) {
+    return 'Heard: “' + text + '”';
   }
-  $('#send-btn').addEventListener('click', send);
-  input.addEventListener('keydown', (e) => {
-    // Ctrl+Z / Cmd+Z: restore last question if input is empty
-    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !input.value.trim()) {
-      e.preventDefault();
-      restoreLastQuestion();
-      return;
-    }
-    // Escape: clear the input (with undo hint)
-    if (e.key === 'Escape' && input.value.trim()) {
-      e.preventDefault();
-      hardClearSTTFill(true); // Show undo hint
-      return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); send(); }
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runMode('assist', ''); }
-  });
-  
-  // Global keyboard shortcut for force-answer (Ctrl+Shift+A / Cmd+Shift+A)
-  document.addEventListener('keydown', (e) => {
-    // Ctrl+Shift+A / Cmd+Shift+A: Force answer current question immediately
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
-      e.preventDefault();
-      if (input.value.trim()) {
-        send();
-      } else if (inputFromSTT || composer.classList.contains('stt-filling')) {
-        // Even if question seems incomplete, force send
-        send();
-      } else {
-        showToast('No question to answer', 1500);
-      }
-    }
-  });
-  
-  // Add tooltip with keyboard shortcuts to send button
-  const sendBtn = document.getElementById('send-btn');
-  if (sendBtn) {
-    const forceKey = isWindows ? 'Ctrl+Shift+A' : '⌘⇧A';
-    sendBtn.title = `Send · ${forceKey} to force answer`;
+  // ---- end heard caption helpers
+
+  // "Heard: …" above the footer: the other side's latest final line while
+  // listening. Your own speech is not echoed.
+  const heardEl = $('#heard');
+  function showHeard(text) {
+    heardEl.textContent = heardCaption(text.trim());
+    heardEl.classList.remove('hidden');
+  }
+  function clearHeard() {
+    heardEl.textContent = '';
+    heardEl.classList.add('hidden');
   }
 
   // Smart toggle
@@ -706,7 +436,7 @@
   // Global scroll shortcuts: the panel never takes focus, so keys cannot scroll it.
   cue.on('answers:scroll', ({ direction }) => {
     releasePin();
-    messages.scrollBy({ top: direction * Math.max(60, messages.clientHeight * 0.8), behavior: 'smooth' });
+    reading.scrollBy({ top: direction * Math.max(60, reading.clientHeight * 0.8) });
   });
   // Main changed a setting (e.g. the auto-answer shortcut): keep this copy in
   // step so the next Save does not write the old value back.
@@ -744,28 +474,24 @@
   const clearTranscriptBtn = document.getElementById('clear-transcript-btn');
   if (clearTranscriptBtn) {
     clearTranscriptBtn.addEventListener('click', async () => {
-      // Save current input to history before clearing (for undo)
-      saveToQuestionHistory(input.value);
-      
+      // A draft in the Ask field stays one Ctrl+Z away after clearing.
+      saveToQuestionHistory(askInput.value);
+
       const { savedId } = await cue.clearTranscript();
       clearConversationUI();
-      const undoHint = isWindows ? 'Ctrl+Z to undo' : '⌘Z to undo';
-      showToast(savedId ? 'Session saved · open Sessions for its summary and debrief' : `Transcript cleared · ${undoHint}`, 3500);
+      showToast(savedId ? 'Session saved · open Sessions for its summary and debrief' : 'Transcript cleared', 3500);
     });
   }
 
-  // Empties the answers, transcript sidebar and input box (main has already
-  // reset its own copy of the conversation).
+  // Empties the answers, transcript sidebar, heard caption and Ask field
+  // (main has already reset its own copy of the conversation).
   function clearConversationUI() {
     showEmptyState(); // clears the answers and says what to do next
     pinnedGroup = null;
-    // Also clear the floating interim bar
-    if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
-    const list = document.getElementById('ts-list');
-    if (list) list.innerHTML = '<div class="ts-placeholder">Conversation history will appear here when listening.</div>';
-    transcriptInterimEl = null;
     clearTranscriptSidebar(); // clear the history sidebar too
-    hardClearSTTFill(); // clear the input box too
+    clearHeard();
+    askInput.value = '';
+    closeAsk();
   }
 
   // ---- capture: mic (renderer side) — uses AudioWorklet (modern, off-main-thread) ----
@@ -1077,8 +803,6 @@
   // ---- events from main --------------------------------------------------
   cue.on('capture:state', ({ active }) => {
     setCaptureButton(active);
-    // Add .listening class to composer when capture is active
-    composer.classList.toggle('listening', active);
     // startSystemAudio() is called directly from the stop-button click handler
     // so that the getDisplayMedia request has a fresh user gesture.
     // Here we only start the mic (no gesture required) and stop everything on deactivate.
@@ -1088,71 +812,15 @@
     } else {
       stopMic();
       stopSystemAudio();
-      // Clear interim element when capture stops
-      if (interimEl) {
-        interimEl.textContent = '';
-        interimEl.classList.remove('show');
-      }
+      clearHeard(); // the caption is shown only while listening
       // Don't auto-close sidebar — let user keep it open if they want
     }
   });
 
-  // ---- real-time transcript display (interim + final) ----
-  let interimEl = null;
-  function getOrCreateInterimEl() {
-    if (!interimEl) {
-      interimEl = document.createElement('div');
-      interimEl.className = 'interim-transcript';
-      // Insert into panel-main (the left column), before the action row
-      const panelMain = document.getElementById('panel-main');
-      const actionRow = document.getElementById('action-row');
-      if (panelMain && actionRow && actionRow.parentNode === panelMain) {
-        panelMain.insertBefore(interimEl, actionRow);
-      } else if (panelMain) {
-        panelMain.appendChild(interimEl);
-      } else {
-        document.getElementById('panel').appendChild(interimEl);
-      }
-    }
-    return interimEl;
-  }
-  // Show interim text in input box (grayed/italic) before final arrives
-  let inputInterimEl = null;
-  function showInterimInInput(text) {
-    if (!inputInterimEl) {
-      inputInterimEl = document.createElement('span');
-      inputInterimEl.className = 'input-interim';
-      // Insert into composer (not input-area) for correct positioning
-      composer.appendChild(inputInterimEl);
-    }
-    inputInterimEl.textContent = text;
-    inputInterimEl.style.display = text ? 'block' : 'none';
-  }
-  function clearInputInterim() {
-    if (inputInterimEl) {
-      inputInterimEl.textContent = '';
-      inputInterimEl.style.display = 'none';
-    }
-  }
-  
+  // Live speech goes to the history sidebar only; the panel shows the other
+  // side's final lines in the heard caption (the 'transcript' event below).
   cue.on('stt:interim', ({ channel, text }) => {
-    const el = getOrCreateInterimEl();
-    const label = channel === 'them' ? 'Them' : 'You';
-    el.textContent = `${label}: ${text}`;
-    el.classList.add('show');
     appendTranscriptHistoryTurn(channel, text, true); // update sidebar interim
-    
-    // Show interviewer's interim speech in input area
-    if (channel === 'them' && !input.value.trim()) {
-      showInterimInInput(text);
-    }
-  });
-  cue.on('stt:final', ({ channel, text }) => {
-    // Clear interim when we get a final
-    if (interimEl) { interimEl.textContent = ''; interimEl.classList.remove('show'); }
-    clearTranscriptInterim();
-    clearInputInterim(); // Clear interim text from input area
-    // sidebar: the final turn is added via the 'transcript' event below
   });
   cue.on('stt:status', ({ channel, status, provider }) => {
     cue.log(`[stt] ${provider || channel || 'unknown'} ${status}`);
@@ -1166,39 +834,20 @@
     const title = last && last.caption ? last.caption.split('\n')[0].slice(0, 80) : 'Slide ' + count;
     showToast(`Slide ${count} captured · ${title}`, 3000);
   });
-  cue.on('llm:start', ({ id, userBubble, small, category, auto, mode }) => {
-    if (mode === 'practiceQuestion') category = 'Practice question';
+  cue.on('llm:start', ({ id, userBubble, small, mode }) => {
     if (aiEl) finalizeAi('Interrupted');
     currentRequestId = id;
-    // A spoken answer (Auto, Ctrl+Enter, the Assist or Say shortcut) has used
-    // what was heard so far: clear the box so new speech starts fresh instead
-    // of piling onto text already answered. Ctrl+Z brings it back; typed text
-    // is never cleared here.
-    if (inputFromSTT && (auto || SPOKEN_ANSWER_MODES.has(mode))) hardClearSTTFill();
-    responseCount++;
-    if (responseCount > MAX_RESPONSES) {
-      const oldest = messages.querySelector('.response-group');
-      if (oldest) oldest.remove();
-      responseCount = MAX_RESPONSES;
-    }
+    clearEmptyState();
+    archiveLatest(); // the answer on screen moves to Previous answers
     const group = document.createElement('div');
     group.className = 'response-group';
-    const sep = document.createElement('div');
-    sep.className = 'response-sep';
-    sep.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    group.appendChild(sep);
     if (userBubble) {
+      // The question as one muted line; the full text is its tooltip.
       const b = document.createElement('div');
       b.className = 'user-bubble';
       b.textContent = userBubble;
+      b.title = userBubble;
       group.appendChild(b);
-    }
-    if (category || auto) {
-      const pill = document.createElement('div');
-      pill.className = 'category-pill';
-      const label = category ? category.charAt(0).toUpperCase() + category.slice(1) : '';
-      pill.textContent = auto ? (label ? 'Auto · ' + label : 'Auto') : label;
-      group.appendChild(pill);
     }
     aiEl = document.createElement('div');
     aiEl.className = 'ai-text' + (small ? ' small' : '');
@@ -1207,11 +856,11 @@
     caretEl.className = 'ai-caret';
     aiEl.appendChild(caretEl);
     group.appendChild(aiEl);
-    clearEmptyState();
-    messages.appendChild(group);
-    // Scroll only the message list (never scrollIntoView: it also scrolls the
-    // page itself, which pushed the toolbar and the panel top out of the
-    // window), and keep this answer in view while it streams.
+    latest.appendChild(group);
+    // Scroll only the reading area (never scrollIntoView: it also scrolls the
+    // page itself, which pushed the header out of the window), and keep this
+    // answer in view while it streams.
+    reading.scrollTop = 0;
     pinnedGroup = aiEl;
     requestAnimationFrame(keepPinnedInView);
     setBusy(true);
@@ -1233,7 +882,7 @@
   cue.on('llm:error', ({ id, message, action }) => {
     if (isStale(id)) return;
     currentRequestId = null;
-    if (!aiEl) startAi(true);
+    if (!aiEl) { startAi(true); aiEl.closest('.response-group').dataset.noCopy = '1'; } // an error only: nothing to copy
     const errorEl = aiEl;
     aiEl.dataset.raw = message; finalizeAi(); setBusy(false);
     // A missing key is fixed in Settings: offer that right under the message
@@ -1259,16 +908,9 @@
   cue.on('transcript', ({ channel, text }) => {
     if (!text || text.trim().length < 2 || /^[?!.,;:\-…]+$/.test(text.trim())) return;
     appendTranscriptHistoryTurn(channel, text, false);
-    // Auto-fill the input box with Them (interviewer) speech. In practice the
-    // "interviewer" is cue itself, and its question is already on screen.
-    if (channel === 'them' && practiceActive) return;
-    if (channel === 'them') {
-      cancelSoftClear(); // Interviewer is speaking, cancel any pending clear
-      autoFillInputFromSTT(text);
-    } else {
-      // User spoke — soft clear (don't immediately wipe, wait to see if they're really answering)
-      softClearSTTFill();
-    }
+    // In practice the "interviewer" is cue itself, and its question is already on screen.
+    if (practiceActive) return;
+    if (channel === 'them' && capturing) showHeard(text);
   });
   let statusTimer = null;
   function showStatus(message, button) {
@@ -1276,16 +918,8 @@
     if (!el) {
       el = document.createElement('div');
       el.id = 'cue-status';
-      // Insert into panel-main before the action row
-      const panelMain = document.getElementById('panel-main');
-      const actionRow = document.getElementById('action-row');
-      if (panelMain && actionRow && actionRow.parentNode === panelMain) {
-        panelMain.insertBefore(el, actionRow);
-      } else if (panelMain) {
-        panelMain.appendChild(el);
-      } else {
-        document.getElementById('panel').appendChild(el);
-      }
+      // Between the reading area and the footer
+      $('#panel-main').insertBefore(el, $('#footer'));
     }
     el.textContent = message;
     if (button) el.appendChild(button);
@@ -1355,7 +989,7 @@
         try {
           settings = await queueSettingsPatch({ activeSetupId: s.id });
           const hinted = updateSetupStatus();
-          if (messages.querySelector('.empty-state')) showEmptyState();
+          if (latest.querySelector('.empty-state')) showEmptyState();
           if (!hinted) showToast('Setup: ' + s.name, 1500);
         } catch (err) {
           showToast((err && err.message ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 3000);
@@ -1417,8 +1051,7 @@
     dismissBtn.className = 'dismiss';
     dismissBtn.addEventListener('click', () => banner.classList.remove('show'));
     actions.appendChild(dismissBtn);
-    const panel = document.getElementById('panel');
-    panel.insertBefore(banner, document.getElementById('action-row'));
+    $('#panel-main').insertBefore(banner, $('#footer'));
   }
 
   // ---- settings ----------------------------------------------------------
@@ -1568,14 +1201,9 @@
     const action = shortcutView && shortcutView.actions.find((a) => a.id === id);
     return action && action.status === 'ok' ? action.accelerator : '';
   }
+  // The footer buttons carry their shortcuts in their titles.
   function updateShortcutHints() {
-    const assist = shortcutFor('assist');
-    placeholder.innerHTML = 'Ask about your screen or conversation' +
-      (assist ? ', or ' + keycaps(assist) + ' for Assist' : '');
-    const sendBtn = document.getElementById('send-btn');
-    const stop = shortcutFor('stop');
-    const force = isWindows ? 'Ctrl+Shift+A' : '⌘⇧A';
-    if (sendBtn) sendBtn.title = 'Send · ' + force + ' forces an answer · Esc' + (stop ? ' or ' + cue.formatAccelerator(stop) : '') + ' stops one';
+    applyModeLabels();
   }
 
   // Tab switching
@@ -2119,13 +1747,38 @@
     return { say: 'What should I say?', followup: 'Follow-up', assist: 'Assist', recap: 'Recap' }[mode] || '';
   }
   // ---- end mode label
+
+  // ---- action titles
+  // The name comes first (a compact button shows only its icon), then the
+  // shortcut and, for the two main actions, what they do.
+  function actionTitle(mode, setupKind, accelerator) {
+    const name = modeLabel(mode, setupKind) + (accelerator ? ' (' + accelerator + ')' : '');
+    if (mode === 'say') return name + ' · Suggests what to say next based on the conversation';
+    if (mode === 'assist') return name + ' · Scans your screen and conversation to decide what you need';
+    return name;
+  }
+  // ---- end action titles
+
   function applyModeLabels() {
     const setup = settings && activeSetupOf(settings);
-    for (const mode of ['say', 'followup']) {
-      const label = document.querySelector('.act[data-mode="' + mode + '"] > span:not(.ic):not(.shortcut-hint)');
-      if (label) label.textContent = modeLabel(mode, setup && setup.kind);
+    for (const mode of ['say', 'assist', 'followup', 'recap']) {
+      const btn = document.querySelector('.act[data-mode="' + mode + '"]');
+      if (!btn) continue;
+      const keys = shortcutFor(mode); // only say and assist have one
+      btn.querySelector('.lbl').textContent = modeLabel(mode, setup && setup.kind);
+      btn.title = actionTitle(mode, setup && setup.kind, keys ? cue.formatAccelerator(keys) : '');
     }
+    fitActionRow();
   }
+
+  // The footer never wraps: when the row would overflow, Assist, Follow-up
+  // and Recap drop their labels (their titles keep the names).
+  function fitActionRow() {
+    const row = $('#action-row');
+    row.classList.remove('compact');
+    row.classList.toggle('compact', row.scrollWidth > row.clientWidth);
+  }
+  new ResizeObserver(fitActionRow).observe($('#action-row'));
 
   // ---- presenter strip, header status and first-use hint ------------------
   // main sends presentation:update only while listening with a presentation
@@ -2793,7 +2446,7 @@
     collectSetupForm();
     try {
       settings = await cue.settingsSet(settings);
-      if (messages.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed
+      if (latest.querySelector('.empty-state')) showEmptyState(); // a key was just added or removed
       $('#s-status').textContent = statusText();
       updateSetupStatus();
       updateSmartTooltip();
@@ -2837,10 +2490,10 @@
           ? '<strong>Ready to present.</strong> Start listening with the ■ button above. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
           : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
     }
-    messages.appendChild(box);
+    latest.appendChild(box);
   }
   function clearEmptyState() {
-    const box = messages.querySelector('.empty-state');
+    const box = latest.querySelector('.empty-state');
     if (box) box.remove();
   }
 
@@ -3130,7 +2783,7 @@
     if (e.key === 'Escape' && !scrim.classList.contains('hidden')) void closeSettings();
     else if (e.key === 'Escape' && !sessionsScrim.classList.contains('hidden')) closeSessions();
     // Escape with nothing else to close stops the answer being written.
-    else if (e.key === 'Escape' && busy && !(document.activeElement === input && input.value.trim())) cue.cancelAnswer();
+    else if (e.key === 'Escape' && busy) cue.cancelAnswer();
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
   });
 
@@ -3292,12 +2945,6 @@
     // A build with no app token never shows the option.
     $('#provider-publik').classList.toggle('hidden', !publikState.available);
 
-    // R4: shortcut hints
-    const sayHintEl = document.getElementById('say-shortcut-hint');
-    const assistHintEl = document.getElementById('assist-shortcut-hint');
-    if (sayHintEl) sayHintEl.textContent = isWindows ? 'Ctrl+Shift+↵' : '⌘⇧↵';
-    if (assistHintEl) assistHintEl.textContent = isWindows ? 'Ctrl+↵' : '⌘↵';
-
     // R5: setup name and saving dot in the header
     updateSetupStatus();
     // R6: smart tooltip
@@ -3306,10 +2953,8 @@
     smartBtn.classList.toggle('on', !!settings.smart);
     syncAutoButton();
     showEmptyState();
-    syncPlaceholder();
-    updateSendButtonState(); // Initialize send button state
 
-    // Placeholder and tooltips show the configured shortcuts for this platform.
+    // The footer titles show the configured shortcuts for this platform.
     refreshShortcuts().catch(() => {});
 
     const st = await cue.captureState();

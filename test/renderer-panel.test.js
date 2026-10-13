@@ -187,3 +187,152 @@ test('the header and menu add no transitions or animations', () => {
   assert.ok(start > -1 && end > start, 'header styles not found');
   assert.doesNotMatch(css.slice(start, end), /transition|animation/);
 });
+
+// ── Reading area, footer, Ask field and heard caption ────────────────────────
+
+// A container with nested <div>s: up to its own closing tag.
+function container(id) {
+  const open = html.lastIndexOf('<div', html.indexOf('id="' + id + '"'));
+  assert.ok(open > -1, '#' + id + ' not found');
+  const tags = /<div\b|<\/div>/g;
+  tags.lastIndex = open;
+  let depth = 0;
+  for (let m; (m = tags.exec(html));) {
+    depth += m[0] === '</div>' ? -1 : 1;
+    if (depth === 0) return html.slice(open, m.index);
+  }
+  assert.fail('#' + id + ' is not closed');
+}
+
+function cssRule(selector) {
+  const at = css.indexOf('\n' + selector + ' {');
+  assert.ok(at > -1, selector + ' rule not found');
+  return css.slice(at, css.indexOf('}', at));
+}
+
+test('the reading area is the only scrolling zone between a fixed header and footer', () => {
+  const reading = container('reading');
+  assert.match(reading, /^<div id="reading"/);
+  for (const id of ['latest', 'previous-toggle', 'previous-list']) assert.match(reading, new RegExp('id="' + id + '"'), '#' + id + ' is in #reading');
+  assert.ok(reading.indexOf('id="latest"') < reading.indexOf('id="previous-toggle"'), 'the toggle sits below the latest answer');
+  assert.match(cssRule('#reading'), /overflow-y: auto;/);
+  assert.match(cssRule('#reading'), /flex: 1 1 auto;/);
+  assert.match(cssRule('#header'), /flex: 0 0 auto;/);
+  assert.match(cssRule('#footer'), /flex: 0 0 auto;/);
+  for (const gone of ['id="messages"', 'id="composer"', 'id="input"', 'id="send-btn"', 'id="placeholder"', 'id="composer-bottom"']) {
+    assert.ok(!html.includes(gone), gone + ' is still in index.html');
+  }
+  assert.ok(!src.includes("$('#messages')") && !src.includes("$('#input')") && !src.includes('send-btn'), 'renderer no longer drives the composer');
+});
+
+test('the footer is one row: answer actions, a gap, Smart, Auto and Ask', () => {
+  const row = element('action-row');
+  assert.ok(!/class="sep"/.test(row), 'no separators');
+  assert.ok(!html.includes('shortcut-hint') && !src.includes('shortcut-hint') && !css.includes('shortcut-hint'), 'hint spans are gone');
+  const order = ['data-mode="say"', 'data-mode="assist"', 'data-mode="followup"', 'data-mode="recap"', 'class="ar-gap"', 'id="smart-toggle"', 'id="auto-toggle"', 'id="ask-btn"'];
+  let last = -1;
+  for (const marker of order) {
+    const at = row.indexOf(marker);
+    assert.ok(at > last, marker + ' is in the footer row, in order');
+    last = at;
+  }
+  assert.match(cssRule('#action-row'), /flex-wrap: nowrap;/);
+  const footer = container('footer');
+  for (const id of ['heard', 'ask-field', 'action-row', 'practice-row']) assert.match(footer, new RegExp('id="' + id + '"'), '#' + id + ' is in the footer');
+  assert.ok(footer.indexOf('id="ask-field"') < footer.indexOf('id="action-row"'), 'the Ask field opens above the row');
+});
+
+test('compact makes Assist, Follow-up and Recap icon-only when the row would overflow', () => {
+  const fit = functionBody('fitActionRow');
+  assert.match(fit, /scrollWidth > row\.clientWidth/);
+  assert.match(fit, /classList\.toggle\('compact'/);
+  assert.match(src, /new ResizeObserver\(fitActionRow\)\.observe\(\$\('#action-row'\)\)/);
+  assert.match(functionBody('applyModeLabels'), /fitActionRow\(\)/);
+  assert.match(css, /#action-row\.compact \.act:not\(\.act-primary\) \.lbl \{ display: none; \}/);
+});
+
+test('shortcut hints live in each button title, which keeps the full name', () => {
+  const { actionTitle } = section('// ---- action titles', '// ---- end action titles', ['actionTitle'],
+    'function modeLabel(mode, kind) { return kind === "presentation" && mode === "say" ? "Answer audience" : ({ say: "What should I say?", followup: "Follow-up", assist: "Assist", recap: "Recap" })[mode]; }\n');
+  assert.match(actionTitle('say', 'general', 'Ctrl+Shift+Enter'), /^What should I say\? \(Ctrl\+Shift\+Enter\)/);
+  assert.match(actionTitle('say', 'presentation', ''), /^Answer audience · /);
+  assert.match(actionTitle('assist', 'general', 'Ctrl+Enter'), /^Assist \(Ctrl\+Enter\)/);
+  assert.equal(actionTitle('followup', 'general', ''), 'Follow-up');
+  assert.equal(actionTitle('recap', 'general', ''), 'Recap');
+  assert.match(functionBody('applyModeLabels'), /\.title = actionTitle\(/);
+  assert.match(functionBody('updateShortcutHints'), /applyModeLabels\(\)/);
+});
+
+test('answers are sized from --answer-px; previous answers at 0.85x', () => {
+  assert.match(cssRule('.ai-text'), /font-size: var\(--answer-px, 18px\);/);
+  assert.match(cssRule('#previous-list .ai-text'), /font-size: calc\(var\(--answer-px, 18px\) \* 0\.85\);/);
+});
+
+test('no category pill, separators or speech auto-fill remain', () => {
+  for (const gone of ['category-pill', 'response-sep', 'stt-filling', 'stt-dimmed', 'stt-ready', 'stt-accumulating',
+    'latestSpeech', 'withoutTrimmedMark', 'inputFromSTT', 'autoFillInputFromSTT', 'Ready to answer', 'interim-transcript', 'input-interim']) {
+    assert.ok(!src.includes(gone), gone + ' is still in renderer.js');
+    assert.ok(!css.includes(gone), gone + ' is still in styles.css');
+  }
+});
+
+test('the question above an answer is one muted line', () => {
+  const bubble = cssRule('.user-bubble');
+  assert.match(bubble, /white-space: nowrap;/);
+  assert.match(bubble, /text-overflow: ellipsis;/);
+  assert.match(bubble, /overflow: hidden;/);
+});
+
+test('Previous answers lists earlier answers newest first, collapsed when a new one starts', () => {
+  const { previousLabel } = section('// ---- previous answers helpers', '// ---- end previous answers helpers', ['previousLabel']);
+  assert.equal(previousLabel(3, false), '▸ Previous answers (3)');
+  assert.equal(previousLabel(1, true), '▾ Previous answers (1)');
+  const archive = functionBody('archiveLatest');
+  assert.match(archive, /previousList\.prepend\(/);
+  assert.match(archive, /setPreviousOpen\(false\)/);
+  const start = src.slice(src.indexOf("cue.on('llm:start'"), src.indexOf("cue.on('", src.indexOf("cue.on('llm:start'") + 10));
+  assert.match(start, /archiveLatest\(\)/);
+  assert.match(html, /<button id="previous-toggle" class="previous-toggle hidden" type="button"/);
+  assert.match(html, /<div id="previous-list" class="previous-list hidden"><\/div>/);
+});
+
+test('the Ask field sends through the ask path; Enter sends, Esc closes', () => {
+  assert.match(html, /<div id="ask-field" class="ask-field hidden"><input id="ask-input" type="text"/);
+  const send = functionBody('sendAsk');
+  assert.match(send, /runMode\('ask', text\)/);
+  assert.match(send, /closeAsk\(\)/);
+  const keys = src.slice(src.indexOf("askInput.addEventListener('keydown'"), src.indexOf('});', src.indexOf("askInput.addEventListener('keydown'")));
+  assert.match(keys, /e\.key === 'Enter'[\s\S]*sendAsk\(\)/);
+  assert.match(keys, /e\.key === 'Escape'[\s\S]*closeAsk\(\)/);
+  assert.match(src, /\$\('#ask-btn'\)\.addEventListener\('click'/);
+});
+
+test('the heard caption shows only final Them lines while listening', () => {
+  const { heardCaption } = section('// ---- heard caption helpers', '// ---- end heard caption helpers', ['heardCaption']);
+  assert.equal(heardCaption('Why us?'), 'Heard: “Why us?”');
+  const handler = src.slice(src.indexOf("cue.on('transcript',"), src.indexOf("cue.on('", src.indexOf("cue.on('transcript',") + 10));
+  assert.match(handler, /if \(channel === 'them' && capturing\) showHeard\(text\);/);
+  assert.equal(src.split('showHeard(').length - 1, 2, 'showHeard is defined once and called only from the transcript handler');
+  assert.match(functionBody('showHeard'), /\.textContent = heardCaption\(/);
+  assert.doesNotMatch(functionBody('showHeard'), /innerHTML/);
+  const capture = src.slice(src.indexOf("cue.on('capture:state', ({ active })"), src.indexOf("cue.on('", src.indexOf("cue.on('capture:state', ({ active })") + 10));
+  assert.match(capture, /clearHeard\(\)/);
+  assert.match(functionBody('clearConversationUI'), /clearHeard\(\)/);
+  const heard = cssRule('#heard');
+  assert.match(heard, /white-space: nowrap;/);
+  assert.match(heard, /text-overflow: ellipsis;/);
+});
+
+test('the scroll shortcuts scroll the reading area', () => {
+  const handler = src.slice(src.indexOf("cue.on('answers:scroll'"), src.indexOf('});', src.indexOf("cue.on('answers:scroll'")));
+  assert.match(handler, /reading\.scrollBy\(/);
+});
+
+test('the reading area and footer add no transitions or animations', () => {
+  for (const marker of ['/* ============================ Reading area', '/* ============================ Footer']) {
+    const start = css.indexOf(marker);
+    const end = css.indexOf('/* ============================', start + 10);
+    assert.ok(start > -1 && end > start, marker + ' styles not found');
+    assert.doesNotMatch(css.slice(start, end), /transition|animation/, marker);
+  }
+});

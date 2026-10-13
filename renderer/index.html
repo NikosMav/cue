@@ -45,43 +45,33 @@
               <div id="ps-next" class="ps-next"></div>
               <button id="ps-flags" class="ps-flags hidden" type="button" title="Show all flags"></button>
             </div>
-            <div id="messages"></div>
-
-            <div id="action-row">
-              <button class="act act-primary" data-mode="say"
-                title="Suggests what to say next based on the conversation">
-                <span class="ic"></span><span>What should I say?</span>
-                <span class="shortcut-hint" id="say-shortcut-hint"></span>
-              </button>
-              <span class="sep">•</span>
-              <button class="act act-secondary" data-mode="assist"
-                title="Scans your screen and conversation to decide what you need">
-                <span class="ic"></span><span>Assist</span>
-                <span class="shortcut-hint" id="assist-shortcut-hint"></span>
-              </button>
-              <span class="sep">•</span>
-              <button class="act" data-mode="followup"><span class="ic"></span><span>Follow-up</span></button>
-              <span class="sep">•</span>
-              <button class="act" data-mode="recap"><span class="ic"></span><span>Recap</span></button>
-            </div>
-            <div id="practice-row" class="hidden">
-              <span class="practice-badge">Practice</span>
-              <button class="act act-primary" id="practice-next" title="Cue asks the next interview question">Next question</button>
-              <button class="act act-secondary" id="practice-rate" title="Feedback on what you just said">Rate my answer</button>
-              <button class="act" id="practice-voice" title="Read questions aloud with your system voice">Voice: on</button>
-              <button class="act act-clear" id="practice-end" title="End practice and save it">End</button>
+            <!-- Reading area: the latest answer, earlier ones folded below it -->
+            <div id="reading">
+              <div id="latest"></div>
+              <button id="previous-toggle" class="previous-toggle hidden" type="button" aria-expanded="false"></button>
+              <div id="previous-list" class="previous-list hidden"></div>
             </div>
 
-            <div id="composer">
-              <div id="input-area">
-                <div id="placeholder">Ask about your screen or conversation, or <span class="keycap">⌘</span><span class="keycap">⏎</span> for Assist</div>
-                <textarea id="input" rows="1" spellcheck="false"></textarea>
+            <!-- Footer: heard caption, the Ask field and one row of controls -->
+            <div id="footer">
+              <div id="heard" class="hidden"></div>
+              <div id="ask-field" class="ask-field hidden"><input id="ask-input" type="text" spellcheck="false" autocomplete="off" placeholder="Ask about your screen or conversation" aria-label="Ask cue" /></div>
+              <div id="action-row">
+                <button class="act act-primary" data-mode="say" title="What should I say? · Suggests what to say next based on the conversation"><span class="ic"></span><span class="lbl">What should I say?</span></button>
+                <button class="act act-secondary" data-mode="assist" title="Assist · Scans your screen and conversation to decide what you need"><span class="ic"></span><span class="lbl">Assist</span></button>
+                <button class="act" data-mode="followup" title="Follow-up"><span class="ic"></span><span class="lbl">Follow-up</span></button>
+                <button class="act" data-mode="recap" title="Recap"><span class="ic"></span><span class="lbl">Recap</span></button>
+                <span class="ar-gap"></span>
+                <button id="smart-toggle" class="smart-pill" type="button"><span class="ic"></span><span>Smart</span></button>
+                <button id="auto-toggle" class="smart-pill" type="button"><span class="ic"></span><span>Auto</span></button>
+                <button id="ask-btn" class="smart-pill" type="button" title="Type a question (Enter sends, Esc closes)" aria-expanded="false">✎ Ask</button>
               </div>
-              <div id="composer-bottom">
-                <button id="smart-toggle" class="smart-pill"><span class="ic"></span><span>Smart</span></button>
-                <button id="auto-toggle" class="smart-pill"><span class="ic"></span><span>Auto</span></button>
-                <div class="spacer"></div>
-                <button id="send-btn" title="Send"></button>
+              <div id="practice-row" class="hidden">
+                <span class="practice-badge">Practice</span>
+                <button class="act act-primary" id="practice-next" title="Cue asks the next interview question">Next question</button>
+                <button class="act act-secondary" id="practice-rate" title="Feedback on what you just said">Rate my answer</button>
+                <button class="act" id="practice-voice" title="Read questions aloud with your system voice">Voice: on</button>
+                <button class="act act-clear" id="practice-end" title="End practice and save it">End</button>
               </div>
             </div>
           </div>

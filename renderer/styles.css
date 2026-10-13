@@ -62,7 +62,7 @@ html, body {
   pointer-events: none;                  /* only the actual UI blocks; gaps pass through */
 }
 #header, #panel-menu, #setup-menu, #panel-wrap, #settings-scrim, #sessions-scrim, #publik-scrim, #consent-scrim { pointer-events: auto; }
-#panel-wrap, #panel, #messages, #action-row, #composer, #input, textarea, button, .act, .smart-pill, #send-btn, .s-close, .s-seg button, .pd-buttons button, .ob-ghost, .ob-primary, #panel-menu, #setup-menu { -webkit-app-region: no-drag; }
+#panel-wrap, #panel, #reading, #footer, #action-row, #ask-input, textarea, button, .act, .smart-pill, .s-close, .s-seg button, .pd-buttons button, .ob-ghost, .ob-primary, #panel-menu, #setup-menu { -webkit-app-region: no-drag; }
 
 /* ============================ Header ============================ */
 /* One row and the window's drag region; its buttons are not drag regions. It
@@ -156,11 +156,11 @@ html, body {
 .mic-perm-actions button.dismiss:hover { background: rgba(255,255,255,0.10); color: var(--tx-2); }
 
 /* ============================ Panel ============================ */
-/* The window has a fixed size, so the panel must fit inside it: #panel-wrap,
-   #panel, #panel-columns and #panel-main form one flex column down to
-   #messages, which is the only part that shrinks when extra rows (practice
-   controls, status messages) need room. */
-#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
+/* The panel fills the window below the header: #panel-wrap, #panel,
+   #panel-columns and #panel-main form one flex column down to #reading,
+   which takes the height the header and footer leave and is the only part
+   that scrolls. */
+#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 button:focus { outline: none; }
 
 .glass {
@@ -173,11 +173,18 @@ button:focus { outline: none; }
 }
 /* Background opacity (Settings → Style) applies to the panel; dialogs keep theirs. */
 #panel.glass { background: rgba(20,22,28,var(--panel-alpha, 0.72)); }
-#panel { padding: 20px 22px 20px; display: flex; flex-direction: column; min-height: 0; }
+#panel { padding: 20px 22px 20px; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 #panel.collapsed { display: none; }
 
-/* ============================ Messages ============================ */
-#messages { display: flex; flex-direction: column; overflow-y: auto; max-height: 50vh; flex: 0 1 auto; min-height: 96px; }
+/* ============================ Reading area ============================ */
+/* The latest answer in the answer size, the earlier ones folded below it.
+   Text size (⋯ menu, Ctrl+= / Ctrl+-) sets --answer-px on #app. */
+#reading { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 96px; overflow-y: auto; }
+#latest, .previous-list { display: flex; flex-direction: column; flex: 0 0 auto; }
+.previous-toggle { align-self: flex-start; flex: 0 0 auto; margin: 14px 0 2px; padding: 3px 8px; border: none; border-radius: 6px; background: transparent; color: var(--tx-mut); font: 500 12.5px var(--font); cursor: pointer; }
+.previous-toggle:hover { color: var(--tx-2); background: rgba(255,255,255,0.06); }
+#previous-list .response-group { margin-top: 14px; }
+#previous-list .ai-text { font-size: calc(var(--answer-px, 18px) * 0.85); }
 /* Shown until the first answer: what to do next, never a fake answer. */
 .empty-state { color: var(--tx-mut); font-size: 14px; line-height: 1.6; padding: 4px 2px 8px; }
 .empty-state strong { color: var(--tx-2); font-weight: 600; }
@@ -185,26 +192,19 @@ button:focus { outline: none; }
 .empty-state button { margin-top: 10px; padding: 7px 14px; border-radius: var(--r-8); border: 1px solid rgba(60,131,245,0.45); background: rgba(60,131,245,0.16); color: #cfe0ff; font: 600 13px var(--font); cursor: pointer; }
 .empty-state button:hover { background: rgba(60,131,245,0.26); }
 /* Fade the edge where more text is scrolled out of view, instead of a hard cut. */
-#messages.fade-top { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
-#messages.fade-bottom { -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22px); }
-#messages.fade-top.fade-bottom { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); }
-.user-bubble {
-  align-self: flex-end;
-  max-width: 75%;
-  background: var(--accent);
-  color: #fff;
-  border-radius: 16px 16px 4px 16px;
-  padding: 9px 14px;
-  font-size: 15px; font-weight: 500; line-height: 1.35;
-  box-shadow: 0 2px 8px rgba(60,131,245,0.35);
-}
+#reading.fade-top { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
+#reading.fade-bottom { -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22px); }
+#reading.fade-top.fade-bottom { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); }
+/* The question above an answer: one muted line (its title holds the whole text). */
+.user-bubble { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--tx-mut); font-size: 13px; font-weight: 500; line-height: 1.4; }
 .ai-text {
   color: var(--tx-1);
-  font-size: 20px; font-weight: 400; line-height: 1.5; letter-spacing: -0.01em;
-  text-align: left; margin: 14px 0 2px;
+  font-size: var(--answer-px, 18px);
+  font-weight: 400; line-height: 1.5; letter-spacing: -0.01em;
+  text-align: left; margin: 6px 0 2px;
   -webkit-user-select: text; user-select: text;
 }
-.ai-text.small { font-size: 16px; line-height: 1.55; }
+.ai-text.small { font-size: calc(var(--answer-px, 18px) * 0.8); line-height: 1.55; }
 .ai-text .w { display: inline; }
 .ai-text ul { margin: 8px 0; padding-left: 20px; }
 .ai-text li { margin: 4px 0; }
@@ -236,168 +236,15 @@ button:focus { outline: none; }
 .response-group:hover .copy-answer { opacity: 1; }
 .ai-text p code { background: rgba(255,255,255,0.10); padding: 1px 5px; border-radius: 5px; }
 .ai-caret { display:inline-block; width:7px; height:1.05em; vertical-align:-2px; background: var(--accent); border-radius:1px; margin-left: 2px; }
+/* Note under an answer that was stopped or replaced before it finished */
+.ai-note { margin-top: 6px; font-size: 11px; color: var(--tx-3, rgba(255,255,255,0.45)); font-style: italic; }
+.answer-action { margin-top: 10px; padding: 6px 14px; border-radius: var(--r-8); border: 1px solid rgba(60,131,245,0.45); background: rgba(60,131,245,0.16); color: #cfe0ff; font: 600 13px var(--font); cursor: pointer; }
+.answer-action:hover { background: rgba(60,131,245,0.26); }
 .status-line { color: var(--tx-mut); font-size: 13px; margin: 10px 0 2px; }
 #cue-status { display: none; margin: 8px 0 2px; padding: 8px 12px; border-radius: 10px;
   background: rgba(60,131,245,0.12); border: 1px solid rgba(60,131,245,0.30);
   color: #bcd4fb; font-size: 12.5px; line-height: 1.45; -webkit-user-select: text; user-select: text; }
 #cue-status.show { display: block; }
-
-/* Interim / live transcript */
-.interim-transcript {
-  display: none; margin: 6px 0 2px; padding: 6px 12px; border-radius: 8px;
-  background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.20);
-  color: rgba(255,255,255,0.7); font-size: 13px; line-height: 1.4;
-  font-style: italic; transition: opacity 200ms ease;
-  -webkit-user-select: text; user-select: text;
-}
-.interim-transcript.show { display: block; }
-
-/* ============================ Action row ============================ */
-#action-row {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
-  margin-top: 6px; white-space: nowrap;
-}
-/* Gaps separate the actions; the "•" separators made the row a few pixels
-   too wide for the panel. The narrow panel next to the history sidebar has
-   no room for key hints either. */
-#action-row .sep { display: none; }
-#panel-wrap.sidebar-open .shortcut-hint { display: none; }
-.answer-action { margin-top: 10px; padding: 6px 14px; border-radius: var(--r-8); border: 1px solid rgba(60,131,245,0.45); background: rgba(60,131,245,0.16); color: #cfe0ff; font: 600 13px var(--font); cursor: pointer; }
-.answer-action:hover { background: rgba(60,131,245,0.26); }
-.act {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: none; background: transparent; cursor: pointer;
-  color: var(--tx-2); font-size: 14px; font-weight: 500; font-family: var(--font);
-  padding: 5px 7px; border-radius: 8px;
-  transition: background 140ms ease, color 140ms ease;
-}
-.act .ic { display: inline-flex; color: var(--ic); }
-.act:hover { color: #fff; background: rgba(255,255,255,0.06); }
-.act:active { transform: translateY(0.5px); }
-.act:disabled { opacity: 0.5; cursor: default; }
-.sep { color: rgba(255,255,255,0.35); font-size: 14px; margin: 0 2px; }
-.act-primary {
-  font-size: 15px; font-weight: 600; padding: 6px 12px;
-  background: rgba(60,131,245,0.14); border: 1px solid rgba(60,131,245,0.30);
-  color: #a8c8ff; border-radius: 10px;
-}
-.act-primary:hover { background: rgba(60,131,245,0.22); color: #fff; }
-.act-secondary { font-size: 13px; font-weight: 500; padding: 5px 9px;
-  border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; }
-.act-secondary:hover { background: rgba(255,255,255,0.07); }
-.shortcut-hint { font-size: 11px; font-weight: 500; color: var(--tx-mut); margin-left: 4px; }
-
-/* FIX #4: Visual indication that listening is active in input box */
-#composer.listening {
-  border-color: rgba(34,197,94,0.25);
-}
-#composer.listening::before {
-  content: '';
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--live);
-  pointer-events: none;
-}
-
-/* FIX #9: Send button ready state */
-#send-btn.ready {
-  background: var(--live);
-  box-shadow: 0 2px 12px rgba(34,197,94,0.5);
-}
-#send-btn.has-text:not(.ready) {
-  background: var(--accent);
-}
-
-/* FIX #12: Interim text in input area — positioned relative to composer */
-.input-interim {
-  display: none;
-  position: absolute;
-  top: -28px;
-  left: 12px;
-  right: 12px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-style: italic;
-  color: rgba(255,255,255,0.4);
-  background: rgba(34,197,94,0.08);
-  border-radius: 6px 6px 0 0;
-  border: 1px solid rgba(34,197,94,0.15);
-  border-bottom: none;
-  pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  z-index: 5;
-}
-
-/* STT auto-fill states — visual feedback for question readiness */
-
-/* Base filling state: subtle green border when accumulating interviewer speech */
-#composer.stt-filling {
-  border-color: rgba(34,197,94,0.45);
-  box-shadow: 0 0 0 2px rgba(34,197,94,0.12);
-}
-#composer.stt-filling #input { color: rgba(200,255,220,0.95); }
-
-/* Accumulating state: green border while text is still coming in */
-#composer.stt-accumulating {
-  border-color: rgba(34,197,94,0.35);
-  box-shadow: 0 0 0 2px rgba(34,197,94,0.08);
-}
-
-/* Ready state: solid green, question looks complete */
-#composer.stt-ready {
-  border-color: rgba(34,197,94,0.6);
-  box-shadow: 0 0 0 3px rgba(34,197,94,0.18), 0 0 12px rgba(34,197,94,0.15);
-}
-#composer.stt-ready #input { color: rgba(180,255,200,1); }
-
-/* Ready indicator bar at bottom of composer */
-#composer.stt-ready::after {
-  content: '↵ Ready to answer';
-  position: absolute;
-  bottom: -20px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(34,197,94,0.8);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-/* Dimmed state: user is speaking, might clear soon */
-#composer.stt-dimmed {
-  border-color: rgba(255,255,255,0.15);
-  box-shadow: none;
-  opacity: 0.6;
-}
-#composer.stt-dimmed #input { color: rgba(255,255,255,0.5); }
-
-#composer {
-  position: relative; /* for ::after indicator */
-  margin-top: 14px;
-  margin-bottom: 22px; /* space for ready indicator */
-  background: var(--fill-1);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: var(--r-16);
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 10px;
-  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
-}
-#composer.focused { border-color: var(--bd-strong); box-shadow: 0 0 0 3px rgba(60,131,245,0.15); }
-#input-area { position: relative; min-height: 22px; }
-#placeholder {
-  position: absolute; inset: 0; pointer-events: none;
-  color: var(--tx-mut); font-size: 15px; line-height: 22px;
-  display: flex; align-items: center; flex-wrap: wrap; gap: 3px;
-}
-#placeholder.hidden { display: none; }
 .keycap {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 20px; height: 20px; padding: 0 5px; margin: 0 1px;
@@ -407,38 +254,54 @@ button:focus { outline: none; }
   box-shadow: inset 0 -1px 0 rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.06);
   color: rgba(255,255,255,0.85); font-size: 12px; font-weight: 600; line-height: 1;
 }
-#input {
-  width: 100%; border: none; outline: none; resize: none;
-  background: transparent; color: var(--tx-1);
-  font-family: var(--font); font-size: 15px; line-height: 22px;
-  max-height: 140px; overflow-y: auto;
+
+/* ============================ Footer ============================ */
+/* The heard caption, the Ask field and one row of controls that never wraps:
+   when the row would overflow, Assist, Follow-up and Recap show only their
+   icons (renderer fitActionRow). */
+#footer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+#heard { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--tx-mut); font-size: 12.5px; line-height: 1.4; -webkit-user-select: text; user-select: text; }
+.ask-field { display: flex; }
+#ask-input {
+  flex: 1 1 auto; min-width: 0; padding: 7px 12px;
+  border-radius: var(--r-8); border: 1px solid var(--bd-strong); background: rgba(0,0,0,0.25);
+  color: var(--tx-1); font: 14px var(--font); outline: none;
   -webkit-user-select: text; user-select: text;
 }
-#composer-bottom { display: flex; align-items: center; gap: 8px; }
-.spacer { flex: 1; }
+#ask-input::placeholder { color: var(--tx-mut); }
+#action-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; }
+#action-row > * { flex-shrink: 0; }
+#action-row > .ar-gap { flex: 1 1 auto; min-width: 8px; }
+#action-row.compact .act:not(.act-primary) .lbl { display: none; }
+.act {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--tx-2); font-size: 14px; font-weight: 500; font-family: var(--font);
+  padding: 5px 7px; border-radius: 8px;
+}
+.act .ic { display: inline-flex; color: var(--ic); }
+.act:hover { color: #fff; background: rgba(255,255,255,0.06); }
+.act:disabled { opacity: 0.5; cursor: default; }
+.act-primary {
+  font-size: 15px; font-weight: 600; padding: 6px 12px;
+  background: rgba(60,131,245,0.14); border: 1px solid rgba(60,131,245,0.30);
+  color: #a8c8ff; border-radius: 10px;
+}
+.act-primary:hover { background: rgba(60,131,245,0.22); color: #fff; }
+.act-secondary { font-size: 13px; font-weight: 500; padding: 5px 9px;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; }
+.act-secondary:hover { background: rgba(255,255,255,0.07); }
 .smart-pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 11px; border-radius: var(--r-pill);
   border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05);
   color: var(--tx-2); font-size: 13px; font-weight: 500; font-family: var(--font);
-  cursor: pointer; transition: all 140ms ease;
+  cursor: pointer;
 }
 .smart-pill .ic { display: inline-flex; color: var(--ic); }
 .smart-pill:hover { background: rgba(255,255,255,0.09); }
 .smart-pill.on { border-color: rgba(60,131,245,0.5); color: #7FB0F9; background: rgba(60,131,245,0.10); }
 .smart-pill.on .ic { color: #7FB0F9; }
-/* Note under an answer that was stopped or replaced before it finished */
-.ai-note { margin-top: 6px; font-size: 11px; color: var(--tx-3, rgba(255,255,255,0.45)); font-style: italic; }
-#send-btn {
-  width: 32px; height: 32px; border-radius: 50%;
-  border: none; background: var(--accent); color: #fff;
-  display: grid; place-items: center; cursor: pointer;
-  box-shadow: 0 2px 8px rgba(60,131,245,0.45);
-  transition: transform 140ms ease, filter 140ms ease;
-}
-#send-btn:hover { filter: brightness(1.08); transform: scale(1.05); }
-#send-btn:active { transform: scale(0.96); }
-#send-btn.busy { opacity: 0.6; pointer-events: none; }
 
 /* ============================ Settings ============================ */
 #settings-scrim {
@@ -671,7 +534,7 @@ button:focus { outline: none; }
   display: flex;
   gap: 0;
   align-items: stretch; /* so #panel-main is bounded by the panel's height */
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
 }
 #panel-main {
@@ -682,7 +545,7 @@ button:focus { outline: none; }
   min-height: 0;
 }
 #panel-main > * { flex-shrink: 0; }
-#panel-main > #messages { flex-shrink: 1; }
+#panel-main > #reading { flex-shrink: 1; }
 
 /* Transcript history sidebar — floats OUTSIDE the main panel */
 .transcript-sidebar {
@@ -843,24 +706,6 @@ button:focus { outline: none; }
 
 /* ============================ Response history ============================ */
 .response-group { display: flex; flex-direction: column; }
-.response-sep {
-  font-size: 11px; color: var(--tx-mut); text-align: center;
-  margin: 14px 0 6px; position: relative;
-}
-.response-sep::before, .response-sep::after {
-  content: ''; position: absolute; top: 50%;
-  width: calc(50% - 24px); height: 1px; background: var(--bd-hair);
-}
-.response-sep::before { left: 0; }
-.response-sep::after { right: 0; }
-/* Category pill (R3) */
-.category-pill {
-  display: inline-block; align-self: flex-start;
-  background: rgba(60,131,245,0.15); border: 1px solid rgba(60,131,245,0.30);
-  color: #8ab8f9; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
-  text-transform: uppercase; padding: 2px 9px; border-radius: var(--r-pill);
-  margin: 6px 0 4px;
-}
 
 
 .hidden { display: none !important; }
