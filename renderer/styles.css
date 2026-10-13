@@ -999,7 +999,7 @@ button:focus { outline: none; }
 .deck-slide-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: none; background: transparent; color: var(--tx-2); font: 500 12.5px var(--font); text-align: left; cursor: pointer; }
 .deck-slide-head:hover { color: #fff; }
 .deck-slide-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.deck-tag { padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid rgba(255,255,255,0.14); color: var(--tx-mut); font-size: 10.5px; white-space: nowrap; }
+.deck-tag { padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid rgba(255,255,255,0.14); color: var(--tx-mut); font-size: 11px; white-space: nowrap; }
 .deck-tag.failed { color: #fca5a5; border-color: rgba(239,68,68,0.35); }
 .deck-slide-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px; }
 .deck-slide-body.hidden { display: none; }
