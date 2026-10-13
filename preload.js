@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('cue', {
   micPcm: (arrayBuffer) => ipcRenderer.send('mic:pcm', arrayBuffer),
   systemPcm: (arrayBuffer) => ipcRenderer.send('system:pcm', arrayBuffer),
   setUiRects: (rects) => ipcRenderer.send('mouse:rects', rects),
+  // Window size: the resize grip, Hide (header height only) and overlay growth.
+  resizeStart: () => ipcRenderer.send('window:resize-start'),
+  resizeEnd: () => ipcRenderer.send('window:resize-end'),
+  setHidden: (hidden, headerHeight) => ipcRenderer.send('window:set-hidden', { hidden: !!hidden, headerHeight: Number(headerHeight) }),
+  setOverlay: (open) => ipcRenderer.send('window:overlay', !!open),
   clearTranscript: () => ipcRenderer.invoke('transcript:clear'),
   slidesList: () => ipcRenderer.invoke('slides:list'),
   slidesState: () => ipcRenderer.invoke('slides:state'),

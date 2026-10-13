@@ -52,3 +52,15 @@ test('growForOverlay grows small windows to 760x640 and never shrinks big ones',
 test('restoreHeight brings back the saved height only', () => {
   assert.deepEqual(restoreHeight({ x: 0, y: 0, width: 640, height: 560 }, { x: 50, y: 60, width: 700, height: 44 }), { x: 50, y: 60, width: 700, height: 560 });
 });
+test('boundsForDisplay ignores malformed saved entries', () => {
+  assert.deepEqual(boundsForDisplay({ 1: {} }, [LAPTOP], null), defaultBounds(WA));
+  assert.deepEqual(boundsForDisplay({ 1: { x: 5 } }, [LAPTOP], { windowX: 300, windowY: 40 }), { x: 300, y: 40, width: 640, height: 560 });
+  assert.deepEqual(boundsForDisplay({ 9: { x: 5, width: 700 } }, [LAPTOP], null), defaultBounds(WA));
+  assert.deepEqual(boundsForDisplay({ 1: { x: 5, y: 'a', width: 700, height: 500 } }, [LAPTOP], null), defaultBounds(WA));
+  assert.deepEqual(boundsForDisplay({ 1: { x: 5 }, 2: { x: 2000, y: 100, width: 1100, height: 900 } }, [LAPTOP, MONITOR], null), { x: 2000, y: 100, width: 1100, height: 900 });
+});
+test('boundsForDisplay with no displays falls back to a default work area', () => {
+  assert.deepEqual(boundsForDisplay(null, [], null), { x: 0, y: 0, width: 640, height: 560 });
+  assert.deepEqual(boundsForDisplay({ 1: { x: 100, y: 50, width: 700, height: 500 } }, [], null), { x: 100, y: 50, width: 700, height: 500 });
+  assert.deepEqual(boundsForDisplay(null, undefined, { windowX: 9000, windowY: 40 }), { x: 640, y: 40, width: 640, height: 560 });
+});

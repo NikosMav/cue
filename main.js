@@ -15,7 +15,8 @@ const { SessionStore, SessionRecorder, presentationBlock, sessionToMarkdown, exp
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
-const { createClickThrough, placeOnDisplay, clampToArea } = require('./src/click-through');
+const { createClickThrough, clampToArea } = require('./src/click-through');
+const { MIN_SIZE, clampBounds, boundsForDisplay, displayForBounds, growForOverlay, restoreHeight } = require('./src/panel-layout');
 const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
 const { DeckStore } = require('./src/deck-store');
 const { importDeck, enrichDeck, appendQuestions, validQuestionItems, countQuestions } = require('./src/deck-import');
@@ -313,33 +314,134 @@ async function getWhisperOverview() {
 }
 
 // -------- window --------
-function saveWindowPosition() {
+// Hidden (header height only) and overlay-grown sizes are temporary: bounds
+// are never saved while either is in effect. hiddenRestore and overlayRestore
+// hold the bounds to return to.
+const windowState = { hidden: false, hiddenRestore: null, overlayRestore: null, resize: null };
+let boundsSaveTimer = null;
+
+// boundsForDisplay and displayForBounds treat the first display as primary.
+function displaysPrimaryFirst() {
+  const primary = screen.getPrimaryDisplay();
+  return [primary, ...screen.getAllDisplays().filter((d) => d.id !== primary.id)];
+}
+
+function workAreaFor(bounds) {
+  const display = displayForBounds(bounds, displaysPrimaryFirst());
+  return (display || screen.getPrimaryDisplay()).workArea;
+}
+
+function saveWindowBounds() {
+  boundsSaveTimer = null;
+  if (!win || win.isDestroyed() || windowState.hidden || windowState.overlayRestore) return;
+  const b = win.getBounds();
+  const display = displayForBounds(b, displaysPrimaryFirst());
+  if (!display) return;
+  // setSettings replaces windowBounds as a whole, so write every display's entry.
+  const windowBounds = { ...(store.getSettings().windowBounds || {}) };
+  windowBounds[display.id] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  try {
+    store.setSettings({ windowBounds });
+  } catch (error) {
+    console.error('[cue] could not save window bounds:', error && error.message);
+  }
+}
+
+function scheduleBoundsSave() {
+  clearTimeout(boundsSaveTimer);
+  boundsSaveTimer = setTimeout(saveWindowBounds, 500);
+}
+
+// Saves a pending move or resize now, before the window takes a temporary size.
+function flushBoundsSave() {
+  if (!boundsSaveTimer) return;
+  clearTimeout(boundsSaveTimer);
+  saveWindowBounds();
+}
+
+function stopResize() {
+  clearInterval(windowState.resize);
+  windowState.resize = null;
+}
+
+// Hide shrinks the window to the header's height (the renderer measures it);
+// showing again restores the saved height.
+function setWindowHidden(hidden, headerHeight) {
   if (!win || win.isDestroyed()) return;
-  const [x, y] = win.getPosition();
-  store.setSettings({ windowX: x, windowY: y });
+  if (hidden) {
+    const height = Math.round(Number(headerHeight));
+    if (!Number.isFinite(height) || height <= 0) return;
+    if (!windowState.hidden) {
+      stopResize();
+      flushBoundsSave();
+      windowState.hiddenRestore = windowState.overlayRestore || win.getBounds();
+      windowState.overlayRestore = null;
+      windowState.hidden = true;
+    }
+    const current = win.getBounds();
+    const headerPx = Math.min(height, windowState.hiddenRestore.height);
+    win.setMinimumSize(MIN_SIZE.width, headerPx);
+    win.setBounds({ x: current.x, y: current.y, width: windowState.hiddenRestore.width, height: headerPx });
+    return;
+  }
+  if (!windowState.hidden) return;
+  const saved = windowState.hiddenRestore;
+  windowState.hidden = false;
+  windowState.hiddenRestore = null;
+  const current = win.getBounds();
+  win.setBounds(clampBounds(restoreHeight(saved, current), workAreaFor(current)));
+  win.setMinimumSize(MIN_SIZE.width, MIN_SIZE.height);
+  scheduleBoundsSave();
+}
+
+// Settings, Sessions and the publik consent card need room: the window grows
+// to at least 760x640 while one is open and returns to its bounds after.
+function setWindowOverlay(open) {
+  if (!win || win.isDestroyed()) return;
+  if (open) {
+    if (windowState.hidden || windowState.overlayRestore) return;
+    const current = win.getBounds();
+    const grown = growForOverlay(current, workAreaFor(current));
+    if (grown.x === current.x && grown.y === current.y && grown.width === current.width && grown.height === current.height) return;
+    stopResize();
+    flushBoundsSave();
+    windowState.overlayRestore = current;
+    win.setBounds(grown);
+    return;
+  }
+  const restore = windowState.overlayRestore;
+  if (!restore) return;
+  windowState.overlayRestore = null;
+  win.setBounds(clampBounds(restore, workAreaFor(restore)));
 }
 
 function createWindow() {
-  const { workArea } = screen.getPrimaryDisplay();
-  const W = 700, H = 600;
-
+  // A new window starts at its saved size, not a previous window's temporary one.
+  stopResize();
+  Object.assign(windowState, { hidden: false, hiddenRestore: null, overlayRestore: null });
   const savedSettings = store.getSettings();
-  let startX = Math.round(workArea.x + (workArea.width - W) / 2);
-  let startY = workArea.y + 6;
+  const displays = displaysPrimaryFirst();
+  const bounds = boundsForDisplay(savedSettings.windowBounds, displays, { windowX: savedSettings.windowX, windowY: savedSettings.windowY });
 
-  // Restore onto the monitor the position was saved on (or the nearest one if
-  // it is gone), not clamped to the primary display.
+  // Migration: the old saved top-left position becomes its display's entry.
   if (Number.isFinite(savedSettings.windowX) && Number.isFinite(savedSettings.windowY)) {
-    const placed = placeOnDisplay({ x: savedSettings.windowX, y: savedSettings.windowY }, { width: W, height: H }, screen.getAllDisplays());
-    startX = placed.x;
-    startY = placed.y;
+    const display = displayForBounds(bounds, displays);
+    const previous = savedSettings.windowBounds || {};
+    try {
+      if (display) store.setSettings({ windowBounds: { ...previous, [display.id]: bounds }, windowX: null, windowY: null });
+      else store.setSettings({ windowX: null, windowY: null });
+    } catch (error) {
+      console.error('[cue] could not migrate the window position:', error && error.message);
+    }
   }
 
   const winOptions = {
-    width: W,
-    height: H,
-    x: startX,
-    y: startY,
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     // The window is shown inactive and never takes focus, so without this macOS spends the
     // first click only activating it and a press on the drag handle does nothing.
     acceptFirstMouse: true,
@@ -369,7 +471,9 @@ function createWindow() {
   // Created on a monitor whose scale differs from the primary's, the window
   // comes out scaled a second time (1052x900 instead of 700x600 on a 150%
   // laptop next to a 100% monitor). Applying the bounds once more fixes it.
-  win.setBounds({ x: startX, y: startY, width: W, height: H });
+  win.setBounds(bounds);
+  // Programmatic and OS-driven sizes share the same minimum.
+  win.setMinimumSize(MIN_SIZE.width, MIN_SIZE.height);
 
   // Fix 2: Only call setContentProtection if the OS supports it, and only on
   // a session where it will not blank the window out for the user themself
@@ -400,35 +504,27 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  let moveSaveTimer = null;
   // Click-through follows the cursor, polled here rather than inferred from
   // mouse events Windows forwards unreliably (see src/click-through.js).
   if (clickThrough) clickThrough.stop();
   clickThrough = createClickThrough({
     getCursor: () => screen.getCursorScreenPoint(),
     getBounds: () => win.getBounds(),
-    isActive: () => !!win && !win.isDestroyed() && win.isVisible() && process.env.CUE_VISIBLE_TEST !== '1',
+    // Paused during a grip resize so the pointer-up still reaches the renderer.
+    isActive: () => !!win && !win.isDestroyed() && win.isVisible() && !windowState.resize && process.env.CUE_VISIBLE_TEST !== '1',
     setIgnore: (ignore) => win.setIgnoreMouseEvents(ignore, { forward: true })
   });
   win.setIgnoreMouseEvents(process.env.CUE_VISIBLE_TEST !== '1', { forward: true });
   clickThrough.start();
-  win.on('closed', () => { if (clickThrough) clickThrough.stop(); });
+  win.on('closed', () => { if (clickThrough) clickThrough.stop(); stopResize(); });
   // Closing the window quits cue, so it asks first while listening too.
   win.on('close', (e) => { if (!mayQuitNow()) e.preventDefault(); });
   // Windows is shutting down or signing out: never hold that up with a dialog.
   win.on('session-end', () => { quitConfirmed = true; });
 
-  // Dragging onto a monitor with a different scale factor briefly resizes the
-  // window (to 467x401 when entering a 150% screen) and can leave it a pixel
-  // off. The overlay has one size: restore it once the move ends.
-  win.on('moved', () => {
-    const b = win.getBounds();
-    if (b.width !== W || b.height !== H) win.setBounds({ x: b.x, y: b.y, width: W, height: H });
-  });
-  win.on('moved', () => {
-    clearTimeout(moveSaveTimer);
-    moveSaveTimer = setTimeout(saveWindowPosition, 500);
-  });
+  // Bounds are remembered per display (not while hidden or grown for an overlay).
+  win.on('moved', scheduleBoundsSave);
+  win.on('resized', scheduleBoundsSave);
 
   win.setTitle('Cue'); // set before load
 
@@ -1740,6 +1836,32 @@ ipcMain.on('mouse:rects', (_e, rects) => {
   const valid = rects.slice(0, 20).filter((r) => r && [r.x, r.y, r.width, r.height].every(Number.isFinite));
   clickThrough.setRects(valid);
 });
+// Transparent frameless windows cannot be resized by their edges on Windows,
+// so the renderer's grip starts a resize and main follows the cursor.
+ipcMain.on('window:resize-start', () => {
+  if (!win || win.isDestroyed() || windowState.hidden) return;
+  stopResize();
+  const start = win.getBounds();
+  const origin = screen.getCursorScreenPoint();
+  const workArea = workAreaFor(start);
+  windowState.resize = setInterval(() => {
+    if (!win || win.isDestroyed()) { stopResize(); return; }
+    const p = screen.getCursorScreenPoint();
+    const next = clampBounds({ ...start, width: start.width + p.x - origin.x, height: start.height + p.y - origin.y }, workArea);
+    const b = win.getBounds();
+    if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
+  }, 16);
+});
+ipcMain.on('window:resize-end', () => {
+  if (!windowState.resize) return;
+  stopResize();
+  scheduleBoundsSave();
+});
+ipcMain.on('window:set-hidden', (_e, payload) => {
+  const p = payload || {};
+  setWindowHidden(!!p.hidden, p.headerHeight);
+});
+ipcMain.on('window:overlay', (_e, open) => setWindowOverlay(!!open));
 ipcMain.handle('clipboard:write-text', (_e, text) => clipboard.writeText(String(text || '')));
 // Only OS settings panes; see src/system-settings-url.js.
 ipcMain.on('open-pane', (_e, url) => {
@@ -2029,6 +2151,7 @@ function moveWindow(dx, dy) {
   const { workArea } = screen.getDisplayMatching(bounds);
   const { x, y } = clampToArea({ x: bounds.x + dx * MOVE_STEP_PX, y: bounds.y + dy * MOVE_STEP_PX }, bounds, workArea);
   win.setPosition(x, y);
+  scheduleBoundsSave();
 }
 
 const SHORTCUT_HANDLERS = {

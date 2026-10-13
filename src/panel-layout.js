@@ -45,22 +45,30 @@ function displayForBounds(bounds, displays) {
     list.reduce((best, d) => (!best || distanceTo(centre, d.workArea) < distanceTo(centre, best.workArea) ? d : best), null);
 }
 
+// Used only when Electron reports no displays at all.
+const FALLBACK_WORK_AREA = { x: 0, y: 0, width: 1280, height: 720 };
+
+function isBounds(b) {
+  return !!b && [b.x, b.y, b.width, b.height].every(Number.isFinite);
+}
+
 function boundsForDisplay(windowBounds, displays, legacy) {
-  const list = displays || [];
+  const list = (displays || []).filter((d) => d && d.workArea);
   const primary = list[0];
+  const areaFor = (b) => {
+    const target = displayForBounds(b, list) || primary;
+    return target ? target.workArea : FALLBACK_WORK_AREA;
+  };
   const saved = windowBounds && typeof windowBounds === 'object' ? windowBounds : {};
-  const live = list.find((d) => saved[d.id]);
+  const live = list.find((d) => isBounds(saved[d.id]));
   if (live) return clampBounds(saved[live.id], live.workArea);
-  const orphan = Object.values(saved).find((b) => b && Number.isFinite(b.width));
-  if (orphan) {
-    const target = displayForBounds(orphan, list) || primary;
-    return clampBounds(orphan, target.workArea);
-  }
+  const orphan = Object.values(saved).find(isBounds);
+  if (orphan) return clampBounds(orphan, areaFor(orphan));
   if (legacy && Number.isFinite(legacy.windowX) && Number.isFinite(legacy.windowY)) {
     const b = { x: legacy.windowX, y: legacy.windowY, ...DEFAULT_SIZE };
-    const target = displayForBounds(b, list) || primary;
-    return clampBounds(b, target.workArea);
+    return clampBounds(b, areaFor(b));
   }
+  if (!primary) return clampBounds({ x: 0, y: 0, ...DEFAULT_SIZE }, FALLBACK_WORK_AREA);
   return clampBounds(defaultBounds(primary.workArea), primary.workArea);
 }
 
