@@ -730,6 +730,7 @@ function stopSlideLoop() {
 // presentationRuntime = { deck, state, matcher, ... } | null.
 let presentationRuntime = null;
 let presentationTick = null;
+let presentationPollBusy = false; // a slow capture must not overlap the next 1 s poll
 let matchCacheTimer = null;
 const MATCH_CACHE_SAVE_MS = 2000;
 
@@ -818,12 +819,16 @@ function loadPresentationRuntime({ reset = false } = {}) {
 }
 
 async function pollPresentation() {
+  if (presentationPollBusy) return;
   const rt = presentationRuntime;
   let frame = null;
+  presentationPollBusy = true;
   try {
     frame = await captureHashFrame({ displayId: rt.displayId });
   } catch {
     return;
+  } finally {
+    presentationPollBusy = false;
   }
   if (!frame || presentationRuntime !== rt) return;
   const newHash = hashRGBA(frame.width, frame.height, frame.data);
@@ -846,9 +851,10 @@ async function pollPresentation() {
   }).catch((e) => console.error('[presentation] slide match error', e));
 }
 
+// Only while listening: a step starts the pacing clock.
 function stepPresentationSlide(delta) {
   const rt = presentationRuntime;
-  if (!rt) return;
+  if (!rt || !state.capturing) return;
   if (rt.step(delta).changed) sendPresentationUpdate();
 }
 
@@ -938,6 +944,7 @@ async function setCapturing(active) {
         slideStore = createSlideStore({ maxSlides: getSlidesConfig().maxSlides });
         slideLastHash = null;
         slideStableCount = 0;
+        if (presentationRuntime) presentationRuntime.resumeMatching();
         startSlideLoop();
         send('capture:state', { active: true, streaming: false, mode: 'local' });
         send('slides:update', { count: 0, last: null });
@@ -969,6 +976,7 @@ async function setCapturing(active) {
     slideStore = createSlideStore({ maxSlides: slideCfg.maxSlides });
     slideLastHash = null;
     slideStableCount = 0;
+    if (presentationRuntime) presentationRuntime.resumeMatching();
     startSlideLoop();
     console.log('[cue] capture started, mode:', streaming ? 'streaming' : 'batch');
     send('capture:state', { active: true, streaming: streamingMode, mode: streaming ? 'streaming' : 'batch' });
@@ -1172,6 +1180,8 @@ ipcMain.handle('settings:set', (_e, patch) => {
   const next = store.setRendererSettings(patch);
   removeOrphanedDecks(before, next);
   loadPresentationRuntime();
+  // A saved key may have fixed what paused slide matching.
+  if (presentationRuntime) presentationRuntime.resumeMatching();
   // Restart slide polling with the new interval when capturing (keeps slides).
   if (state.capturing) startSlideLoop();
   return store.redactForRenderer(next);

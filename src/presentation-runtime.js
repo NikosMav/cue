@@ -96,19 +96,22 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
       if (!error && !result.cached) setCache(hash, n);
       return { changed: false };
     }
+    // Paused meanwhile: nothing more until resumeMatching().
+    if (matching === 'disabled') return { changed: false };
     if (error) {
-      if (matching === 'disabled') return { changed: false };
       const message = (error && error.message) || String(error);
+      // An auth/quota error pauses matching whichever frame hit it.
       if (isMatchingFatal(message)) {
         matching = 'disabled';
         return { changed: true, message };
       }
+      if (hash !== latestHash) return { changed: false };
       const was = matching;
       matching = 'failed';
       return { changed: was !== 'failed', error: message };
     }
     if (result.superseded || hash !== latestHash) return { changed: false };
-    if (matching !== 'disabled') matching = 'ok';
+    matching = 'ok';
     if (result.n === null) {
       state.setOffDeck(true);
       return { changed: true, left: null };
@@ -139,6 +142,11 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
     return true;
   }
 
+  // Listening restarted or settings saved (perhaps a fixed key): try again.
+  function resumeMatching() {
+    if (matcher && matching === 'disabled') matching = 'ok';
+  }
+
   function takeCacheWrites() {
     const out = writes;
     writes = {};
@@ -153,6 +161,7 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
     step,
     swapDeck,
     takeCacheWrites,
+    resumeMatching,
     noteTranscript: () => state.start(),
     matching: () => matching,
     update: () => buildPresentationUpdate({ deck: current, snapshot: state.snapshot(), matching })

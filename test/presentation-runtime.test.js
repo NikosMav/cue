@@ -217,3 +217,54 @@ test('noteTranscript starts the pacing clock', () => {
   tick(60000);
   assert.strictEqual(rt.state.snapshot().remainingMs, before - 60000);
 });
+
+test('resumeMatching clears a pause only when a matcher exists', async () => {
+  let fail = true;
+  const { rt } = make({ identify: async () => { if (fail) throw new Error('401 unauthorized'); return 2; } });
+  await rt.onFrame(H1);
+  assert.strictEqual(rt.update().matching, 'disabled');
+  rt.resumeMatching();
+  assert.strictEqual(rt.update().matching, 'ok');
+  fail = false;
+  await rt.onFrame(H2);
+  assert.strictEqual(rt.state.snapshot().current, 2);
+  const bare = make({ deck: null }).rt;
+  bare.resumeMatching();
+  assert.strictEqual(bare.update().matching, 'disabled');
+});
+
+test('resumeMatching leaves failed alone', async () => {
+  const { rt } = make({ identify: async () => { throw new Error('socket hang up'); } });
+  await rt.onFrame(H1);
+  rt.resumeMatching();
+  assert.strictEqual(rt.update().matching, 'failed');
+});
+
+test('an error for an older hash does not mark failed, but a fatal one still disables', async () => {
+  const first = deferred();
+  const second = deferred();
+  const queue = [first.promise, second.promise];
+  const { rt } = make({ identify: () => queue.shift() });
+  const p1 = rt.onFrame(H1);
+  const p2 = rt.onFrame(H2); // H2 is now the latest
+  first.reject(new Error('socket hang up'));
+  const r1 = await p1;
+  assert.strictEqual(r1.changed, false);
+  assert.strictEqual(rt.update().matching, 'ok');
+  second.resolve(2);
+  await p2;
+  assert.strictEqual(rt.state.snapshot().current, 2);
+
+  const third = deferred();
+  const q2 = [third.promise, Promise.resolve(3)];
+  const b = make({ identify: () => q2.shift() }).rt;
+  const s1 = b.onFrame(H1);
+  const s2 = b.onFrame(H2);
+  third.reject(new Error('429 quota'));
+  const f = await s1;
+  assert.match(f.message, /429/);
+  assert.strictEqual(b.update().matching, 'disabled');
+  const r2 = await s2; // queued before the pause: its result is ignored
+  assert.strictEqual(r2.changed, false);
+  assert.strictEqual(b.state.snapshot().current, null);
+});
