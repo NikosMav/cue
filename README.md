@@ -12,8 +12,6 @@ See [fork changes and validation](docs/fork-changes.md).
 
 A free, self-hosted alternative to Cluely. Bring your own AI key (OpenAI · Anthropic · Google Gemini · OpenAI-compatible endpoints).
 
-<img src="docs/tutorial.png" width="620" alt="cue first-run tutorial" />
-
 </div>
 
 ---
@@ -101,7 +99,7 @@ Windows x64 and Linux x64/arm64 use checksum-verified binaries from the pinned u
 
 ## First launch — the 1-minute setup
 
-When cue opens the first time, a **built-in tutorial** walks you through everything below. You can reopen it anytime by clicking the **cue logo** (top-left of the pill). Here's the same thing in writing.
+The first time cue opens, it shows an empty panel with an **Open Settings** button if no AI provider is set up yet (and the publik API disclosure, in packaged builds). The steps below are everything you need.
 
 ### Step 1 — Grant permissions
 
@@ -250,16 +248,19 @@ cue is hidden from most screen-share tools automatically — **Google Meet, Micr
 - **`⌘` `H` — Solve what's on screen.** Screenshots a coding problem and returns the approach, code, and time/space complexity.
 - **`⌘` `⇧` `H` — Add a screenshot.** For a problem longer than one screen: add each part while scrolling (up to 4), then press `⌘` `H` to solve with all of them plus the current screen.
 - **Coding follow-ups.** After a solution, type a follow-up ("optimize it", "what if the input is sorted?") and cue continues from its earlier solution.
-- **The `▢` button** (top bar) — start/stop **listening** to a meeting. The green dot means it's live.
+- **Start** (top bar) — start/stop **listening** to a meeting. It reads **● Listening** while live.
 - **Auto** — while listening, answer each interviewer question as soon as they finish asking, with no key press. Off by default. If the interviewer keeps talking, the answer is replaced with one for the fuller question; if you ask by hand first, your request is kept.
-- **Type a question** in the box and press `↵` to ask about your screen or conversation.
+- **Ask** (✎ in the footer) opens a one-line field: type a question about your screen or conversation and press `↵`; `Esc` closes it.
 - **A new request replaces the answer in progress** — you never wait for an old answer to finish. Press `Esc` to stop an answer.
 - **Follow-up questions** such as "why did you choose that?" are answered with the recent conversation and cue's earlier answers in view. **Clear transcript** also clears that memory.
 - **Smart** — flip it on for a smarter, more thorough model; off for fast and cheap.
 - **Answers are formatted as they stream** (lists, headings, code blocks with a language label). **Copy** buttons copy a code block or a whole answer.
-- **Hide** collapses the panel to just the top bar. Drag cue around by the **top pill**. Quit with `⌘` `⇧` `X` on macOS or `Ctrl` `Shift` `X` on Windows.
+- **Hide** collapses the panel to just the top bar (in a presentation setup it still shows slide pacing). Drag cue around by the **top bar**. Quit with `⌘` `⇧` `X` on macOS or `Ctrl` `Shift` `X` on Windows.
+- **Resize** with the grip in the panel's bottom-right corner. cue remembers the size and position for each display. At 760 px wide or more, a presentation setup shows its talking points in a left column beside the answer.
+- **The latest answer** fills the reading area; earlier ones fold into **Previous answers**. **Text size** (A− / A+ in the **⋯** menu, or `Ctrl` `=` / `Ctrl` `-` while cue has focus) changes the answer type from 14 to 32 px and is remembered.
+- **⋯ menu** — History (the transcript drawer), Sessions, Settings, Review slides (presentation setups) and Text size.
 
-The panel is see-through and click-through — the empty space around it never blocks the app behind it.
+The panel's background opacity is set under **Settings → Style**; the rounded corners around it are click-through.
 
 ### Sessions, debriefs and practice
 

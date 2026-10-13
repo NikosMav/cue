@@ -431,3 +431,14 @@ test('layout, grip and drawer add no transitions or animations', () => {
   assert.ok(start > -1 && end > start, 'layout mode styles not found');
   assert.doesNotMatch(css.slice(start, end), /transition|animation/);
 });
+
+test('the empty state names the Start button, not the old ■ icon', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8');
+  assert.doesNotMatch(src, /■ button above/);
+  assert.match(src, /Press <strong>Start<\/strong> above to listen/);
+});
+
+test('a button-started answer is labelled with the button name for the active setup', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer/renderer.js'), 'utf8');
+  assert.match(src, /userBubble === modeLabel\(mode\) \? modeLabel\(mode, setup && setup\.kind\) : userBubble/);
+});

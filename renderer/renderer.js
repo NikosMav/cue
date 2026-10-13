@@ -854,11 +854,15 @@
     const group = document.createElement('div');
     group.className = 'response-group';
     if (userBubble) {
-      // The question as one muted line; the full text is its tooltip.
+      // The question as one muted line; the full text is its tooltip. Main
+      // labels button-started answers with the default wording ("What should
+      // I say?"); show the label the button has in this setup instead.
+      const setup = settings && activeSetupOf(settings);
+      const label = userBubble === modeLabel(mode) ? modeLabel(mode, setup && setup.kind) : userBubble;
       const b = document.createElement('div');
       b.className = 'user-bubble';
-      b.textContent = userBubble;
-      b.title = userBubble;
+      b.textContent = label;
+      b.title = label;
       group.appendChild(b);
     }
     aiEl = document.createElement('div');
@@ -2557,12 +2561,12 @@
       box.appendChild(document.createElement('br'));
       box.appendChild(open);
     } else {
-      const setup = activeSetupOf(settings);
+      const setup = settings && activeSetupOf(settings);
       box.innerHTML = setup && setup.kind === 'interview'
-        ? '<strong>Ready for your interview.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when you\'re asked something.'
+        ? '<strong>Ready for your interview.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when you\'re asked something.'
         : setup && setup.kind === 'presentation'
-          ? '<strong>Ready to present.</strong> Start listening with the ■ button above. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
-          : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
+          ? '<strong>Ready to present.</strong> Press <strong>Start</strong> above to listen. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
+          : '<strong>Ready.</strong> Press <strong>Start</strong> above to listen, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
     }
     latest.appendChild(box);
   }

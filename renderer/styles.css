@@ -595,7 +595,6 @@ button:focus { outline: none; }
   color: var(--tx-mut); font-size: 12px;
   cursor: pointer; border-radius: 4px;
   display: flex; align-items: center; justify-content: center;
-  transition: all 120ms ease;
 }
 .ts-close-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
 
@@ -624,7 +623,6 @@ button:focus { outline: none; }
   line-height: 1.45;
   -webkit-user-select: text;
   user-select: text;
-  transition: background 120ms ease;
 }
 .ts-turn.ts-you {
   color: rgba(160,210,255,0.9);
@@ -664,7 +662,6 @@ button:focus { outline: none; }
   font-weight: 600;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 120ms ease;
 }
 .ts-clear-btn:hover { 
   background: rgba(239,68,68,0.15); 

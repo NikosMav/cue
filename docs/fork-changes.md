@@ -214,6 +214,31 @@ Them is the audience, You is the presenter.
   Interview and general prompts are unchanged byte for byte
   (`test/prompts-guard.test.js`).
 
+## Live panel redesign
+
+The live panel was crowded and its text small (design:
+`docs/superpowers/specs/2026-10-13-panel-redesign-design.md`).
+
+- **The window is the panel.** It is resizable from a corner grip (transparent
+  frameless windows cannot be edge-resized on Windows) and remembers its size
+  and position per display. A move re-applies the intended size, so dragging
+  between displays with different scaling does not save a rescaled size.
+  Hide shrinks the window to the header; Settings and Sessions grow a small
+  window to 760x640 while open and give the size back on close.
+- **Three zones.** Header (Start / ● Listening, setup, pacing when hidden,
+  Hide, ⋯, quit), a reading area with the latest answer in large adjustable
+  type (14-32 px, default 18) and earlier answers folded, and a one-row footer
+  (main answer button, Assist, Follow-up / Ask the room, Recap, Smart, Auto,
+  Ask). Below 760 px the secondary actions turn icon-only instead of wrapping.
+- **Presenter view.** From 760 px wide, presentation setups show the talking
+  points in a left column (40 %) that never collapses; narrower, the strip
+  keeps only its status line while an answer is shown.
+- **Removed.** The first-run tour (the publik disclosure still shows on its
+  own while consent is pending), the drag pill, the floating listening label
+  and dot, the prep chips, category pills and separators, and the
+  speech-filled question box (replaced by a one-line "Heard:" caption of the
+  other side's latest words). History is a drawer inside the panel.
+
 ## Validation and limits
 
 Run `npm test` for offline regression tests. They cover topic changes, selected and
