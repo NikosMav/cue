@@ -358,3 +358,76 @@ test('the Auto tooltip describes the main button, not Enter', () => {
   assert.doesNotMatch(body, /press Enter/);
   assert.match(body, /the main button or its shortcut/);
 });
+
+// ── Layout modes, resize grip, overlays and the History drawer ───────────────
+
+test('#app gets .narrow or .wide from layoutMode on load and on resize', () => {
+  assert.match(preload, /panelLayout: \{ BREAKPOINT, layoutMode \}/);
+  const body = functionBody('applyLayoutMode');
+  assert.match(body, /cue\.panelLayout\.layoutMode\(window\.innerWidth\)/);
+  assert.match(body, /classList\.toggle\('narrow', mode === 'narrow'\)/);
+  assert.match(body, /classList\.toggle\('wide', mode === 'wide'\)/);
+  assert.match(body, /fitActionRow\(\)/, 'the compact check re-runs on a mode change');
+  assert.match(body, /renderPresenterStrip\(\)/);
+  assert.match(src, /window\.addEventListener\('resize', applyLayoutMode\);\n\s*applyLayoutMode\(\);/);
+});
+
+test('the header and panel follow the window width instead of a fixed 624 px', () => {
+  assert.doesNotMatch(cssRule('#header'), /624px/);
+  assert.doesNotMatch(css, /#panel-wrap \{[^}]*624px/);
+});
+
+test('the resize grip starts and ends a main-side resize', () => {
+  assert.match(container('panel'), /<div id="resize-grip"/, 'the grip is inside the panel, so Hide hides it');
+  const start = src.indexOf("resizeGrip.addEventListener('pointerdown'");
+  assert.ok(start > -1, 'pointerdown handler not found');
+  const down = src.slice(start, src.indexOf('});', start));
+  assert.match(down, /resizeGrip\.setPointerCapture\(e\.pointerId\)/);
+  assert.match(down, /cue\.resizeStart\(\)/);
+  assert.match(src, /resizeGrip\.addEventListener\('pointerup', endResize\)/);
+  assert.match(src, /resizeGrip\.addEventListener\('lostpointercapture', endResize\)/);
+  assert.match(functionBody('endResize'), /cue\.resizeEnd\(\)/);
+  const selectors = src.match(/const UI_SELECTORS = '([^']+)'/)[1].split(',').map((s) => s.trim());
+  assert.ok(selectors.includes('#resize-grip'), 'the grip is in the click-through rectangles');
+  assert.match(css, /#panel\.collapsed \{ display: none; \}/);
+});
+
+test('Settings, Sessions and the publik card grow the window; History does not', () => {
+  for (const name of ['openSettings', 'closeSettings', 'openSessions', 'closeSessions', 'renderPublikDialog', 'hidePublikDialog']) {
+    assert.match(functionBody(name), /syncOverlay\(\)/, name + ' syncs the overlay');
+  }
+  const body = functionBody('syncOverlay');
+  for (const id of ['settings-scrim', 'sessions-scrim', 'publik-scrim']) assert.match(body, new RegExp(id));
+  assert.match(body, /cue\.setOverlay\(open\)/);
+  for (const name of ['showSidebar', 'hideSidebar', 'toggleSidebar']) {
+    assert.doesNotMatch(functionBody(name), /setOverlay|syncOverlay/, name + ' does not grow the window');
+  }
+  assert.match(functionBody('toggleHide'), /if \(!collapsed && overlayOpen\) cue\.setOverlay\(true\);/, 'an overlay left open while hidden grows again on Show');
+});
+
+test('History is a drawer inside the panel, over the reading area', () => {
+  assert.match(container('panel-wrap'), /id="transcript-sidebar"/);
+  const rule = cssRule('.transcript-sidebar');
+  assert.match(rule, /position: absolute;/);
+  assert.match(rule, /top: 0;/);
+  assert.match(rule, /right: 0;/);
+  assert.match(rule, /bottom: 0;/);
+  assert.match(rule, /width: min\(360px, 90%\);/);
+  assert.doesNotMatch(css, /sidebar-open/, 'the panel no longer shifts aside for it');
+  assert.doesNotMatch(src, /sidebar-open/);
+});
+
+test('wide interview and general answers keep about 70 characters per line', () => {
+  assert.match(css, /#app\.wide #panel-body:not\(\.presenting\) > #reading \{[^}]*70ch/);
+});
+
+test('practice re-checks whether the footer row fits', () => {
+  assert.match(functionBody('setPracticeUI'), /fitActionRow\(\);\s*$/);
+});
+
+test('layout, grip and drawer add no transitions or animations', () => {
+  const start = css.indexOf('/* ============================ Layout modes');
+  const end = css.indexOf('/* end layout modes */', start);
+  assert.ok(start > -1 && end > start, 'layout mode styles not found');
+  assert.doesNotMatch(css.slice(start, end), /transition|animation/);
+});

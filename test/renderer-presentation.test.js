@@ -161,7 +161,7 @@ test('displayOptions: picker only with more than one display; a missing display 
 });
 
 test('the presenter strip, header status and display note are in the page', () => {
-  assert.match(html, /<div id="panel-main">\s*<div id="presenter-strip" class="presenter-strip hidden"/);
+  assert.match(html, /<div id="panel-main">\s*(<!--[^>]*-->\s*)?<div id="panel-body">\s*<div id="presenter-strip" class="presenter-strip hidden"/);
   for (const id of ['ps-status', 'ps-time', 'ps-pace', 'ps-points', 'ps-next', 'ps-flags', 'header-status', 'setup-display-note']) {
     assert.match(html, new RegExp('id="' + id + '"'));
   }
@@ -331,4 +331,40 @@ test('a Settings save applies a changed planned length to the live runtime', () 
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   const load = mainBlock(main, 'function loadPresentationRuntime(');
   assert.match(load, /if \(prev\.durationMin !== s\.durationMin\) prev\.setDurationMin\(s\.durationMin\);/);
+});
+
+test('visiblePoints: wide always shows every point; narrow hides them under an answer', () => {
+  const { visiblePoints } = helpers();
+  assert.deepEqual(visiblePoints(['a', 'b'], true, 'wide'), ['a', 'b']);
+  assert.deepEqual(visiblePoints(['a', 'b'], false, 'wide'), ['a', 'b']);
+  assert.deepEqual(visiblePoints(['a', 'b'], true, 'narrow'), []);
+  assert.deepEqual(visiblePoints(['a', 'b'], false, 'narrow'), ['a', 'b']);
+  assert.deepEqual(visiblePoints(undefined, true, 'wide'), []);
+});
+
+test('wide presentation: the strip is the left column, 40 % and at least 280 px', () => {
+  assert.match(html, /<div id="panel-body">\s*<div id="presenter-strip"/);
+  assert.match(css, /#app\.wide #panel-body\.presenting \{[^}]*flex-direction: row;/);
+  assert.match(css, /#app\.wide #panel-body\.presenting > \.presenter-strip \{[^}]*flex: 0 0 40%;[^}]*min-width: 280px;/);
+  assert.match(src, /\$\('#panel-body'\)\.classList\.toggle\('presenting', !!setup\)/);
+});
+
+test('next and the newest flag share one line', () => {
+  assert.match(html, /<div id="ps-meta" class="ps-meta">\s*<div id="ps-next" class="ps-next"><\/div>\s*<button id="ps-flags"/);
+  assert.match(css, /\.presenter-strip\.answering \.ps-meta \{ display: none; \}/);
+});
+
+test('narrow: a ▸ on the status line shows the points until the next answer or slide', () => {
+  assert.match(html, /<div class="ps-head">[\s\S]*?<button id="ps-expand" class="ps-expand hidden" type="button"[^>]*>▸<\/button>/);
+  const render = src.slice(src.indexOf('function renderPresenterStrip()'), src.indexOf("$('#ps-flags').addEventListener"));
+  assert.match(render, /presentationPointsExpanded = false;/, 'a slide change folds them again');
+  assert.match(render, /visiblePoints\(update\.slide\.points, folded, mode\)/);
+  assert.match(render, /strip\.classList\.toggle\('answering', mode === 'narrow' && folded\)/);
+  const set = src.slice(src.indexOf('function setPresentationAnswerShown('), src.indexOf('\n  }\n', src.indexOf('function setPresentationAnswerShown(')));
+  assert.match(set, /if \(shown\) presentationPointsExpanded = false;/, 'a new answer folds them again');
+  assert.match(src, /\$\('#ps-expand'\)\.addEventListener\('click'/);
+});
+
+test('talking points are 0.9x the answer size', () => {
+  assert.match(css, /\.ps-points li \{[^}]*font-size: calc\(var\(--answer-px, 18px\) \* 0\.9\);/);
 });

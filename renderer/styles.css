@@ -71,7 +71,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: min(624px, 94vw);
+  width: calc(100% - 24px);
   height: 40px;
   flex: 0 0 auto;
   padding: 0 6px;
@@ -104,8 +104,8 @@ html, body {
 
 /* Menus that drop from the header: plain lists. */
 #app > .setup-menu, .panel-menu { position: absolute; top: 44px; min-width: 220px; max-height: 320px; overflow-y: auto; padding: 6px; border-radius: 12px; background: rgba(20,22,28,0.97); border: 1px solid var(--bd-strong); z-index: 25; }
-#app > .setup-menu { left: max(3vw, calc(50% - 312px)); }
-.panel-menu { right: max(3vw, calc(50% - 312px)); }
+#app > .setup-menu { left: 12px; }
+.panel-menu { right: 12px; }
 .panel-menu > button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: none; border-radius: 8px; background: transparent; color: var(--tx-2); font: 500 13px var(--font); cursor: pointer; }
 .panel-menu > button:hover, .menu-text-size button:hover { background: rgba(255,255,255,0.08); color: #fff; }
 .menu-text-size { display: flex; align-items: center; gap: 4px; margin-top: 4px; padding: 6px 4px 2px 10px; border-top: 1px solid var(--bd-hair); color: var(--tx-2); font: 500 13px var(--font); }
@@ -160,7 +160,7 @@ html, body {
    #panel-columns and #panel-main form one flex column down to #reading,
    which takes the height the header and footer leave and is the only part
    that scrolls. */
-#panel-wrap { position: relative; margin-top: 12px; width: min(624px, 94vw); display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#panel-wrap { position: relative; margin-top: 12px; width: calc(100% - 24px); display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 button:focus { outline: none; }
 
 .glass {
@@ -547,29 +547,26 @@ button:focus { outline: none; }
   min-height: 0;
 }
 #panel-main > * { flex-shrink: 0; }
-#panel-main > #reading { flex-shrink: 1; }
+#panel-main > #panel-body { flex-shrink: 1; }
 
-/* Transcript history sidebar — floats OUTSIDE the main panel */
+/* History: a drawer inside the panel, on the right, the panel's full height,
+   over the reading area. It opens and closes instantly. */
 .transcript-sidebar {
-  position: fixed;
-  top: 80px; /* below toolbar */
-  /* FIX #6: Use right edge positioning instead of calc that assumes fixed width */
-  right: 20px;
-  width: 220px;
-  max-height: 480px;
-  min-height: 200px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 90%);
   display: flex;
   flex-direction: column;
-  
-  /* Glass styling to match main panel */
-  background: rgba(20,22,28,calc(var(--panel-alpha, 0.72) + 0.13));
+  box-sizing: border-box;
+  background: rgba(20,22,28,calc(var(--panel-alpha, 0.72) + 0.2));
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   backdrop-filter: blur(40px) saturate(180%);
-  border: 1px solid var(--bd-hair);
-  border-radius: var(--r-16);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08);
+  border-left: 1px solid var(--bd-strong);
+  border-radius: 0 var(--r-panel) var(--r-panel) 0;
+  box-shadow: -12px 0 32px rgba(0,0,0,0.35);
   padding: 14px;
-  
   z-index: 10;
   pointer-events: auto;
 }
@@ -675,14 +672,6 @@ button:focus { outline: none; }
   color: #fca5a5;
 }
 
-/* Sidebar no longer widens panel — it floats outside */
-/* The history sidebar is position:fixed at right:20px and 220px wide. In a 700px
-   window the default 624px panel would sit underneath it, so narrow the panel and
-   shift it left while the sidebar is open. */
-#panel-wrap.sidebar-open {
-  width: min(420px, 60vw);
-  transform: translateX(-120px);
-}
 
 /* ============================ Transcript viewer ============================ */
 .transcript-wrap {
@@ -761,11 +750,12 @@ button:focus { outline: none; }
 /* Presenter strip (presentation setups): compact, content swaps instantly */
 .presenter-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 2px 2px 10px; margin-bottom: 8px; border-bottom: 1px solid var(--bd-hair); }
 .presenter-strip.hidden { display: none; }
-/* While an answer is shown the strip drops its next-slide and flags lines
-   (renderer keeps only the first point), so the answer gets the room in the
-   fixed-height panel. */
-.presenter-strip.answering .ps-next,
-.presenter-strip.answering .ps-flags { display: none; }
+/* Narrow, with an answer shown: only the status line (renderer drops the
+   points), so the answer gets the height. Its ▸ shows the points again. */
+.presenter-strip.answering .ps-meta { display: none; }
+.ps-expand { flex: 0 0 auto; align-self: center; width: 22px; height: 22px; margin-right: -6px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--tx-2); font: 600 13px var(--font); cursor: pointer; }
+.ps-expand:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.ps-expand.hidden { display: none; }
 .ps-head { display: flex; align-items: baseline; gap: 12px; font-size: 13px; color: var(--tx-mut); }
 .ps-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx-2); font-weight: 600; }
 .ps-clock { flex: 0 0 auto; display: inline-flex; gap: 8px; font-variant-numeric: tabular-nums; }
@@ -774,11 +764,38 @@ button:focus { outline: none; }
 .ps-pace.behind { color: #fca5a5; }
 .ps-points { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ps-points:empty { display: none; }
-.ps-points li { font-size: 19px; font-weight: 500; line-height: 1.3; color: var(--tx-1); padding-left: 18px; position: relative; }
+.ps-points li { font-size: calc(var(--answer-px, 18px) * 0.9); font-weight: 500; line-height: 1.3; color: var(--tx-1); padding-left: 18px; position: relative; }
 .ps-points li::before { content: '•'; position: absolute; left: 2px; color: var(--tx-mut); }
-.ps-next { font-size: 13px; color: var(--tx-mut); }
+/* next → and the newest flag on one line; all flags (when opened) wrap below. */
+.ps-meta { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; min-width: 0; }
+.ps-meta.hidden { display: none; }
+.ps-next { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--tx-mut); }
 .ps-next:empty { display: none; }
-.ps-flags { align-self: stretch; text-align: left; padding: 2px 0; border: none; background: transparent; color: #fcd34d; font: 500 13px var(--font); line-height: 1.45; white-space: pre-line; cursor: pointer; }
+.ps-flags { flex: 1 1 0; min-width: 0; text-align: left; padding: 2px 0; border: none; background: transparent; color: #fcd34d; font: 500 13px var(--font); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ps-flags.open { flex-basis: 100%; white-space: pre-line; }
 .ps-flags.hidden { display: none; }
 #toast.wrap { white-space: normal; width: max-content; max-width: calc(100% - 32px); text-align: center; }
 /* end presenter strip */
+
+/* ============================ Layout modes ============================ */
+/* renderer sets #app.narrow below 760 px and #app.wide from 760 px.
+   #panel-body holds the presenter strip and the reading area. */
+#panel-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+#panel-body > * { flex-shrink: 0; }
+#panel-body > #reading { flex-shrink: 1; }
+/* Wide presentation: the strip is the left column and never collapses. */
+#app.wide #panel-body.presenting { flex-direction: row; gap: 18px; }
+#app.wide #panel-body.presenting > .presenter-strip { flex: 0 0 40%; min-width: 280px; box-sizing: border-box; margin-bottom: 0; padding: 2px 16px 0 2px; border-bottom: none; border-right: 1px solid var(--bd-hair); overflow-y: auto; }
+#app.wide #panel-body.presenting > #reading { flex: 1 1 0; min-width: 0; }
+/* Wide interview/general: one centred column of about 70 characters
+   (ch of the answer size; the padding centres the latest answer, the
+   Previous answers toggle and list alike). */
+#app.wide #panel-body:not(.presenting) > #reading { font-size: var(--answer-px, 18px); padding-left: max(0px, calc((100% - 70ch) / 2)); padding-right: max(0px, calc((100% - 70ch) / 2)); }
+/* Resize grip: bottom-right corner of the panel, above the History drawer. */
+.resize-grip {
+  position: absolute; right: 2px; bottom: 2px; z-index: 12;
+  width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; -webkit-app-region: no-drag;
+  background: linear-gradient(135deg, transparent 0 55%, rgba(255,255,255,0.35) 55% 62%, transparent 62% 72%, rgba(255,255,255,0.35) 72% 79%, transparent 79%);
+  border-bottom-right-radius: var(--r-panel);
+}
+/* end layout modes */

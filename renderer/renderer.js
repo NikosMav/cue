@@ -325,9 +325,20 @@
     showToast(settings.autoAnswer ? 'Auto-answer on' : 'Auto-answer off', 1500);
   });
 
+  // Settings, Sessions and the publik card need room: while one is open main
+  // grows a small window (at least 760x640) and restores it when the last one
+  // closes. History is a drawer inside the panel and never grows the window.
+  let overlayOpen = false;
+  function syncOverlay() {
+    const open = ['settings-scrim', 'sessions-scrim', 'publik-scrim'].some((id) => !document.getElementById(id).classList.contains('hidden'));
+    if (open === overlayOpen) return;
+    overlayOpen = open;
+    cue.setOverlay(open);
+  }
+
   // Hide / collapse
   // Hide shrinks the window to the header (main does the resize), which stays
-  // visible. It takes the transcript sidebar with it and brings it back on expand.
+  // visible. It takes the History drawer with it and brings it back on expand.
   let reopenSidebarOnExpand = false;
   function panelHidden() { return $('#panel').classList.contains('collapsed'); }
   function toggleHide() {
@@ -346,6 +357,8 @@
       showSidebar();
     }
     cue.setHidden(collapsed, Math.ceil($('#header').getBoundingClientRect().height));
+    // Hiding drops main's overlay size; an overlay still open needs it back.
+    if (!collapsed && overlayOpen) cue.setOverlay(true);
   }
   // Screens and menus that open below the header need the panel shown first:
   // main refuses to grow a hidden window.
@@ -680,7 +693,9 @@
     if (sysStream) { sysStream.getTracks().forEach((t) => t.stop()); sysStream = null; }
   }
 
-  // ---- transcript history sidebar (hidden by default, manual toggle) ----
+  // ---- History drawer (hidden by default; the ⋯ menu toggles it) ----
+  // It lies over the reading area inside the panel, so it is covered by the
+  // panel's click-through rectangle and does not grow the window.
   let tsSidebarInterimEl = null;
   let sidebarOpen = false;
   // Track last committed row per channel — all chunks from same speaker go in one row
@@ -691,16 +706,12 @@
   function showSidebar() {
     const sidebar = document.getElementById('transcript-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
-    const panelWrap = document.getElementById('panel-wrap');
-    if (panelWrap) panelWrap.classList.add('sidebar-open');
     sidebarOpen = true;
   }
 
   function hideSidebar() {
     const sidebar = document.getElementById('transcript-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
-    const panelWrap = document.getElementById('panel-wrap');
-    if (panelWrap) panelWrap.classList.remove('sidebar-open');
     sidebarOpen = false;
   }
 
@@ -1061,6 +1072,7 @@
   async function closeSettings() {
     await stopRecording();
     if (await saveSettings()) scrim.classList.add('hidden');
+    syncOverlay();
   }
   // Background opacity: the panel, toolbar and history fills (styles.css --panel-alpha).
   // Dragging the slider previews it; the value is saved with the other settings.
@@ -1081,6 +1093,7 @@
     try { settings = await cue.settingsGet(); }
     catch (error) {
       scrim.classList.remove('hidden');
+      syncOverlay();
       $('#s-status').textContent = error.message;
       return;
     }
@@ -1088,6 +1101,7 @@
     settingsFormReady = true;
     $('#s-close').disabled = false;
     scrim.classList.remove('hidden');
+    syncOverlay();
     refreshWhisperModels();
     refreshShortcuts();
   }
@@ -1703,11 +1717,12 @@
     else if (update.matching === 'failed' || update.matching === 'disabled') line += ' · ?';
     return line;
   }
-  // While an answer is shown the talking points shrink to their first bullet.
-  function visiblePoints(points, answerShown) {
+  // Wide: the strip is its own column and always shows every point. Narrow:
+  // while an answer is on screen the strip keeps only its status line, so the
+  // answer gets the height.
+  function visiblePoints(points, answerShown, mode = 'narrow') {
     const list = Array.isArray(points) ? points : [];
-    // The panel has a fixed height: while an answer is on screen the strip
-    // keeps only its status line so the answer is readable, not one line.
+    if (mode === 'wide') return list.slice();
     return answerShown ? [] : list.slice();
   }
   // Watch display picker: shown with more than one display, or to clear a
@@ -1789,6 +1804,9 @@
   let presentationAnswerShown = false;
   let presentationSlideN = null;
   let presentationFlagsOpen = false;
+  // Narrow only: the ▸ shows the points under an answer until the next answer or slide.
+  let presentationPointsExpanded = false;
+  let currentLayoutMode = 'narrow'; // set from the window width by applyLayoutMode
 
   function activePresentationSetup() {
     const setup = settings && activeSetupOf(settings);
@@ -1814,6 +1832,7 @@
     const strip = $('#presenter-strip');
     const headerStatusEl = $('#header-status');
     const setup = activePresentationSetup();
+    $('#panel-body').classList.toggle('presenting', !!setup);
     if (!setup) {
       strip.classList.add('hidden');
       headerStatusEl.classList.add('hidden');
@@ -1826,7 +1845,10 @@
     if (slideN !== presentationSlideN) {
       presentationSlideN = slideN;
       presentationAnswerShown = false;
+      presentationPointsExpanded = false;
     }
+    const mode = currentLayoutMode;
+    const folded = presentationAnswerShown && !presentationPointsExpanded;
     $('#ps-status').textContent = stripStatusLine(update);
     $('#ps-time').textContent = formatTimeLeft(snap.remainingMs) + ' left';
     const pace = $('#ps-pace');
@@ -1834,14 +1856,21 @@
     pace.className = 'ps-pace ' + ((snap.pacing && snap.pacing.status) || '');
     const points = $('#ps-points');
     points.innerHTML = '';
+    const slidePoints = hasDeck && update.slide && Array.isArray(update.slide.points) ? update.slide.points : [];
     if (hasDeck && update.slide) {
-      for (const text of visiblePoints(update.slide.points, presentationAnswerShown)) {
+      for (const text of visiblePoints(update.slide.points, folded, mode)) {
         const li = document.createElement('li');
         li.textContent = text;
         points.appendChild(li);
       }
     }
-    $('#ps-next').textContent = hasDeck && update.next ? 'next → ' + update.next.n + ' · ' + update.next.title : '';
+    const expand = $('#ps-expand');
+    expand.classList.toggle('hidden', !(mode === 'narrow' && presentationAnswerShown && slidePoints.length));
+    expand.textContent = presentationPointsExpanded ? '▾' : '▸';
+    expand.title = presentationPointsExpanded ? 'Hide the talking points' : 'Show the talking points';
+    expand.setAttribute('aria-expanded', String(presentationPointsExpanded));
+    const nextText = hasDeck && update.next ? 'next → ' + update.next.n + ' · ' + update.next.title : '';
+    $('#ps-next').textContent = nextText;
     const flags = Array.isArray(snap.flags) ? snap.flags : [];
     const flagsEl = $('#ps-flags');
     flagsEl.classList.toggle('hidden', !flags.length);
@@ -1850,9 +1879,10 @@
       ? flags.map((f) => '⚑ ' + f).join('\n')
       : (flags.length ? '⚑ ' + flags[flags.length - 1] : '');
     flagsEl.title = presentationFlagsOpen ? 'Show the newest flag only' : 'Show all flags';
-    // While an answer is on screen the strip keeps only its status line and
-    // first point, so the answer gets the room in the fixed-height panel.
-    strip.classList.toggle('answering', presentationAnswerShown);
+    flagsEl.classList.toggle('open', presentationFlagsOpen);
+    $('#ps-meta').classList.toggle('hidden', !nextText && !flags.length);
+    // Narrow, with an answer on screen: only the status line (and its ▸).
+    strip.classList.toggle('answering', mode === 'narrow' && folded);
     strip.classList.remove('hidden');
     const status = headerStatus(update);
     headerStatusEl.textContent = status;
@@ -1870,12 +1900,55 @@
     presentationUpdateKey = presentationKey(setup);
     renderPresenterStrip();
   });
-  // An answer on screen shrinks the talking points to their first bullet.
+  $('#ps-expand').addEventListener('click', () => {
+    presentationPointsExpanded = !presentationPointsExpanded;
+    renderPresenterStrip();
+  });
+  // An answer on screen folds the talking points (narrow); each new answer
+  // folds them again after the ▸ showed them.
   function setPresentationAnswerShown(shown) {
-    if (presentationAnswerShown === shown) return;
+    const refold = shown && presentationPointsExpanded;
+    if (shown) presentationPointsExpanded = false;
+    if (presentationAnswerShown === shown && !refold) return;
     presentationAnswerShown = shown;
     if (activePresentationSetup()) renderPresenterStrip();
   }
+
+  // ---- layout mode: #app.narrow below BREAKPOINT px, #app.wide from it ----
+  // CSS does the rest: wide puts the presenter strip beside the reading area
+  // and centres interview/general answers at about 70 characters per line.
+  let layoutModeApplied = false;
+  function applyLayoutMode() {
+    const mode = cue.panelLayout.layoutMode(window.innerWidth);
+    if (layoutModeApplied && mode === currentLayoutMode) return;
+    layoutModeApplied = true;
+    currentLayoutMode = mode;
+    const app = $('#app');
+    app.classList.toggle('narrow', mode === 'narrow');
+    app.classList.toggle('wide', mode === 'wide');
+    if (activePresentationSetup()) renderPresenterStrip();
+    fitActionRow();
+  }
+  window.addEventListener('resize', applyLayoutMode);
+  applyLayoutMode();
+
+  // ---- resize grip: main follows the cursor from start to end -------------
+  const resizeGrip = $('#resize-grip');
+  let resizing = false;
+  resizeGrip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    resizeGrip.setPointerCapture(e.pointerId);
+    resizing = true;
+    cue.resizeStart();
+  });
+  function endResize() {
+    if (!resizing) return;
+    resizing = false;
+    cue.resizeEnd();
+  }
+  resizeGrip.addEventListener('pointerup', endResize);
+  resizeGrip.addEventListener('lostpointercapture', endResize);
 
   // Once per setup, the first time it is the active one.
   const presentationHintsShown = new Set();
@@ -2639,9 +2712,13 @@
   function openSessions() {
     showPanel();
     sessionsScrim.classList.remove('hidden');
+    syncOverlay();
     showSessionsList();
   }
-  function closeSessions() { sessionsScrim.classList.add('hidden'); }
+  function closeSessions() {
+    sessionsScrim.classList.add('hidden');
+    syncOverlay();
+  }
 
   $('#sessions-close').addEventListener('click', closeSessions);
   sessionsScrim.addEventListener('click', (e) => { if (e.target === sessionsScrim) closeSessions(); });
@@ -2719,6 +2796,8 @@
     if (!active && 'speechSynthesis' in window) speechSynthesis.cancel();
     syncPracticeVoice();
     updateSavingIndicator();
+    // The row's content changed: re-check whether it still fits.
+    fitActionRow();
   }
   function practiceVoiceOn() { return !settings || settings.practiceVoice !== false; }
   function syncPracticeVoice() { $('#practice-voice').textContent = 'Voice: ' + (practiceVoiceOn() ? 'on' : 'off'); }
@@ -2784,6 +2863,7 @@
     }
     if (e.key === 'Escape' && !scrim.classList.contains('hidden')) void closeSettings();
     else if (e.key === 'Escape' && !sessionsScrim.classList.contains('hidden')) closeSessions();
+    else if (e.key === 'Escape' && sidebarOpen) hideSidebar();
     // Escape with nothing else to close stops the answer being written.
     else if (e.key === 'Escape' && busy) cue.cancelAnswer();
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
@@ -2795,7 +2875,7 @@
   // failed: Windows forwards those unreliably while the window is
   // click-through, and never over the drag handle, so a direct grab of the
   // header went to the app behind.
-  const UI_SELECTORS = '#header, #panel-menu, #setup-menu, #panel-wrap, #transcript-sidebar, #settings-scrim, #sessions-scrim, #publik-scrim, #consent-scrim';
+  const UI_SELECTORS = '#header, #panel-menu, #setup-menu, #panel-wrap, #transcript-sidebar, #resize-grip, #settings-scrim, #sessions-scrim, #publik-scrim, #consent-scrim';
   let lastUiRects = '';
   let uiRectsFrame = null;
   function reportUiRects() {
@@ -2814,7 +2894,6 @@
   new MutationObserver(scheduleUiRects).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
   const uiResize = new ResizeObserver(scheduleUiRects);
   document.querySelectorAll(UI_SELECTORS).forEach((el) => uiResize.observe(el));
-  document.addEventListener('transitionend', scheduleUiRects); // e.g. the panel sliding for the history sidebar
   window.addEventListener('resize', scheduleUiRects);
   scheduleUiRects();
 
@@ -2925,8 +3004,12 @@
     const btns = $('#pd-buttons'); btns.innerHTML = '';
     step.buttons.forEach((b) => { const el = document.createElement('button'); el.textContent = b.label; if (b.primary) el.classList.add('pd-cta'); el.addEventListener('click', b.action); btns.appendChild(el); });
     publikScrim.classList.remove('hidden'); scheduleUiRects();
+    syncOverlay();
   }
-  function hidePublikDialog() { publikScrim.classList.add('hidden'); }
+  function hidePublikDialog() {
+    publikScrim.classList.add('hidden');
+    syncOverlay();
+  }
   function showPublikDisclosure() {
     if (!publikState || !publikState.available) return;
     renderPublikDialog(publikStep());

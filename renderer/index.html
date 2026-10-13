@@ -36,14 +36,19 @@
 
           <!-- Left column: AI responses -->
           <div id="panel-main">
+            <!-- Strip and reading area: stacked when narrow; side by side when wide in a presentation -->
+            <div id="panel-body">
             <div id="presenter-strip" class="presenter-strip hidden">
               <div class="ps-head">
+                <button id="ps-expand" class="ps-expand hidden" type="button" title="Show the talking points" aria-expanded="false">▸</button>
                 <span id="ps-status" class="ps-status" aria-live="polite"></span>
                 <span class="ps-clock"><span id="ps-time" class="ps-time"></span><span id="ps-pace" class="ps-pace"></span></span>
               </div>
               <ul id="ps-points" class="ps-points"></ul>
-              <div id="ps-next" class="ps-next"></div>
-              <button id="ps-flags" class="ps-flags hidden" type="button" title="Show all flags"></button>
+              <div id="ps-meta" class="ps-meta">
+                <div id="ps-next" class="ps-next"></div>
+                <button id="ps-flags" class="ps-flags hidden" type="button" title="Show all flags"></button>
+              </div>
             </div>
             <!-- Reading area: the latest answer, earlier ones folded below it -->
             <div id="reading">
@@ -51,6 +56,7 @@
               <button id="previous-toggle" class="previous-toggle hidden" type="button" aria-expanded="false"></button>
               <div id="previous-list" class="previous-list hidden"></div>
             </div>
+            </div><!-- /panel-body -->
 
             <!-- Footer: heard caption, the Ask field and one row of controls -->
             <div id="footer">
@@ -78,20 +84,23 @@
           </div>
 
         </div><!-- /panel-columns -->
-      </div>
-    </div>
 
-    <!-- Transcript history sidebar — floats OUTSIDE main panel, toggled by history button -->
-    <div id="transcript-sidebar" class="transcript-sidebar hidden">
-      <div class="ts-header">
-        <span class="ts-title">Conversation History</span>
-        <button class="ts-close-btn" id="close-sidebar-btn" title="Close history">✕</button>
-      </div>
-      <div id="ts-list" class="ts-list">
-        <div class="ts-placeholder">Conversation history will appear here when listening.</div>
-      </div>
-      <div class="ts-footer">
-        <button class="ts-clear-btn" id="clear-transcript-btn" title="Clear all history">Clear History</button>
+        <!-- History: a drawer over the reading area, opened from the ⋯ menu -->
+        <div id="transcript-sidebar" class="transcript-sidebar hidden">
+          <div class="ts-header">
+            <span class="ts-title">Conversation History</span>
+            <button class="ts-close-btn" id="close-sidebar-btn" title="Close history">✕</button>
+          </div>
+          <div id="ts-list" class="ts-list">
+            <div class="ts-placeholder">Conversation history will appear here when listening.</div>
+          </div>
+          <div class="ts-footer">
+            <button class="ts-clear-btn" id="clear-transcript-btn" title="Clear all history">Clear History</button>
+          </div>
+        </div>
+
+        <!-- Resize grip: main follows the cursor while it is held (a transparent window has no resizable edges) -->
+        <div id="resize-grip" class="resize-grip" title="Drag to resize"></div>
       </div>
     </div>
   </div>
