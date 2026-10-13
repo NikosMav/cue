@@ -1,3 +1,4 @@
+const { shouldCheckCoverage } = require('./presentation-state');
 const POINT_CHARS = 140;
 const QUESTION_CHARS = 160;
 const KEY_IDEA_CHARS = 120;
@@ -113,4 +114,54 @@ function parseMatchResponse(text, slideCount) {
   return Number.isInteger(n) && n >= 1 && n <= slideCount ? n : null;
 }
 
-module.exports = { buildEnrichRequest, parseEnrichResponse, extractJson, buildMatchRequest, parseMatchResponse };
+const COVERAGE_TRANSCRIPT_CHARS = 4000;
+const COVERAGE_MISSING_WORDS = 10;
+
+function buildCoverageRequest({ slide, transcript }) {
+  const system =
+    'You are cue, checking whether a presenter covered the key idea of a slide in what they said while it was on screen. ' +
+    'Judge only what the presenter said. A paraphrase or a different wording of the idea counts as covered. ' +
+    'Answer with only {"status": "covered" | "partial" | "missed", "missing": "<what was not mentioned, at most 10 words>"}. ' +
+    'Use an empty "missing" when covered. No other text.';
+  const s = slide || {};
+  const points = (s.points || []).map(p => '- ' + p).join('\n');
+  const spoken = String(transcript || '');
+  const tail = spoken.length > COVERAGE_TRANSCRIPT_CHARS ? spoken.slice(-COVERAGE_TRANSCRIPT_CHARS) : spoken;
+  const text =
+    'Slide ' + s.n + ': ' + (s.title || '') + '\n' +
+    'Key idea: ' + (s.keyIdea || '') + '\n' +
+    (points ? 'Points:\n' + points + '\n' : '') +
+    '\nWhat the presenter said:\n' + tail;
+  return { system, turns: [{ role: 'user', text }], maxTokens: 80, effort: 'low' };
+}
+
+function parseCoverageResponse(text) {
+  const o = extractJson(text);
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  if (o.status !== 'covered' && o.status !== 'partial' && o.status !== 'missed') return null;
+  const missing = typeof o.missing === 'string'
+    ? o.missing.trim().split(/\s+/).filter(Boolean).slice(0, COVERAGE_MISSING_WORDS).join(' ')
+    : '';
+  return { status: o.status, missing };
+}
+
+function coverageFlag(n, result) {
+  if (!result || (result.status !== 'partial' && result.status !== 'missed')) return null;
+  return 'Slide ' + n + ": didn't mention " + (result.missing || 'the key idea');
+}
+
+// Given the visit that just ended, decide whether to check and with what input.
+function coverageInput({ left, slide, transcript }) {
+  if (!left || !slide || !shouldCheckCoverage(left)) return null;
+  if (!String(slide.keyIdea || '').trim()) return null;
+  const said = (transcript || [])
+    .filter(t => t.channel === 'you' && t.ts >= left.enterTs && t.ts <= left.leaveTs)
+    .map(t => t.text)
+    .join('\n');
+  return { slide, transcript: said };
+}
+
+module.exports = {
+  buildEnrichRequest, parseEnrichResponse, extractJson, buildMatchRequest, parseMatchResponse,
+  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput
+};

@@ -268,3 +268,10 @@ test('an error for an older hash does not mark failed, but a fatal one still dis
   assert.strictEqual(r2.changed, false);
   assert.strictEqual(b.state.snapshot().current, null);
 });
+
+test('recordCoverage stores results per slide', () => {
+  const rt = createPresentationRuntime({ deck: deck(), durationMin: 45, now: () => 0 });
+  assert.deepEqual(rt.coverage, {});
+  rt.recordCoverage(2, { status: 'missed', missing: 'x' });
+  assert.deepEqual(rt.coverage[2], { status: 'missed', missing: 'x' });
+});

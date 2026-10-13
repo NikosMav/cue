@@ -22,6 +22,7 @@ const { importDeck, enrichDeck } = require('./src/deck-import');
 const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
 const { deckOutline, slideContext } = require('./src/deck-relevance');
 const { createPresentationRuntime, deckChanged } = require('./src/presentation-runtime');
+const { buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput } = require('./src/presentation-prompts');
 
 // Settings as every feature reads them: About me + the active setup projected
 // onto the flat prep fields (src/setups.js).
@@ -777,6 +778,30 @@ async function identifyCallLLM(request) {
   }, STREAM_INACTIVITY_MS);
 }
 
+// Fire-and-forget: did the presenter's own speech cover the slide they just left?
+// Failures are silent; a result for a replaced runtime is dropped.
+function checkCoverage(rt, left) {
+  if (!left) return;
+  const slides = (rt.deck && rt.deck.slides) || [];
+  const input = coverageInput({ left, slide: slides.find(s => s.n === left.n) || null, transcript });
+  if (!input) return;
+  (async () => {
+    const llm = createLLM({ ...currentSettings(), smart: false });
+    if (!llm.ready) throw new Error(llm.configurationError || 'provider not ready');
+    const text = await streamWithWatchdog(params => llm.stream(params), {
+      ...buildCoverageRequest(input),
+      onToken: () => {}
+    }, STREAM_INACTIVITY_MS);
+    if (presentationRuntime !== rt) return;
+    const result = parseCoverageResponse(text);
+    if (!result) return;
+    rt.recordCoverage(left.n, result);
+    const flag = coverageFlag(left.n, result);
+    if (flag) rt.state.addFlag(flag);
+    sendPresentationUpdate();
+  })().catch(e => console.log('[presentation] coverage check failed', (e && e.message) || e));
+}
+
 // Builds (or refreshes) the runtime for the active setup. Another setup,
 // another deck (slide count or file hash) or reset: true starts fresh; a
 // text-only change (enrichment, edits) swaps the deck in and keeps the state.
@@ -848,6 +873,7 @@ async function pollPresentation() {
     if (presentationRuntime !== rt) return;
     if (res.message) send('status', { message: 'Slide matching paused: ' + res.message });
     else if (res.error) console.log('[presentation] slide match failed', res.error);
+    checkCoverage(rt, res.left);
     if (res.changed) sendPresentationUpdate();
   }).catch((e) => console.error('[presentation] slide match error', e));
 }
@@ -856,7 +882,9 @@ async function pollPresentation() {
 function stepPresentationSlide(delta) {
   const rt = presentationRuntime;
   if (!rt || !state.capturing) return;
-  if (rt.step(delta).changed) sendPresentationUpdate();
+  const res = rt.step(delta);
+  checkCoverage(rt, res.left);
+  if (res.changed) sendPresentationUpdate();
 }
 
 function resetSlidesSession() {

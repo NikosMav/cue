@@ -32,3 +32,54 @@ test('extractJson is string-aware about brackets', () => {
   assert.equal(extractJson('no json here'), null);
   assert.equal(extractJson('[1, 2'), null);
 });
+
+const {
+  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput
+} = require('../src/presentation-prompts');
+
+const covSlide = { n: 4, title: 'Hash tables', keyIdea: 'Amortized O(1) inserts', points: ['Resize doubles capacity', 'Load factor'] };
+
+test('coverage request carries key idea and points and accepts paraphrase', () => {
+  const r = buildCoverageRequest({ slide: covSlide, transcript: 'we double the table' });
+  assert.match(r.turns[0].text, /Amortized O\(1\) inserts/);
+  assert.match(r.turns[0].text, /Load factor/);
+  assert.match(r.turns[0].text, /we double the table/);
+  assert.match(r.system, /paraphrase/i);
+  assert.equal(r.maxTokens, 80);
+  assert.equal(r.effort, 'low');
+});
+test('coverage transcript is capped at 4000 chars keeping the end', () => {
+  const t = 'a'.repeat(1000) + 'b'.repeat(4000);
+  const r = buildCoverageRequest({ slide: covSlide, transcript: t });
+  assert.ok(r.turns[0].text.includes('b'.repeat(4000)));
+  assert.ok(!r.turns[0].text.includes('aaaa'));
+});
+test('parseCoverageResponse handles json, prose and unknown status', () => {
+  assert.deepEqual(parseCoverageResponse('{"status":"partial","missing":"amortized cost"}'), { status: 'partial', missing: 'amortized cost' });
+  assert.deepEqual(parseCoverageResponse('```json\n{"status":"covered"}\n```'), { status: 'covered', missing: '' });
+  assert.equal(parseCoverageResponse('They covered it well.'), null);
+  assert.equal(parseCoverageResponse('{"status":"great"}'), null);
+  const long = parseCoverageResponse('{"status":"missed","missing":"one two three four five six seven eight nine ten eleven twelve"}');
+  assert.equal(long.missing.split(' ').length, 10);
+});
+test('coverageFlag text', () => {
+  assert.equal(coverageFlag(4, { status: 'partial', missing: 'amortized cost' }), "Slide 4: didn't mention amortized cost");
+  assert.equal(coverageFlag(4, { status: 'missed', missing: 'amortized cost' }), "Slide 4: didn't mention amortized cost");
+  assert.equal(coverageFlag(4, { status: 'covered', missing: '' }), null);
+  assert.equal(coverageFlag(4, null), null);
+});
+test('coverageInput selects You turns inside the visit and gates on dwell and key idea', () => {
+  const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
+  const transcript = [
+    { channel: 'you', text: 'before', ts: 500 },
+    { channel: 'you', text: 'one', ts: 1000 },
+    { channel: 'them', text: 'question', ts: 2000 },
+    { channel: 'you', text: 'two', ts: 30000 },
+    { channel: 'you', text: 'after', ts: 31000 }
+  ];
+  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript }), { slide: covSlide, transcript: 'one\ntwo' });
+  assert.equal(coverageInput({ left: { ...left, dwellMs: 5000 }, slide: covSlide, transcript }), null);
+  assert.equal(coverageInput({ left, slide: { ...covSlide, keyIdea: '' }, transcript }), null);
+  assert.equal(coverageInput({ left: null, slide: covSlide, transcript }), null);
+  assert.equal(coverageInput({ left, slide: null, transcript }), null);
+});

@@ -50,6 +50,7 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
   let writes = {};
   let matching = slideCount ? 'ok' : 'disabled';
   let latestHash = null;
+  const coverage = {}; // slide n -> { status, missing }
   const inflight = new Map(); // hash -> pending onFrame count
   const corrections = new Map(); // hash -> n set manually while identify was in flight
 
@@ -156,6 +157,8 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
   return {
     get deck() { return current; },
     state,
+    coverage,
+    recordCoverage: (n, result) => { coverage[n] = result; },
     matcher,
     onFrame,
     step,
