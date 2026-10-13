@@ -32,15 +32,36 @@ function encodeScreenshot(img, { maxLongEdge = MAX_LONG_EDGE_PX, quality = JPEG_
   return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
 }
 
+/** Pick the desktopCapturer source for displayId, else the primary display, else the first. Pure. */
+function pickSource(sources, displayId, primaryId) {
+  if (!sources || !sources.length) return null;
+  const byId = (id) => (id == null || id === '' ? null : sources.find((s) => String(s.display_id) === String(id)) || null);
+  return byId(displayId) || byId(primaryId) || sources[0];
+}
+
+/** 1-based index of displayId in displays (screencapture -D), or null. Pure. */
+function macDisplayIndex(displays, displayId) {
+  if (displayId == null || displayId === '' || !displays) return null;
+  const i = displays.findIndex((d) => String(d.id) === String(displayId));
+  return i < 0 ? null : i + 1;
+}
+
 /**
  * Capture full-resolution screen on macOS using /usr/sbin/screencapture.
  * Bypasses ScreenCaptureKit/desktopCapturer empty thumbnail issues on macOS
  * and returns a NativeImage, or null if capture failed.
  */
-function captureMacNative() {
+function captureMacNative({ displayId } = {}) {
   return new Promise((resolve) => {
     const tmpPath = path.join(os.tmpdir(), `cue_capture_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
-    execFile('/usr/sbin/screencapture', ['-x', '-t', 'png', tmpPath], (err) => {
+    const args = ['-x', '-t', 'png'];
+    let idx = null;
+    if (displayId) {
+      try { idx = macDisplayIndex(screen.getAllDisplays(), displayId); } catch (_) { idx = null; }
+    }
+    if (idx) args.push('-D', String(idx));
+    args.push(tmpPath);
+    execFile('/usr/sbin/screencapture', args, (err) => {
       if (err) return resolve(null);
       try {
         if (!fs.existsSync(tmpPath)) return resolve(null);
@@ -57,25 +78,26 @@ function captureMacNative() {
   });
 }
 
-async function captureScreenshot() {
+async function captureScreenshot({ displayId } = {}) {
   if (process.platform === 'darwin') {
-    const macImg = await captureMacNative();
+    const macImg = await captureMacNative({ displayId });
     if (macImg) return encodeScreenshot(macImg);
   }
 
   const primary = screen.getPrimaryDisplay();
-  const { width, height } = primary.size;
-  const scale = primary.scaleFactor || 1;
+  const all = displayId ? screen.getAllDisplays() : [];
+  const chosen = all.find((d) => String(d.id) === String(displayId)) || primary;
+  const { width, height } = chosen.size;
+  const scale = chosen.scaleFactor || 1;
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: Math.floor(width * scale), height: Math.floor(height * scale) }
   });
-  if (!sources.length) return null;
-  // Prefer the primary display source.
-  const src = sources.find((s) => String(s.display_id) === String(primary.id)) || sources[0];
+  const src = pickSource(sources, displayId, String(primary.id));
+  if (!src) return null;
   const img = src.thumbnail;
   if (!img || img.isEmpty()) return null;
   return encodeScreenshot(img); // data:image/jpeg;base64,...
 }
 
-module.exports = { captureScreenshot, encodeScreenshot, captureMacNative, MAX_LONG_EDGE_PX, JPEG_QUALITY, MAX_DATA_URL_BYTES };
+module.exports = { captureScreenshot, pickSource, macDisplayIndex, encodeScreenshot, captureMacNative, MAX_LONG_EDGE_PX, JPEG_QUALITY, MAX_DATA_URL_BYTES };

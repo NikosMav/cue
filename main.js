@@ -6,7 +6,7 @@ const os = require('os');
 require('./src/config-path').configureUserData(app, __dirname);
 if (!app.requestSingleInstanceLock()) app.exit(0);
 const store = require('./src/store');
-const { captureScreenshot } = require('./src/screen');
+const { captureScreenshot, pickSource } = require('./src/screen');
 const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
@@ -610,13 +610,14 @@ function getSlidesConfig() {
   return clampSlidesConfig(store.getSettings().slides || {});
 }
 
-async function captureHashFrame() {
+async function captureHashFrame({ displayId } = {}) {
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: 32, height: 32 }
   });
-  if (!sources.length) return null;
-  const img = sources[0].thumbnail;
+  const src = pickSource(sources, displayId, String(screen.getPrimaryDisplay().id));
+  if (!src) return null;
+  const img = src.thumbnail;
   if (!img || img.isEmpty()) return null;
   const size = img.getSize();
   const bmp = img.toBitmap();

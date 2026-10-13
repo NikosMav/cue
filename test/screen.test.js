@@ -9,7 +9,7 @@ Module._load = function loadWithElectronStub(request, parent, isMain) {
   if (request === 'electron') return { desktopCapturer: {}, screen: {} };
   return originalModuleLoad.call(this, request, parent, isMain);
 };
-const { encodeScreenshot, MAX_LONG_EDGE_PX, JPEG_QUALITY, MAX_DATA_URL_BYTES } = require('../src/screen');
+const { pickSource, macDisplayIndex, encodeScreenshot, MAX_LONG_EDGE_PX, JPEG_QUALITY, MAX_DATA_URL_BYTES } = require('../src/screen');
 Module._load = originalModuleLoad;
 
 // A stand-in for Electron's NativeImage. The JPEG size is modelled as a fixed
@@ -62,4 +62,34 @@ test('a small capture is never upscaled', () => {
   const log = [];
   encodeScreenshot(fakeImage(1280, 800, log));
   assert.deepEqual(log, [{ toJPEG: JPEG_QUALITY }]);
+});
+
+test('pickSource matches the requested display id as a string', () => {
+  const sources = [{ display_id: '1' }, { display_id: '2' }, { display_id: '3' }];
+  assert.equal(pickSource(sources, '3', '1'), sources[2]);
+});
+
+test('pickSource falls back to primary for an unknown id', () => {
+  const sources = [{ display_id: '1' }, { display_id: '2' }];
+  assert.equal(pickSource(sources, '9', '2'), sources[1]);
+  assert.equal(pickSource(sources, undefined, '2'), sources[1]);
+});
+
+test('pickSource falls back to the first source when nothing matches', () => {
+  const sources = [{ display_id: '1' }, { display_id: '2' }];
+  assert.equal(pickSource(sources, '8', '9'), sources[0]);
+});
+
+test('pickSource returns null for no sources', () => {
+  assert.equal(pickSource([], '1', '1'), null);
+  assert.equal(pickSource(undefined, '1', '1'), null);
+});
+
+test('macDisplayIndex is the 1-based index of the display, else null', () => {
+  const displays = [{ id: 10 }, { id: 20 }, { id: 30 }];
+  assert.equal(macDisplayIndex(displays, '20'), 2);
+  assert.equal(macDisplayIndex(displays, 30), 3);
+  assert.equal(macDisplayIndex(displays, '99'), null);
+  assert.equal(macDisplayIndex(displays, ''), null);
+  assert.equal(macDisplayIndex(displays, undefined), null);
 });
