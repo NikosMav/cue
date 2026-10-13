@@ -36,6 +36,7 @@ cue floats a small glass panel on top of everything. It takes **three separate i
 | **Ask anything** | type + `↵` | your screen + conversation |
 | **Solve a coding problem** | `⌘` `H` (macOS) or `Ctrl` `H` (Windows) | your screen only |
 | **Smart** toggle | pill in the box | switches to a smarter (slower) model |
+| **Presentation** | a Presentation setup + start listening; `⌘` `⌥` `←`/`→` (macOS) or `Ctrl` `Alt` `←`/`→` (Windows) corrects the slide | your imported deck (PPTX or PDF), the slide on screen, the audience's questions |
 
 It's a copilot for **live meetings** ("what do I say to that?") and **coding problems** (screenshot → full solution), and it's designed to be **invisible in screen shares** so it stays your private assistant.
 

@@ -5,6 +5,7 @@
 
 const { appendAiRules } = require('./profile-context');
 const { buildInterviewContext, detectCategory, detectGeneralCategory, currentQuestionTurns } = require('./interview-context');
+const { extractJson } = require('./presentation-prompts');
 
 // Length targets shared by the interview and general spoken styles.
 const ANSWER_SIZES = {
@@ -761,9 +762,12 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
 // context and the end holds the latest answers.
 const DEBRIEF_MAX_TRANSCRIPT_CHARS = 60000;
 
-function sessionTranscriptText(session, what = 'interview') {
+// extra: optional { ts, line } events (slide markers) merged in time order,
+// placed before transcript lines with the same timestamp.
+function sessionTranscriptText(session, what = 'interview', extra = []) {
   const lines = [];
   const events = [
+    ...extra,
     ...(session.transcript || []).map(t => ({ ts: t.ts, line: (t.channel === 'them' ? 'Them: ' : 'You: ') + t.text.trim() })),
     ...(session.answers || []).filter(a => SPOKEN_MODES.has(a.mode))
       .map(a => ({ ts: a.ts, line: '[cue suggested: ' + JSON.stringify(a.text.trim().slice(0, 400)) + ']' }))
@@ -827,11 +831,144 @@ function buildGeneralDebriefRequest(settings, session) {
   };
 }
 
+// ---- presentation debrief ----
+const DEBRIEF_QUESTION_CHARS = 160;
+
+function clockText(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+
+function sessionEndTs(session) {
+  const turns = (session.transcript || []).filter(t => Number.isFinite(t.ts));
+  return session.endedAt || session.updatedAt || (turns.length ? turns[turns.length - 1].ts : null);
+}
+
+function presentationLabeller(session) {
+  const p = session.presentation && typeof session.presentation === 'object' ? session.presentation : {};
+  const titles = p.titles && typeof p.titles === 'object' ? p.titles : {};
+  return { p, title: n => (titles[n] ? String(titles[n]).trim() : '') };
+}
+
+// The live record of the talk as plain lines: planned length, every slide
+// visit with its time, time per slide, coverage gaps and skipped slides.
+function presentationRecordText(session) {
+  const { p, title } = presentationLabeller(session);
+  const label = n => n + (title(n) ? ' ' + title(n) : '');
+  const end = sessionEndTs(session);
+  const lines = [];
+  const slideCount = Number(p.slideCount) || 0;
+  const durationMin = Number(p.durationMin) || 0;
+  const planned = [];
+  if (durationMin) planned.push(durationMin + ' minutes');
+  if (slideCount) planned.push(slideCount + ' slide' + (slideCount === 1 ? '' : 's'));
+  if (planned.length) lines.push('Planned length: ' + planned.join('; ') + '.');
+  if (durationMin && slideCount) lines.push('Planned share per slide: about ' + clockText(durationMin * 60000 / slideCount) + '.');
+
+  const visits = (Array.isArray(p.timeline) ? p.timeline : [])
+    .filter(v => v && Number.isInteger(v.n) && Number.isFinite(v.enterTs))
+    .map(v => {
+      const leave = Number.isFinite(v.leaveTs) ? v.leaveTs : (Number.isFinite(end) ? end : v.enterTs);
+      return { n: v.n, enterTs: v.enterTs, ms: Math.max(0, leave - v.enterTs) };
+    });
+  if (visits.length) {
+    const last = visits[visits.length - 1];
+    lines.push('Actual length on slides: ' + clockText(last.enterTs + last.ms - visits[0].enterTs) + '.');
+    lines.push('', 'Slide timeline (every visit in order, as "n title: time on slide"):');
+    for (const v of visits) lines.push(label(v.n) + ': ' + clockText(v.ms));
+    const totals = new Map();
+    for (const v of visits) totals.set(v.n, (totals.get(v.n) || 0) + v.ms);
+    lines.push('', 'Time per slide (all visits added up):');
+    for (const [n, ms] of [...totals].sort((a, b) => a[0] - b[0])) lines.push(label(n) + ': ' + clockText(ms));
+  } else {
+    lines.push('Slide timeline: none recorded.');
+  }
+
+  const coverage = p.coverage && typeof p.coverage === 'object' ? p.coverage : {};
+  const gaps = Object.keys(coverage).map(Number).filter(n => Number.isInteger(n)).sort((a, b) => a - b)
+    .filter(n => coverage[n] && (coverage[n].status === 'partial' || coverage[n].status === 'missed'))
+    .map(n => {
+      const m = coverage[n].missing;
+      const missing = (Array.isArray(m) ? m.join('; ') : String(m || '')).trim();
+      return label(n) + ': ' + coverage[n].status + (missing ? ' — missing: ' + missing : '');
+    });
+  lines.push('', 'Key ideas not fully covered (cue\'s live checks):' + (gaps.length ? '\n' + gaps.join('\n') : ' none recorded.'));
+  const skipped = (Array.isArray(p.skipped) ? p.skipped : []).filter(n => Number.isInteger(n));
+  lines.push('Skipped slides: ' + (skipped.length ? skipped.map(label).join(', ') : 'none') + '.');
+  return lines.join('\n');
+}
+
+// "— Slide n · title —" at each visit, so questions sit under their slide.
+function slideMarkerEvents(session) {
+  const { p, title } = presentationLabeller(session);
+  return (Array.isArray(p.timeline) ? p.timeline : [])
+    .filter(v => v && Number.isInteger(v.n) && Number.isFinite(v.enterTs))
+    .map(v => ({ ts: v.enterTs, line: '— Slide ' + v.n + (title(v.n) ? ' · ' + title(v.n) : '') + ' —' }));
+}
+
+/**
+ * A review of a talk from its live record: timing, coverage, audience
+ * questions, confusion hotspots and concrete deck edits, then the audience
+ * questions as a fenced JSON block that splitDebrief separates.
+ */
+function buildPresentationDebriefRequest(settings, session) {
+  const context = buildInterviewContext(settings, 'say');
+  const heardPresenter = (session.transcript || []).some(t => t.channel === 'you');
+  const system = buildSystemPresentation(
+    'You are an experienced presentation coach writing a debrief of an educational talk for the presenter. ' +
+    BASE_RULES +
+    '"Them" is the audience (possibly several people) and "You" is the presenter, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
+    'Lines marked [cue suggested] are suggestions the presenter saw on screen, not things they said. ' +
+    'Lines like "— Slide 7 · title —" mark when that slide came on screen; what follows was said while it was shown. ' +
+    'The planned length, slide timeline, coverage checks and skipped slides come from cue\'s live tracking and are the only record of timing and coverage. ' +
+    'Write Markdown with these sections, in order: ' +
+    '## Timing (planned compared with actual length, then the three slides furthest over or under their share of the planned time, with the times from the record; write "No timeline recorded" if there is none). ' +
+    '## Coverage (skipped slides, then key ideas marked partial or missed, by slide number and title; write "Nothing missed" if none). ' +
+    '## Audience questions (a numbered list: each question as the audience asked it, the slide it was asked on, and whether the presenter answered it; mark a question asked more than once "(repeated)"; write "No audience questions" if none). ' +
+    '## Confusion hotspots (slides with clusters of questions, clarifications or repeat requests, and what confused people; write "None" if none). ' +
+    '## Deck changes for next time (three to six concrete edits to specific slides, each tied to something that happened in this talk; no generic presentation advice). ' +
+    'After the last section, end with a fenced ```json block listing every question from Audience questions, once each, as ' +
+    '[{"n": <the slide number it was asked on>, "question": "<the question, concise, at most ' + DEBRIEF_QUESTION_CHARS + ' characters>"}]; ' +
+    'write [] if there were none, and nothing after the block. ' +
+    'Ground everything in the record and the transcript: never invent questions, times or reactions, or what anyone said. ' +
+    (heardPresenter ? '' : 'The presenter\'s microphone was not captured: say so under Timing and work from what the audience said. '),
+    context
+  );
+  return {
+    system,
+    cachePrefix: context && system.startsWith(context) ? context : '',
+    maxTokens: 4000,
+    effort: 'medium',
+    turns: [{
+      role: 'user',
+      text: presentationRecordText(session) + '\n\n' + callLengthLine(session) +
+        'Talk transcript:\n' + (sessionTranscriptText(session, 'talk', slideMarkerEvents(session)) || '(empty)') + '\n\nWrite the debrief.'
+    }]
+  };
+}
+
+/**
+ * Splits a presentation debrief into its prose and the audience questions in
+ * the last fenced json block. Invalid items are dropped; questions are cut to
+ * 160 characters.
+ */
+function splitDebrief(text) {
+  const raw = typeof text === 'string' ? text : '';
+  const at = raw.toLowerCase().lastIndexOf('```json');
+  if (at < 0) return { prose: raw.trim(), questions: [] };
+  const parsed = extractJson(raw.slice(at));
+  const questions = (Array.isArray(parsed) ? parsed : [])
+    .filter(q => q && Number.isInteger(q.n) && q.n >= 1 && typeof q.question === 'string' && q.question.trim())
+    .map(q => ({ n: q.n, question: q.question.trim().slice(0, DEBRIEF_QUESTION_CHARS) }));
+  return { prose: raw.slice(0, at).trim(), questions };
+}
+
 /**
  * A post-interview review of a saved session, grounded in what was actually
  * said and in the candidate's reference material.
  */
 function buildDebriefRequest(settings, session) {
+  if (settings.setupKind === 'presentation') return buildPresentationDebriefRequest(settings, session);
   if (settings.setupKind === 'general') return buildGeneralDebriefRequest(settings, session);
   const context = buildInterviewContext(settings, 'say');
   const practice = session.kind === 'practice';
@@ -862,4 +999,4 @@ function buildDebriefRequest(settings, session) {
   };
 }
 
-module.exports = { MODES, formatTranscript, buildPromptRequest, resolveMode, buildDebriefRequest, PRESENTATION_TRANSCRIPT_CHARS };
+module.exports = { MODES, formatTranscript, buildPromptRequest, resolveMode, buildDebriefRequest, buildPresentationDebriefRequest, splitDebrief, PRESENTATION_TRANSCRIPT_CHARS };

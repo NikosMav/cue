@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const { importDeck, enrichDeck, appendQuestions } = require('../src/deck-import');
+const { importDeck, enrichDeck, appendQuestions, validQuestionItems, countQuestions } = require('../src/deck-import');
 const { DeckError } = require('../src/deck-extract');
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
@@ -141,4 +141,30 @@ test('an aborted run stops calling call and onBatch', async () => {
   assert.equal(calls, 1);
   assert.equal(batches, 0);
   assert.deepEqual(out.slides[0].points, []);
+});
+
+test('validQuestionItems keeps integer slides in range with short non-empty questions', () => {
+  const items = [
+    { n: 1, question: ' Why? ' },
+    { n: 0, question: 'too low' },
+    { n: 11, question: 'too high' },
+    { n: 2.5, question: 'not an integer' },
+    { n: '3', question: 'string n' },
+    { n: 3, question: '   ' },
+    { n: 4, question: 'x'.repeat(161) },
+    { n: 5, question: 'x'.repeat(160) },
+    null,
+    'nope'
+  ];
+  assert.deepEqual(validQuestionItems(items, 10), [{ n: 1, question: 'Why?' }, { n: 5, question: 'x'.repeat(160) }]);
+  assert.deepEqual(validQuestionItems('not a list', 10), []);
+  assert.deepEqual(validQuestionItems([{ n: 1, question: 'Q' }], 0), []);
+});
+
+test('countQuestions totals questions across slides', () => {
+  const deck = tenSlides();
+  deck.slides[0].questions = ['a', 'b'];
+  deck.slides[3].questions = ['c'];
+  assert.equal(countQuestions(deck), 3);
+  assert.equal(countQuestions(null), 0);
 });

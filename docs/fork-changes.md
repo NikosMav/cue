@@ -178,6 +178,42 @@ desktop reliability. General fixes are suitable for separate upstream PRs.
   with a synthetic profile. It reads saved keys, skips providers without one,
   and never prints them.
 
+## Presentation mode
+
+A third setup kind, **Presentation**, for a presenter giving an educational
+talk online (design: `docs/superpowers/specs/2026-10-13-presentation-mode-design.md`).
+Them is the audience, You is the presenter.
+
+- **Deck import.** Settings → Setups → Import PPTX or PDF (the file dialog runs
+  in main; 50 MB, 150 visible slides). Slide text and speaker notes are
+  extracted locally, then the Smart model writes 2–4 talking points, likely
+  questions and a key idea per slide, in batches of 8. Review slides edits
+  them; edited slides are never regenerated. Re-importing a changed file keeps
+  edits for slides whose text did not change.
+- **Live strip.** While listening, cue matches the shared slide to the deck
+  (a perceptual-hash cache first, one fast vision call on a miss) and shows
+  `Slide n / N · title`, time left against the planned length, a pacing chip
+  (on track within ±15%, otherwise ahead or behind), the slide's talking
+  points and the next slide. `Ctrl`+`Alt`+`←`/`→` corrects the slide.
+- **Q&A.** Audience questions are answered at the audience's level, with the
+  current slide, its neighbours and the slides most related to the question.
+  Citations and figures must come from the deck or notes, or are marked
+  "(not in your material: verify before stating)".
+- **Coverage.** On leaving a slide after at least 20 s, a fast check compares
+  what you said with the slide's key idea; partial or missed ideas and skipped
+  slides show as flags.
+- **Debrief.** A saved presentation session's debrief covers Timing, Coverage,
+  Audience questions, Confusion hotspots and Deck changes for next time, from
+  the recorded slide timeline. The audience questions it lists can be ticked
+  and added to their slides' likely questions (deduplicated, at most 6 per
+  slide).
+- Screenshots used for matching are never saved: they stay in memory (on
+  macOS, the system `screencapture` tool's temporary file is deleted as soon
+  as it is read, as for every cue screenshot). The deck file keeps only
+  16-character hashes and slide numbers for matching.
+  Interview and general prompts are unchanged byte for byte
+  (`test/prompts-guard.test.js`).
+
 ## Validation and limits
 
 Run `npm test` for offline regression tests. They cover topic changes, selected and

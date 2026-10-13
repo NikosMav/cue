@@ -215,3 +215,72 @@ test('modeLabel relabels say and followup for presentation setups only', () => {
   assert.equal(modeLabel('recap', 'presentation'), 'Recap');
   assert.match(src, /applyModeLabels\(\)/);
 });
+
+// ── Debrief: questions back into the deck ────────────────────────────────────
+function debriefHelpers() {
+  const start = src.indexOf('// ---- presentation helpers');
+  const end = src.indexOf('// ---- end presentation helpers', start);
+  return new Function(src.slice(start, end) + '\nreturn { debriefDisplayText, canAddDebriefQuestions };')();
+}
+
+test('debriefDisplayText hides the trailing json block while streaming', () => {
+  const { debriefDisplayText } = debriefHelpers();
+  assert.equal(debriefDisplayText('## Timing\nOk.\n\n```json\n[{"n": 2, "qu'), '## Timing\nOk.');
+  assert.equal(debriefDisplayText('## Timing\nOk.\n\n```JSON\n[]\n```'), '## Timing\nOk.');
+  assert.equal(debriefDisplayText('## Timing\nOk.\n\n``'), '## Timing\nOk.', 'a fence still arriving is hidden');
+  assert.equal(debriefDisplayText('## Timing\nOk.\n\n```js'), '## Timing\nOk.');
+  assert.equal(debriefDisplayText('## Timing\nOk.'), '## Timing\nOk.');
+  assert.equal(debriefDisplayText(''), '');
+});
+
+test('canAddDebriefQuestions needs an existing presentation setup with a deck', () => {
+  const { canAddDebriefQuestions } = debriefHelpers();
+  const setups = [
+    { id: 'p1', kind: 'presentation', deck: { fileName: 'a.pptx' } },
+    { id: 'p2', kind: 'presentation', deck: null },
+    { id: 'g1', kind: 'general' }
+  ];
+  const qs = [{ n: 1, question: 'Q' }];
+  assert.equal(canAddDebriefQuestions({ setupId: 'p1', debriefQuestions: qs }, setups), true);
+  assert.equal(canAddDebriefQuestions({ setupId: 'p2', debriefQuestions: qs }, setups), false, 'no deck');
+  assert.equal(canAddDebriefQuestions({ setupId: 'g1', debriefQuestions: qs }, setups), false, 'not a presentation');
+  assert.equal(canAddDebriefQuestions({ setupId: 'gone', debriefQuestions: qs }, setups), false, 'setup deleted');
+  assert.equal(canAddDebriefQuestions({ setupId: 'p1', debriefQuestions: [] }, setups), false, 'no questions');
+  assert.equal(canAddDebriefQuestions({ setupId: 'p1' }, undefined), false);
+});
+
+test('streamed debrief tokens render without the json block', () => {
+  assert.match(src, /live\.innerHTML = renderMarkdown\(debriefDisplayText\(debriefRaw\)\)/);
+});
+
+test('the debrief view offers one checkbox per question and an Add selected button', () => {
+  assert.match(src, /'Add to slide ' \+ q\.n \+ '\\'s likely questions'/);
+  assert.match(src, /'Add selected'/);
+  assert.match(src, /cue\.deckAddQuestions\(session\.setupId, /);
+  assert.match(src, /'Added ' \+ r\.added \+ \(r\.added === 1 \? ' question' : ' questions'\) \+ ' to the deck\.'/);
+  assert.match(src, /text\.textContent = q\.question/, 'question text goes in via textContent');
+  assert.match(src, /canAddDebriefQuestions\(session, /);
+});
+
+test('preload exposes deckAddQuestions and main validates against the setup deck', () => {
+  const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  assert.match(preload, /deckAddQuestions: \(setupId, items\) => ipcRenderer\.invoke\('deck:add-questions', setupId, items\)/);
+  const at = main.indexOf("ipcMain.handle('deck:add-questions'");
+  assert.ok(at > -1, 'deck:add-questions handler');
+  const handler = main.slice(at, main.indexOf('\n});', at));
+  assert.match(handler, /presentationSetup\(setupId\)/);
+  assert.match(handler, /deckStore\(\)\.fileFor\(setupId\)/);
+  assert.match(handler, /validQuestionItems\(items, deck\.slides\.length\)/);
+  assert.match(handler, /appendQuestions\(/);
+  assert.match(handler, /return \{ added: /);
+});
+
+test('presentation debriefs save the prose and the questions separately, with the deck outline', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const at = main.indexOf("ipcMain.handle('sessions:debrief'");
+  const handler = main.slice(at, main.indexOf('\n});', at));
+  assert.match(handler, /splitDebrief\(/);
+  assert.match(handler, /session\.debriefQuestions = /);
+  assert.match(handler, /deckOutline\(/);
+});

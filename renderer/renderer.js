@@ -2151,6 +2151,22 @@
     if (missing) options.push({ value: saved, label: 'Not connected' });
     return { show: list.length > 1 || missing, missing, options };
   }
+  // A streaming presentation debrief ends with a ```json block of questions:
+  // show only the prose, including while a fence is still arriving.
+  function debriefDisplayText(raw) {
+    const text = String(raw || '');
+    const at = text.toLowerCase().lastIndexOf('```json');
+    const prose = at >= 0 ? text.slice(0, at) : text.replace(/`{1,3}(j(s(on?)?)?)?$/i, '');
+    return prose.trimEnd();
+  }
+  // The question list is offered only while the session's setup still exists,
+  // is a presentation setup, and has a deck.
+  function canAddDebriefQuestions(session, setups) {
+    const questions = session && Array.isArray(session.debriefQuestions) ? session.debriefQuestions : [];
+    if (!questions.length) return false;
+    const setup = (Array.isArray(setups) ? setups : []).find((s) => s.id === session.setupId);
+    return !!(setup && setup.kind === 'presentation' && setup.deck);
+  }
   // ---- end presentation helpers
 
   // ---- mode label
@@ -2959,7 +2975,65 @@
     $('#session-debrief').textContent = session.debrief ? 'Redo debrief' : 'Debrief';
     $('#session-debrief').disabled = debriefingId === id;
     $('#session-body').innerHTML = renderMarkdown(session.markdown);
+    renderDebriefQuestions(session);
     $('#session-body').scrollTop = 0;
+  }
+
+  // After a presentation debrief's prose: one checkbox per audience question
+  // and "Add selected", which appends the ticked ones to their slides.
+  function renderDebriefQuestions(session) {
+    if (!canAddDebriefQuestions(session, settings && settings.setups)) return;
+    const body = $('#session-body');
+    const box = document.createElement('div');
+    box.className = 'debrief-questions';
+    const head = document.createElement('p');
+    head.className = 'md-h';
+    head.textContent = 'Questions for the deck';
+    box.appendChild(head);
+    const checks = [];
+    for (const q of session.debriefQuestions) {
+      const row = document.createElement('label');
+      row.className = 'debrief-q';
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      const text = document.createElement('span');
+      text.className = 'debrief-q-text';
+      text.textContent = q.question;
+      const hint = document.createElement('span');
+      hint.className = 'debrief-q-hint';
+      hint.textContent = 'Add to slide ' + q.n + '\'s likely questions';
+      const words = document.createElement('span');
+      words.append(text, hint);
+      row.append(check, words);
+      box.appendChild(row);
+      checks.push({ check, q });
+    }
+    const actions = document.createElement('div');
+    actions.className = 'debrief-q-actions';
+    const add = document.createElement('button');
+    add.className = 's-action primary';
+    add.textContent = 'Add selected';
+    const status = document.createElement('span');
+    status.className = 'debrief-q-status';
+    actions.append(add, status);
+    box.appendChild(actions);
+    add.addEventListener('click', async () => {
+      const items = checks.filter((c) => c.check.checked).map((c) => ({ n: c.q.n, question: c.q.question }));
+      if (!items.length) { status.textContent = 'Tick the questions to add first.'; return; }
+      add.disabled = true;
+      try {
+        const r = await cue.deckAddQuestions(session.setupId, items);
+        if (r && r.error) { status.textContent = r.error; add.disabled = false; return; }
+        status.textContent = 'Added ' + r.added + (r.added === 1 ? ' question' : ' questions') + ' to the deck.';
+        for (const c of checks) c.check.disabled = true;
+      } catch (err) {
+        status.textContent = err && err.message ? err.message : String(err);
+        add.disabled = false;
+      }
+    });
+    // Right after the debrief prose, before the conversation.
+    const conversation = [...body.querySelectorAll('.md-h')].find((h) => h.textContent === 'Conversation');
+    body.insertBefore(box, conversation || null);
   }
 
   function openSessions() {
@@ -3023,7 +3097,7 @@
     if (id !== debriefingId) return;
     debriefRaw += text;
     const live = $('#debrief-live');
-    if (live && openSessionId === id) live.innerHTML = renderMarkdown(debriefRaw);
+    if (live && openSessionId === id) live.innerHTML = renderMarkdown(debriefDisplayText(debriefRaw));
   });
   cue.on('sessions:saved', () => {
     if (!sessionsScrim.classList.contains('hidden') && !openSessionId) refreshSessions();

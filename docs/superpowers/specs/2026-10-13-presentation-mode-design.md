@@ -1,6 +1,6 @@
 # Presentation mode — design
 
-Date: 2026-10-13. Status: approved design, not yet implemented.
+Date: 2026-10-13. Status: implemented.
 
 ## Problem
 

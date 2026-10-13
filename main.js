@@ -10,7 +10,7 @@ const { captureScreenshot, pickSource } = require('./src/screen');
 const { createSTT } = require('./src/stt');
 const { parseDocumentFile } = require('./src/resume');
 const { createLLM } = require('./src/llm');
-const { MODES, buildPromptRequest, buildDebriefRequest } = require('./src/prompts');
+const { MODES, buildPromptRequest, buildDebriefRequest, splitDebrief } = require('./src/prompts');
 const { SessionStore, SessionRecorder, presentationBlock, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume, QUIT_WHILE_LISTENING, RESUME_WINDOW_MS } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
 const { detectConsoleSession } = require('./src/windows-session');
@@ -18,7 +18,7 @@ const { createWarmUp } = require('./src/warmup');
 const { createClickThrough, placeOnDisplay, clampToArea } = require('./src/click-through');
 const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
 const { DeckStore } = require('./src/deck-store');
-const { importDeck, enrichDeck } = require('./src/deck-import');
+const { importDeck, enrichDeck, appendQuestions, validQuestionItems, countQuestions } = require('./src/deck-import');
 const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
 const { deckOutline, slideContext } = require('./src/deck-relevance');
 const { createPresentationRuntime, deckChanged } = require('./src/presentation-runtime');
@@ -1659,7 +1659,20 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
   const controller = new AbortController();
   debriefInFlight = controller;
   // Reviewed against the setup the session was recorded with, not the active one.
-  const request = buildDebriefRequest(settingsForSession(store.getSettings(), session), session);
+  const sessionSettings = settingsForSession(store.getSettings(), session);
+  const presentation = sessionSettings.setupKind === 'presentation';
+  if (presentation) {
+    // The deck outline grounds slide names; a deleted setup or deck leaves the
+    // session's own titles to carry the review.
+    try {
+      const setup = presentationSetup(session.setupId);
+      const deck = setup && setup.deck ? deckStore().load(deckStore().fileFor(setup.id)) : null;
+      if (deck) sessionSettings.deckOutline = deckOutline(deck);
+    } catch (err) {
+      console.warn('[debrief] deck outline unavailable:', err.message);
+    }
+  }
+  const request = buildDebriefRequest(sessionSettings, session);
   try {
     const text = await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
@@ -1669,10 +1682,18 @@ ipcMain.handle('sessions:debrief', async (_e, id) => {
       turns: request.turns,
       onToken: t => send('sessions:debrief-token', { id, text: t })
     }, STREAM_INACTIVITY_MS, controller.signal);
-    session.debrief = String(text || '').trim();
+    if (presentation) {
+      // The audience questions arrive as a trailing json block: keep the
+      // prose readable and the questions as data for the deck.
+      const { prose, questions } = splitDebrief(String(text || ''));
+      session.debrief = prose;
+      session.debriefQuestions = questions;
+    } else {
+      session.debrief = String(text || '').trim();
+    }
     session.debriefAt = Date.now();
     saveSessionCopy(session);
-    return { id, debrief: session.debrief };
+    return { id, debrief: session.debrief, questions: session.debriefQuestions || [] };
   } finally {
     if (debriefInFlight === controller) debriefInFlight = null;
   }
@@ -1898,6 +1919,25 @@ ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   deckStore().save(file, deck);
   deckSaved(setupId);
   return { deck };
+});
+
+// Audience questions from a debrief, appended to their slides' likely
+// questions (deduplicated, at most 6 per slide, marked edited).
+ipcMain.handle('deck:add-questions', (_e, setupId, items) => {
+  const setup = presentationSetup(setupId);
+  if (!setup || !setup.deck) return { error: NOT_PRESENTATION };
+  const file = deckStore().fileFor(setupId);
+  const deck = deckStore().load(file);
+  if (!deck) return { error: 'Import a deck first.' };
+  const valid = validQuestionItems(items, deck.slides.length);
+  if (!valid.length) return { added: 0 };
+  const next = appendQuestions(deck, valid);
+  const added = countQuestions(next) - countQuestions(deck);
+  if (added > 0) {
+    deckStore().save(file, next);
+    deckSaved(setupId);
+  }
+  return { added };
 });
 
 ipcMain.handle('deck:regenerate', (_e, setupId, which) => {

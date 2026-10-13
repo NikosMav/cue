@@ -155,3 +155,98 @@ test('presentation recap covers slides and open audience questions, never interv
   assert.match(r.system, /by slide/i);
   assert.match(r.system, /still open/i);
 });
+
+// ── Presentation debrief ─────────────────────────────────────────────────────
+const { buildDebriefRequest, splitDebrief } = require('../src/prompts');
+
+const PRES_T0 = 1760000000000;
+const presSession = {
+  kind: 'interview',
+  setupKind: 'presentation',
+  startedAt: PRES_T0,
+  endedAt: PRES_T0 + 600000,
+  transcript: [
+    { channel: 'you', text: 'Today we look at Big-O.', ts: PRES_T0 + 1000 },
+    { channel: 'them', text: 'Why do we drop constants?', ts: PRES_T0 + 200000 },
+    { channel: 'you', text: 'Because they stop mattering at scale.', ts: PRES_T0 + 205000 }
+  ],
+  answers: [{ mode: 'say', prompt: 'Why do we drop constants?', text: 'They vanish as n grows.', ts: PRES_T0 + 201000 }],
+  presentation: {
+    deckFileName: 'l4.pptx', slideCount: 3, durationMin: 20,
+    titles: { 1: 'Intro', 2: 'Big-O intuition', 3: 'Wrap-up' },
+    timeline: [
+      { n: 1, enterTs: PRES_T0, leaveTs: PRES_T0 + 65000 },
+      { n: 2, enterTs: PRES_T0 + 65000, leaveTs: PRES_T0 + 400000 },
+      { n: 1, enterTs: PRES_T0 + 400000, leaveTs: PRES_T0 + 410000 },
+      { n: 3, enterTs: PRES_T0 + 410000, leaveTs: null }
+    ],
+    coverage: { 2: { status: 'partial', missing: 'worst case vs average' }, 1: { status: 'covered', missing: '' } },
+    skipped: [4]
+  }
+};
+
+test('presentation debrief lists the five sections in order and asks for the JSON block', () => {
+  const r = buildDebriefRequest({ setupKind: 'presentation' }, presSession);
+  const heads = ['## Timing', '## Coverage', '## Audience questions', '## Confusion hotspots', '## Deck changes for next time'];
+  let at = -1;
+  for (const h of heads) {
+    const i = r.system.indexOf(h);
+    assert.ok(i > at, h + ' in order');
+    at = i;
+  }
+  assert.match(r.system, /```json/);
+  assert.match(r.system, /\[\{"n": /);
+  assert.match(r.system, /three to six concrete edits/i);
+  assert.match(r.system, /no generic presentation advice/i);
+  assert.match(r.system, /never invent questions, times(,| or) reactions/i);
+  assert.match(r.system, /"Them" is the audience/);
+  assert.equal(r.effort, 'medium');
+});
+
+test('presentation debrief user turn carries timeline, coverage, skipped, length and transcript', () => {
+  const r = buildDebriefRequest({ setupKind: 'presentation' }, presSession);
+  const text = r.turns[0].text;
+  assert.match(text, /Planned length: 20 minutes; 3 slides\./);
+  assert.match(text, /^1 Intro: 1:05$/m);
+  assert.match(text, /^2 Big-O intuition: 5:35$/m);
+  assert.match(text, /^1 Intro: 0:10$/m);
+  assert.match(text, /^3 Wrap-up: 3:10$/m, 'an open visit runs to the end of the session');
+  assert.match(text, /2 Big-O intuition: partial — missing: worst case vs average/);
+  assert.doesNotMatch(text, /1 Intro: covered/, 'covered slides are not listed');
+  assert.match(text, /Skipped slides: 4\b/);
+  assert.match(text, /Length of the conversation: about 3 minutes\./);
+  assert.match(text, /Them: Why do we drop constants\?/);
+  assert.match(text, /— Slide 2 · Big-O intuition —\n(.*\n)*Them: Why do we drop constants\?/, 'questions sit under the slide they were asked on');
+  assert.ok(text.indexOf('— Slide 2') < text.indexOf('Them: Why'));
+});
+
+test('presentation debrief carries the deck outline and works without a record', () => {
+  const r = buildDebriefRequest({ setupKind: 'presentation', deckOutline: '1. Intro\n2. Big-O intuition' }, presSession);
+  assert.match(r.system, /=== Deck outline ===\n1\. Intro\n2\. Big-O intuition/);
+  assert.ok(r.cachePrefix && r.system.startsWith(r.cachePrefix));
+  const bare = buildDebriefRequest({ setupKind: 'presentation' }, { setupKind: 'presentation', transcript: [], answers: [] });
+  assert.match(bare.turns[0].text, /Slide timeline: none recorded/);
+  assert.match(bare.turns[0].text, /\(empty\)/);
+});
+
+test('presentation debrief notes a missing presenter microphone', () => {
+  const s = { ...presSession, transcript: presSession.transcript.filter((t) => t.channel === 'them') };
+  assert.match(buildDebriefRequest({ setupKind: 'presentation' }, s).system, /presenter's microphone was not captured/);
+  assert.doesNotMatch(buildDebriefRequest({ setupKind: 'presentation' }, presSession).system, /microphone was not captured/);
+});
+
+test('splitDebrief returns prose without the block and the parsed questions', () => {
+  const text = '## Timing\nRan long.\n\n## Audience questions\n1. Why drop constants?\n\n```json\n[{"n": 2, "question": "Why do we drop constants?"}, {"n": 0, "question": "bad"}, {"n": 3, "question": "  "}, {"n": 3, "question": "' + 'x'.repeat(200) + '"}]\n```\n';
+  const { prose, questions } = splitDebrief(text);
+  assert.equal(prose, '## Timing\nRan long.\n\n## Audience questions\n1. Why drop constants?');
+  assert.deepEqual(questions[0], { n: 2, question: 'Why do we drop constants?' });
+  assert.equal(questions.length, 2, 'invalid slide numbers and blank questions are dropped');
+  assert.equal(questions[1].question.length, 160);
+});
+
+test('splitDebrief without a block returns the prose and no questions', () => {
+  assert.deepEqual(splitDebrief('## Timing\nOn time.\n'), { prose: '## Timing\nOn time.', questions: [] });
+  assert.deepEqual(splitDebrief('Prose\n```json\nnot json\n```'), { prose: 'Prose', questions: [] });
+  assert.deepEqual(splitDebrief(''), { prose: '', questions: [] });
+  assert.deepEqual(splitDebrief(undefined), { prose: '', questions: [] });
+});

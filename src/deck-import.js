@@ -88,4 +88,27 @@ function appendQuestions(deck, items) {
   return { ...deck, slides };
 }
 
-module.exports = { importDeck, enrichDeck, appendQuestions, BATCH_SIZE };
+const MAX_QUESTION_CHARS = 160;
+
+// Renderer-supplied { n, question } items: integer n within the deck, and a
+// non-empty question of at most 160 characters. Anything else is dropped.
+function validQuestionItems(items, slideCount) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const { n } = item;
+    const q = typeof item.question === 'string' ? item.question.trim() : '';
+    if (!Number.isInteger(n) || n < 1 || n > slideCount) continue;
+    if (!q || q.length > MAX_QUESTION_CHARS) continue;
+    out.push({ n, question: q });
+  }
+  return out;
+}
+
+function countQuestions(deck) {
+  const slides = deck && Array.isArray(deck.slides) ? deck.slides : [];
+  return slides.reduce((sum, s) => sum + (Array.isArray(s.questions) ? s.questions.length : 0), 0);
+}
+
+module.exports = { importDeck, enrichDeck, appendQuestions, validQuestionItems, countQuestions, BATCH_SIZE };
