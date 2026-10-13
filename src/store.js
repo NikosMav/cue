@@ -11,6 +11,7 @@ const { app } = require('electron');
 const { createFileStore } = require('./settings-store-core');
 const { normalizeBaseUrl } = require('./openai-compatible');
 const { migrateSettings, SETUPS_VERSION } = require('./setups');
+const { answerScale } = require('./panel-layout');
 
 const fileStore = createFileStore(() => app.getPath('userData'), 'cue-data.json');
 const FILE = fileStore.mainPath();
@@ -97,6 +98,10 @@ const DEFAULTS = {
   // Window position
   windowX: null,
   windowY: null,
+  // Window size and position per display id (written by main, never by the renderer).
+  windowBounds: {},
+  // Base text size of the live answer in px (talking points and history scale from it).
+  answerTextPx: 18,
   models: {
     cerebras: { fast: 'qwen-3.8-27b', smart: 'qwen-3.8-27b' },
     openai: { fast: 'gpt-4.1-mini', smart: 'gpt-4.1' },
@@ -136,7 +141,7 @@ function clampOpacity(value) {
   return Math.min(MAX_OPACITY, Math.max(MIN_OPACITY, Math.round(n * 100) / 100));
 }
 
-const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY', 'setupsVersion'];
+const RENDERER_READ_ONLY = ['publik', 'shortcuts', 'settingsMeta', 'windowX', 'windowY', 'windowBounds', 'setupsVersion'];
 
 let data = null;
 let hasSavedFile = false;
@@ -361,6 +366,7 @@ module.exports = {
     nextSettings.baseUrl = normalizeBaseUrl(nextSettings.baseUrl);
     nextSettings.opacity = clampOpacity(nextSettings.opacity);
     nextSettings.panelOpacity = clampOpacity(nextSettings.panelOpacity);
+    nextSettings.answerTextPx = answerScale(nextSettings.answerTextPx);
     data = nextSettings;
     save();
     return data;
