@@ -20,6 +20,7 @@ const { effectiveSettings, settingsForSession, updateSetup } = require('./src/se
 const { DeckStore } = require('./src/deck-store');
 const { importDeck, enrichDeck } = require('./src/deck-import');
 const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
+const { createPresentationRuntime, deckChanged } = require('./src/presentation-runtime');
 
 // Settings as every feature reads them: About me + the active setup projected
 // onto the flat prep fields (src/setups.js).
@@ -45,6 +46,7 @@ const {
   shouldEmitSlide,
   createSlideStore,
   clampSlidesConfig,
+  presentationSlidesConfig,
   buildSlideSystem,
   buildSlideUser,
   DEFAULT_STABLE_REQUIRED
@@ -214,6 +216,8 @@ function pushTranscript(turn) {
   transcript.push(turn);
   if (transcript.length > MAX_TRANSCRIPT_TURNS) transcript.splice(0, transcript.length - MAX_TRANSCRIPT_TURNS);
   if (sessionRecorder) sessionRecorder.addTurn(turn);
+  // The pacing clock starts at the first slide match or the first line spoken.
+  if (presentationRuntime) presentationRuntime.noteTranscript();
 }
 
 function send(channel, data) { if (win && !win.isDestroyed()) win.webContents.send(channel, data); }
@@ -650,6 +654,7 @@ async function captionSlide(imageDataUrl, transcriptSlice) {
 }
 
 async function pollSlides() {
+  if (state.capturing && presentationRuntime) return pollPresentation();
   if (!state.capturing || slideBusy || slideDisabled) return;
   const cfg = getSlidesConfig();
   if (!cfg.enabled) return;
@@ -704,13 +709,147 @@ async function pollSlides() {
 
 function startSlideLoop() {
   stopSlideLoop();
-  const cfg = getSlidesConfig();
+  const cfg = presentationRuntime ? presentationSlidesConfig() : getSlidesConfig();
   slideTimer = setInterval(() => { pollSlides().catch(() => {}); }, cfg.intervalMs);
   if (slideTimer.unref) slideTimer.unref();
+  if (presentationRuntime) {
+    presentationTick = setInterval(sendPresentationUpdate, 1000);
+    if (presentationTick.unref) presentationTick.unref();
+    sendPresentationUpdate();
+  }
 }
 
 function stopSlideLoop() {
   if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+  if (presentationTick) { clearInterval(presentationTick); presentationTick = null; }
+}
+
+// -------- presentation: live slide tracking --------
+// In a presentation setup a stable screen change is matched to a deck slide
+// (src/presentation-runtime.js) instead of captioned; nothing goes to slideStore.
+// presentationRuntime = { deck, state, matcher, ... } | null.
+let presentationRuntime = null;
+let presentationTick = null;
+let matchCacheTimer = null;
+const MATCH_CACHE_SAVE_MS = 2000;
+
+function sendPresentationUpdate() {
+  if (presentationRuntime) send('presentation:update', presentationRuntime.update());
+}
+
+// Writes the runtime's new cache entries into the latest deck on disk, so
+// enrichment and slide edits saved meanwhile are kept.
+function flushMatchCache() {
+  clearTimeout(matchCacheTimer);
+  matchCacheTimer = null;
+  const rt = presentationRuntime;
+  if (!rt || !rt.file) return;
+  const writes = rt.takeCacheWrites();
+  if (!Object.keys(writes).length) return;
+  try {
+    const latest = deckStore().load(rt.file);
+    if (!latest || deckChanged(latest, rt.deck)) return;
+    deckStore().save(rt.file, { ...latest, matchCache: { ...latest.matchCache, ...writes } });
+  } catch (e) {
+    console.error('[presentation] match cache save failed', e);
+  }
+}
+
+function scheduleMatchCacheSave() {
+  clearTimeout(matchCacheTimer);
+  matchCacheTimer = setTimeout(flushMatchCache, MATCH_CACHE_SAVE_MS);
+  if (matchCacheTimer.unref) matchCacheTimer.unref();
+}
+
+// One slide-identification call on the fast model, with the stall watchdog.
+async function identifyCallLLM(request) {
+  const llm = createLLM({ ...currentSettings(), smart: false });
+  if (!llm.ready) throw new Error(llm.configurationError || 'Complete the provider settings.');
+  return streamWithWatchdog(params => llm.stream(params), {
+    system: request.system,
+    turns: request.turns,
+    imageDataUrl: request.imageDataUrl,
+    maxTokens: request.maxTokens,
+    effort: request.effort,
+    onToken: () => {}
+  }, STREAM_INACTIVITY_MS);
+}
+
+// Builds (or refreshes) the runtime for the active setup. Another setup,
+// another deck (slide count or file hash) or reset: true starts fresh; a
+// text-only change (enrichment, edits) swaps the deck in and keeps the state.
+function loadPresentationRuntime({ reset = false } = {}) {
+  const s = currentSettings();
+  const prev = presentationRuntime;
+  let next = null;
+  if (s.setupKind === 'presentation') {
+    let file = null;
+    let deck = null;
+    try {
+      if (s.deck) { file = deckStore().fileFor(s.setupId); deck = deckStore().load(file); }
+    } catch (e) {
+      console.error('[presentation] deck load failed', e);
+    }
+    if (!reset && prev && prev.setupId === s.setupId && prev.swapDeck(deck)) {
+      next = prev;
+    } else {
+      const rt = createPresentationRuntime({
+        deck,
+        durationMin: s.durationMin,
+        capture: () => captureScreenshot({ displayId: rt.displayId }),
+        callLLM: identifyCallLLM,
+        onCacheWrite: scheduleMatchCacheSave
+      });
+      rt.setupId = s.setupId;
+      rt.file = deck ? file : null;
+      next = rt;
+    }
+    next.displayId = s.watchDisplayId;
+  }
+  if (prev && prev !== next) flushMatchCache();
+  presentationRuntime = next;
+  if (state.capturing && prev !== next) {
+    slideLastHash = null;
+    slideStableCount = 0;
+    startSlideLoop();
+  }
+  sendPresentationUpdate();
+  return presentationRuntime;
+}
+
+async function pollPresentation() {
+  const rt = presentationRuntime;
+  let frame = null;
+  try {
+    frame = await captureHashFrame({ displayId: rt.displayId });
+  } catch {
+    return;
+  }
+  if (!frame || presentationRuntime !== rt) return;
+  const newHash = hashRGBA(frame.width, frame.height, frame.data);
+  if (!newHash) return;
+  const cfg = presentationSlidesConfig();
+  const decision = shouldEmitSlide(slideLastHash, newHash, {
+    threshold: cfg.threshold,
+    stableCount: slideStableCount,
+    requiredStable: cfg.stableRequired
+  });
+  slideStableCount = decision.stableCount;
+  if (!decision.emit) return;
+  slideLastHash = newHash;
+  // Not awaited: the matcher queues identify calls and drops superseded ones.
+  rt.onFrame(newHash).then((res) => {
+    if (presentationRuntime !== rt) return;
+    if (res.message) send('status', { message: 'Slide matching paused: ' + res.message });
+    else if (res.error) console.log('[presentation] slide match failed', res.error);
+    if (res.changed) sendPresentationUpdate();
+  }).catch((e) => console.error('[presentation] slide match error', e));
+}
+
+function stepPresentationSlide(delta) {
+  const rt = presentationRuntime;
+  if (!rt) return;
+  if (rt.step(delta).changed) sendPresentationUpdate();
 }
 
 function resetSlidesSession() {
@@ -1032,6 +1171,7 @@ ipcMain.handle('settings:set', (_e, patch) => {
   const before = store.getSettings();
   const next = store.setRendererSettings(patch);
   removeOrphanedDecks(before, next);
+  loadPresentationRuntime();
   // Restart slide polling with the new interval when capturing (keeps slides).
   if (state.capturing) startSlideLoop();
   return store.redactForRenderer(next);
@@ -1302,6 +1442,7 @@ ipcMain.handle('transcript:clear', () => {
   const savedId = resetConversation();
   resetSlidesSession();
   send('slides:update', { count: 0, last: null });
+  loadPresentationRuntime({ reset: true });
   return { ok: true, savedId };
 });
 
@@ -1551,6 +1692,12 @@ function setDeckPointer(setupId, deck, file, importedAt) {
   const pointer = { file, fileName: deck.source.fileName, slideCount: deck.slides.length, importedAt };
   const next = store.setSettings({ setups: updateSetup(saved, setupId, { deck: pointer }) });
   send('settings:changed', { setups: next.setups });
+  if (currentSettings().setupId === setupId) loadPresentationRuntime();
+}
+
+// A save to the active setup's deck: refresh the live runtime's slide text.
+function deckSaved(setupId) {
+  if (presentationRuntime && presentationRuntime.setupId === setupId) loadPresentationRuntime();
 }
 
 function removeOrphanedDecks(before, after) {
@@ -1592,6 +1739,7 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
       // Without a provider, flag the slides so the UI can offer a retry.
       const failed = { ...deck, slides: deck.slides.map(s => (ns.includes(s.n) && !s.edited ? { ...s, enrichError: true } : s)) };
       deckStore().save(file, failed);
+      deckSaved(setupId);
       send('deck:progress', { setupId, done: total, total });
       return;
     }
@@ -1620,6 +1768,7 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
           return { ...cur, points: mine.points, questions: mine.questions, keyIdea: mine.keyIdea, enrichError: mine.enrichError };
         }) };
         deckStore().save(file, merged);
+        deckSaved(setupId);
         send('deck:progress', { setupId, done, total: count });
       }
     });
@@ -1679,6 +1828,7 @@ ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   slide.edited = true;
   slide.enrichError = false;
   deckStore().save(file, deck);
+  deckSaved(setupId);
   return { deck };
 });
 
@@ -1763,7 +1913,9 @@ const SHORTCUT_HANDLERS = {
   moveUp: () => moveWindow(0, -1),
   moveDown: () => moveWindow(0, 1),
   hide: () => send('hide:toggle', {}),
-  quit: () => app.quit()
+  quit: () => app.quit(),
+  slidePrev: () => stepPresentationSlide(-1),
+  slideNext: () => stepPresentationSlide(1)
 };
 
 function shortcutsView() {
@@ -2033,6 +2185,7 @@ function launchApp() {
 
   createWindow();
   registerShortcuts();
+  loadPresentationRuntime();
   // After the window is up, so startup is never slowed by the network.
   setTimeout(() => warmUpProvider('launch'), 3000);
 }
@@ -2137,6 +2290,7 @@ app.on('will-quit', () => {
   // Delaying shutdown to tidy a directory would be the wrong trade.
   stopAppLink();
   stopSlideLoop();
+  flushMatchCache();
   if (whisperModelManager?.activeDownload) {
     whisperModelManager.cancelDownload(whisperModelManager.activeDownload.modelId);
   }

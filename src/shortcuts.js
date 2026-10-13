@@ -21,7 +21,9 @@ const ACTIONS = [
   { id: 'moveUp', label: 'Move panel up', defaultAccelerator: 'CommandOrControl+Alt+Shift+Up' },
   { id: 'moveDown', label: 'Move panel down', defaultAccelerator: 'CommandOrControl+Alt+Shift+Down' },
   { id: 'hide', label: 'Collapse / expand panel', defaultAccelerator: 'CommandOrControl+Shift+/' },
-  { id: 'quit', label: 'Quit cue', defaultAccelerator: 'CommandOrControl+Shift+X' }
+  { id: 'quit', label: 'Quit cue', defaultAccelerator: 'CommandOrControl+Shift+X' },
+  { id: 'slidePrev', label: 'Previous slide (presentation)', defaultAccelerator: 'CommandOrControl+Alt+Left' },
+  { id: 'slideNext', label: 'Next slide (presentation)', defaultAccelerator: 'CommandOrControl+Alt+Right' }
 ];
 
 const DEFAULTS = Object.freeze(Object.fromEntries(ACTIONS.map((a) => [a.id, a.defaultAccelerator])));

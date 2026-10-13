@@ -129,6 +129,18 @@ function clampSlidesConfig(input = {}) {
   };
 }
 
+// Presentation setups poll faster and never cap the slide count: each change is
+// matched to a deck slide instead of captioned.
+function presentationSlidesConfig() {
+  return {
+    enabled: true,
+    intervalMs: 1000,
+    threshold: DEFAULT_THRESHOLD,
+    maxSlides: Infinity,
+    stableRequired: DEFAULT_STABLE_REQUIRED
+  };
+}
+
 function buildSlideSystem() {
   return 'You are cue, captioning a meeting slide. Describe the slide concisely: ' +
     'title on the first line, then 3-5 bullets for key points, visuals/charts, and any visible slide number. ' +
@@ -154,6 +166,7 @@ module.exports = {
   shouldEmitSlide,
   createSlideStore,
   clampSlidesConfig,
+  presentationSlidesConfig,
   buildSlideSystem,
   buildSlideUser
 };

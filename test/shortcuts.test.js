@@ -52,3 +52,12 @@ test('every action has a label and every default is valid', () => {
   }
   assert.ok(['listen', 'stop', 'scrollUp', 'moveLeft', 'autoAnswer'].every((id) => id in DEFAULTS));
 });
+
+test('slide shortcuts are defaults with no conflicts', () => {
+  const { ACTIONS } = require('../src/shortcuts');
+  const prev = ACTIONS.find((a) => a.id === 'slidePrev');
+  const next = ACTIONS.find((a) => a.id === 'slideNext');
+  assert.deepStrictEqual(prev, { id: 'slidePrev', label: 'Previous slide (presentation)', defaultAccelerator: 'CommandOrControl+Alt+Left' });
+  assert.deepStrictEqual(next, { id: 'slideNext', label: 'Next slide (presentation)', defaultAccelerator: 'CommandOrControl+Alt+Right' });
+  assert.deepStrictEqual(findConflicts(resolveShortcuts()), []);
+});

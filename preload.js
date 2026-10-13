@@ -81,7 +81,7 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore', 'deck:progress'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore', 'deck:progress', 'presentation:update'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }

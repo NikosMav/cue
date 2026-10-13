@@ -92,3 +92,10 @@ test('slide prompt builders stay text-only and bounded', () => {
   const u = buildSlideUser([{ channel: 'them', text: 'hello' }]);
   assert.ok(u.includes('Them: hello'));
 });
+
+test('presentationSlidesConfig polls every second with no slide cap', () => {
+  const { presentationSlidesConfig } = require('../src/slides');
+  const cfg = presentationSlidesConfig();
+  assert.strictEqual(cfg.intervalMs, 1000);
+  assert.deepStrictEqual(cfg, { enabled: true, intervalMs: 1000, threshold: 5, maxSlides: Infinity, stableRequired: 2 });
+});
