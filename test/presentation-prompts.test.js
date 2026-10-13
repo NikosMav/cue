@@ -34,7 +34,7 @@ test('extractJson is string-aware about brackets', () => {
 });
 
 const {
-  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput
+  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput, COVERAGE_MIN_WORDS
 } = require('../src/presentation-prompts');
 
 const covSlide = { n: 4, title: 'Hash tables', keyIdea: 'Amortized O(1) inserts', points: ['Resize doubles capacity', 'Load factor'] };
@@ -68,16 +68,26 @@ test('coverageFlag text', () => {
   assert.equal(coverageFlag(4, { status: 'covered', missing: '' }), null);
   assert.equal(coverageFlag(4, null), null);
 });
+// 19 words: enough on its own to clear COVERAGE_MIN_WORDS.
+const SPOKEN = 'so the formula has four parts: role, context, task and format, and each one narrows what Claude will guess';
+
+test('coverageInput needs at least COVERAGE_MIN_WORDS spoken words', () => {
+  const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
+  const few = Array.from({ length: COVERAGE_MIN_WORDS - 1 }, () => 'word').join(' ');
+  assert.equal(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: few, ts: 2000 }] }), null);
+  assert.ok(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: few + ' more', ts: 2000 }] }));
+});
+
 test('coverageInput selects You turns inside the visit and gates on dwell and key idea', () => {
   const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
   const transcript = [
     { channel: 'you', text: 'before', ts: 500 },
-    { channel: 'you', text: 'one', ts: 1000 },
+    { channel: 'you', text: SPOKEN, ts: 1000 },
     { channel: 'them', text: 'question', ts: 2000 },
     { channel: 'you', text: 'two', ts: 30000 },
     { channel: 'you', text: 'after', ts: 31000 }
   ];
-  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript }), { slide: covSlide, transcript: 'one\ntwo' });
+  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript }), { slide: covSlide, transcript: SPOKEN + '\ntwo' });
   assert.equal(coverageInput({ left: { ...left, dwellMs: 5000 }, slide: covSlide, transcript }), null);
   assert.equal(coverageInput({ left, slide: { ...covSlide, keyIdea: '' }, transcript }), null);
   assert.equal(coverageInput({ left: null, slide: covSlide, transcript }), null);
@@ -94,12 +104,12 @@ test('coverageInput is null when the presenter said nothing during the visit', (
 test('coverageInput graceMs takes You turns finalised shortly after leaving the slide', () => {
   const left = { n: 4, enterTs: 1000, leaveTs: 30000, dwellMs: 29000 };
   const transcript = [
-    { channel: 'you', text: 'one', ts: 2000 },
+    { channel: 'you', text: SPOKEN, ts: 2000 },
     { channel: 'you', text: 'late', ts: 32500 },
     { channel: 'you', text: 'next slide', ts: 33500 }
   ];
-  assert.equal(coverageInput({ left, slide: covSlide, transcript }).transcript, 'one', 'default grace is 0');
-  assert.equal(coverageInput({ left, slide: covSlide, transcript, graceMs: 3000 }).transcript, 'one\nlate');
-  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: 'late', ts: 32000 }], graceMs: 3000 }),
-    { slide: covSlide, transcript: 'late' });
+  assert.equal(coverageInput({ left, slide: covSlide, transcript }).transcript, SPOKEN, 'default grace is 0');
+  assert.equal(coverageInput({ left, slide: covSlide, transcript, graceMs: 3000 }).transcript, SPOKEN + '\nlate');
+  assert.deepEqual(coverageInput({ left, slide: covSlide, transcript: [{ channel: 'you', text: SPOKEN, ts: 32000 }], graceMs: 3000 }),
+    { slide: covSlide, transcript: SPOKEN });
 });

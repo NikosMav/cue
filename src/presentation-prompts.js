@@ -153,6 +153,7 @@ function coverageFlag(n, result) {
 // Given the visit that just ended, decide whether to check and with what input.
 // graceMs also takes You turns finalised shortly after the slide was left
 // (speech-to-text lags the voice). Nothing said: nothing to judge.
+const COVERAGE_MIN_WORDS = 15;
 function coverageInput({ left, slide, transcript, graceMs = 0 }) {
   if (!left || !slide || !shouldCheckCoverage(left)) return null;
   if (!String(slide.keyIdea || '').trim()) return null;
@@ -161,11 +162,13 @@ function coverageInput({ left, slide, transcript, graceMs = 0 }) {
     .filter(t => t.channel === 'you' && t.ts >= left.enterTs && t.ts <= until)
     .map(t => t.text)
     .join('\n');
-  if (!said.trim()) return null;
+  // A few stray words (a cough transcribed, a side remark) cannot show what
+  // the presenter covered; judging them only produces false "didn't mention".
+  if (said.trim().split(/\s+/).filter(Boolean).length < COVERAGE_MIN_WORDS) return null;
   return { slide, transcript: said };
 }
 
 module.exports = {
   buildEnrichRequest, parseEnrichResponse, extractJson, buildMatchRequest, parseMatchResponse,
-  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput
+  buildCoverageRequest, parseCoverageResponse, coverageFlag, coverageInput, COVERAGE_MIN_WORDS
 };

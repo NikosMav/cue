@@ -55,6 +55,49 @@ function hashRGBA(width, height, rgba) {
   return h.toString(16).padStart(16, '0');
 }
 
+// Box-average a grayscale image down to outW x outH cells.
+function downsampleGray(width, height, gray, outW, outH) {
+  const out = new Array(outW * outH).fill(0);
+  const counts = new Array(outW * outH).fill(0);
+  for (let y = 0; y < height; y++) {
+    const oy = Math.min(outH - 1, Math.floor((y * outH) / height));
+    for (let x = 0; x < width; x++) {
+      const ox = Math.min(outW - 1, Math.floor((x * outW) / width));
+      out[oy * outW + ox] += gray[y * width + x];
+      counts[oy * outW + ox] += 1;
+    }
+  }
+  for (let i = 0; i < out.length; i++) {
+    if (counts[i]) out[i] /= counts[i];
+  }
+  return out;
+}
+
+// Difference hash: n*n bits as hex, bit = 1 when a cell is brighter than its
+// right-hand neighbour on an (n+1) x n grid. Slides built on one template
+// differ in where the text sits more than in overall brightness, which the
+// 64-bit average hash misses: two such slides measured 4 bits apart, under
+// the "same slide" threshold. This hash put them 24 of 256 bits apart, while
+// the same slide with cue's panel changing stayed within 7.
+const PRESENTATION_HASH_SIZE = 16;
+const PRESENTATION_HASH_HEX = (PRESENTATION_HASH_SIZE * PRESENTATION_HASH_SIZE) / 4;
+const PRESENTATION_THRESHOLD = 12;
+
+function dhashRGBA(width, height, rgba, n = PRESENTATION_HASH_SIZE) {
+  if (!width || !height || !rgba || rgba.length < width * height * 4) return null;
+  if (width < n + 1 || height < n) return null;
+  const grid = downsampleGray(width, height, toGray(width, height, rgba), n + 1, n);
+  let h = 0n;
+  let bit = 0n;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (grid[y * (n + 1) + x] > grid[y * (n + 1) + x + 1]) h |= 1n << bit;
+      bit += 1n;
+    }
+  }
+  return h.toString(16).padStart((n * n) / 4, '0');
+}
+
 function popcountBigInt(x) {
   let n = 0;
   while (x) {
@@ -130,12 +173,13 @@ function clampSlidesConfig(input = {}) {
 }
 
 // Presentation setups poll faster and never cap the slide count: each change is
-// matched to a deck slide instead of captioned.
+// matched to a deck slide instead of captioned. Frames are hashed with
+// dhashRGBA, so the threshold is out of 256 bits.
 function presentationSlidesConfig() {
   return {
     enabled: true,
     intervalMs: 1000,
-    threshold: DEFAULT_THRESHOLD,
+    threshold: PRESENTATION_THRESHOLD,
     maxSlides: Infinity,
     stableRequired: DEFAULT_STABLE_REQUIRED
   };
@@ -162,6 +206,10 @@ module.exports = {
   toGray,
   downsample8x8,
   hashRGBA,
+  dhashRGBA,
+  PRESENTATION_HASH_SIZE,
+  PRESENTATION_HASH_HEX,
+  PRESENTATION_THRESHOLD,
   hammingDistance,
   shouldEmitSlide,
   createSlideStore,

@@ -142,9 +142,15 @@ async function extractPdf(buffer) {
     pages.push(lines.map((l) => l.trim()).filter(Boolean));
     return '';
   };
+  // pdf.js logs a "Warning: …" line per font quirk; one exported deck printed
+  // about 58,000 of them. Drop those while parsing; other output passes through.
+  const log = console.log;
+  console.log = (...args) => { if (!(typeof args[0] === 'string' && args[0].startsWith('Warning:'))) log(...args); };
   let res;
   try { res = await pdfParse(buffer, { pagerender, max: MAX_SLIDES + 1 }); } catch {
     throw new DeckError('This is not a valid PDF file (it may be password-protected).');
+  } finally {
+    console.log = log;
   }
   if (res.numpages > MAX_SLIDES || pages.length > MAX_SLIDES) throw new DeckError('The deck has more than ' + MAX_SLIDES + ' slides.');
   return pages.map((lines) => ({ title: lines[0] || '', body: lines.slice(1).join('\n'), notes: '' }));

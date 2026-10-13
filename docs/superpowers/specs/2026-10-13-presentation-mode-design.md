@@ -387,7 +387,7 @@ next → 8 · Worst vs. average case
 - While a Q&A answer is shown, the talking points shrink to their first bullet
   until the answer is dismissed or the slide changes.
 - Button labels in this layer: `say` → **Answer audience**, `followup` →
-  **Check understanding**; `recap` unchanged.
+  **Ask the room** (questions to check understanding); `recap` unchanged.
 - Without a deck, the strip shows only time left and pacing by time.
 
 ### Toolbar

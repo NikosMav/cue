@@ -145,10 +145,10 @@ test('stripStatusLine', () => {
   assert.equal(stripStatusLine(update({ title: '' })), 'Slide 7 / 32');
 });
 
-test('visiblePoints collapse to the first bullet while an answer is shown', () => {
+test('visiblePoints are hidden while an answer is shown', () => {
   const { visiblePoints } = helpers();
   assert.deepEqual(visiblePoints(['a', 'b', 'c'], false), ['a', 'b', 'c']);
-  assert.deepEqual(visiblePoints(['a', 'b', 'c'], true), ['a']);
+  assert.deepEqual(visiblePoints(['a', 'b', 'c'], true), []);
   assert.deepEqual(visiblePoints([], true), []);
   assert.deepEqual(visiblePoints(undefined, false), []);
 });
@@ -208,7 +208,7 @@ test('modeLabel relabels say and followup for presentation setups only', () => {
   assert.ok(start > -1 && end > start, 'mode label helper not found');
   const { modeLabel } = new Function(src.slice(start, end) + '\nreturn { modeLabel };')();
   assert.equal(modeLabel('say', 'presentation'), 'Answer audience');
-  assert.equal(modeLabel('followup', 'presentation'), 'Check understanding');
+  assert.equal(modeLabel('followup', 'presentation'), 'Ask the room');
   assert.equal(modeLabel('say', 'interview'), 'What should I say?');
   assert.equal(modeLabel('say', 'general'), 'What should I say?');
   assert.equal(modeLabel('followup', undefined), 'Follow-up');

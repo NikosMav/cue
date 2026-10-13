@@ -97,5 +97,33 @@ test('presentationSlidesConfig polls every second with no slide cap', () => {
   const { presentationSlidesConfig } = require('../src/slides');
   const cfg = presentationSlidesConfig();
   assert.strictEqual(cfg.intervalMs, 1000);
-  assert.deepStrictEqual(cfg, { enabled: true, intervalMs: 1000, threshold: 5, maxSlides: Infinity, stableRequired: 2 });
+  assert.deepStrictEqual(cfg, { enabled: true, intervalMs: 1000, threshold: 12, maxSlides: Infinity, stableRequired: 2 });
+});
+
+// A 68x64 RGBA frame: light background, a dark header band, and dark text
+// lines at the given rows and column ranges -- one slide template, two slides.
+function templateFrame(lines) {
+  const w = 68, h = 64, d = Buffer.alloc(w * h * 4, 240);
+  const ink = (x0, x1, y0, y1) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * w + x) * 4; d[i] = d[i + 1] = d[i + 2] = 40; }
+  };
+  ink(0, w, 0, 6);
+  for (const [y, x0, x1] of lines) ink(x0, x1, y, y + 3);
+  return { w, h, d };
+}
+
+test('dhashRGBA gives 256-bit hashes that separate slides of one template', () => {
+  const { dhashRGBA, hammingDistance, PRESENTATION_THRESHOLD, PRESENTATION_HASH_HEX } = require('../src/slides');
+  const a = templateFrame([[14, 6, 50], [22, 6, 40], [30, 6, 56], [38, 6, 30]]);
+  const b = templateFrame([[14, 6, 30], [22, 20, 62], [30, 6, 22], [44, 30, 60], [52, 6, 44]]);
+  const ha = dhashRGBA(a.w, a.h, a.d);
+  const hb = dhashRGBA(b.w, b.h, b.d);
+  assert.strictEqual(ha.length, PRESENTATION_HASH_HEX);
+  assert.strictEqual(PRESENTATION_HASH_HEX, 64);
+  assert.strictEqual(hammingDistance(ha, dhashRGBA(a.w, a.h, Buffer.from(a.d))), 0);
+  assert.ok(hammingDistance(ha, hb) > PRESENTATION_THRESHOLD, 'different slides: ' + hammingDistance(ha, hb));
+  // The same slide with a small overlay change (cue's countdown) stays the same slide.
+  const a2 = templateFrame([[14, 6, 50], [22, 6, 40], [30, 6, 56], [38, 6, 30], [58, 60, 66]]);
+  assert.ok(hammingDistance(ha, dhashRGBA(a2.w, a2.h, a2.d)) <= PRESENTATION_THRESHOLD);
+  assert.strictEqual(dhashRGBA(10, 10, Buffer.alloc(400)), null, 'too small for a 17x16 grid');
 });

@@ -45,6 +45,7 @@ const publik = require('./src/publik');
 const publikBuild = publik.loadBuildConfig();
 const {
   hashRGBA,
+  dhashRGBA,
   shouldEmitSlide,
   createSlideStore,
   clampSlidesConfig,
@@ -616,10 +617,11 @@ function getSlidesConfig() {
   return clampSlidesConfig(store.getSettings().slides || {});
 }
 
-async function captureHashFrame({ displayId } = {}) {
+// Presentation frames use a larger sample for the 256-bit difference hash.
+async function captureHashFrame({ displayId, width = 32, height = 32 } = {}) {
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: 32, height: 32 }
+    thumbnailSize: { width, height }
   });
   const src = pickSource(sources, displayId, String(screen.getPrimaryDisplay().id));
   if (!src) return null;
@@ -877,14 +879,14 @@ async function pollPresentation() {
   let frame = null;
   presentationPollBusy = true;
   try {
-    frame = await captureHashFrame({ displayId: rt.displayId });
+    frame = await captureHashFrame({ displayId: rt.displayId, width: 68, height: 64 });
   } catch {
     return;
   } finally {
     presentationPollBusy = false;
   }
   if (!frame || presentationRuntime !== rt) return;
-  const newHash = hashRGBA(frame.width, frame.height, frame.data);
+  const newHash = dhashRGBA(frame.width, frame.height, frame.data);
   if (!newHash) return;
   const cfg = presentationSlidesConfig();
   const decision = shouldEmitSlide(slideLastHash, newHash, {

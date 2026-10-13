@@ -3,6 +3,7 @@
 // the screen capture, the LLM call and the cache-save scheduler.
 const { createPresentationState } = require('./presentation-state');
 const { createMatcher } = require('./deck-match');
+const { PRESENTATION_THRESHOLD } = require('./slides');
 const { buildMatchRequest, parseMatchResponse, coverageFlag } = require('./presentation-prompts');
 
 // Same pattern pollSlides uses to stop paid calls a key cannot make.
@@ -75,7 +76,8 @@ function createPresentationRuntime({ deck, durationMin, now, identify, capture, 
     getCache: () => (current && current.matchCache) || {},
     setCache,
     slideCount,
-    identify: doIdentify
+    identify: doIdentify,
+    threshold: PRESENTATION_THRESHOLD
   }) : null;
 
   async function onFrame(hash) {

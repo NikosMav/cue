@@ -5,7 +5,9 @@ const path = require('path');
 const { createFileStore } = require('./settings-store-core');
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
-const HASH_RE = /^[0-9a-f]{16}$/;
+// 256-bit difference hashes (slides.js dhashRGBA). Keys from the earlier
+// 64-bit hash matched different slides of one template, so they are dropped.
+const HASH_RE = /^[0-9a-f]{64}$/;
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const strList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);

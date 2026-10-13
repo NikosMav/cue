@@ -385,6 +385,7 @@ function presentationChecklistLine() {
   return '\n\nBefore you write: ' +
     'If the audience\'s latest words ask nothing, give a short acknowledgement and do not answer a question nobody asked. ' +
     'Do not repeat what the presenter or the earlier suggestions already said. ' +
+    'Start with the answer itself, not "Exactly", "Great question" or any other reaction to the question. ' +
     'State citations, statistics, dates, study results and quotes only from the deck or notes; otherwise add "(not in your material: verify before stating)". ' +
     'Do not promise materials, recordings, extra sessions, deadlines or grades that the notes do not state. ' +
     'If the user\'s rules set a length, keep to it.';

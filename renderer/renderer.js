@@ -2139,7 +2139,9 @@
   // While an answer is shown the talking points shrink to their first bullet.
   function visiblePoints(points, answerShown) {
     const list = Array.isArray(points) ? points : [];
-    return answerShown ? list.slice(0, 1) : list.slice();
+    // The panel has a fixed height: while an answer is on screen the strip
+    // keeps only its status line so the answer is readable, not one line.
+    return answerShown ? [] : list.slice();
   }
   // Watch display picker: shown with more than one display, or to clear a
   // saved display that is not connected (main then watches the primary).
@@ -2174,7 +2176,7 @@
   function modeLabel(mode, setupKind) {
     if (setupKind === 'presentation') {
       if (mode === 'say') return 'Answer audience';
-      if (mode === 'followup') return 'Check understanding';
+      if (mode === 'followup') return 'Ask the room';
     }
     return { say: 'What should I say?', followup: 'Follow-up', assist: 'Assist', recap: 'Recap' }[mode] || '';
   }
@@ -2256,6 +2258,9 @@
       ? flags.map((f) => '⚑ ' + f).join('\n')
       : (flags.length ? '⚑ ' + flags[flags.length - 1] : '');
     flagsEl.title = presentationFlagsOpen ? 'Show the newest flag only' : 'Show all flags';
+    // While an answer is on screen the strip keeps only its status line and
+    // first point, so the answer gets the room in the fixed-height panel.
+    strip.classList.toggle('answering', presentationAnswerShown);
     strip.classList.remove('hidden');
     const status = toolbarStatus(update);
     pill.textContent = status;
@@ -2889,7 +2894,9 @@
       const setup = activeSetupOf(settings);
       box.innerHTML = setup && setup.kind === 'interview'
         ? '<strong>Ready for your interview.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when you\'re asked something.'
-        : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
+        : setup && setup.kind === 'presentation'
+          ? '<strong>Ready to present.</strong> Start listening with the ■ button above. Talking points follow your slides; press <strong>Answer audience</strong> when someone asks a question.'
+          : '<strong>Ready.</strong> Start listening with the ■ button above, then press <strong>What should I say?</strong> when someone asks you something or you want to contribute.';
     }
     messages.appendChild(box);
   }
