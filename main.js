@@ -17,6 +17,9 @@ const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
 const { createClickThrough, placeOnDisplay, clampToArea } = require('./src/click-through');
 const { effectiveSettings, settingsForSession, updateSetup } = require('./src/setups');
+const { DeckStore } = require('./src/deck-store');
+const { importDeck, enrichDeck } = require('./src/deck-import');
+const { MAX_FILE_BYTES, DeckError } = require('./src/deck-extract');
 
 // Settings as every feature reads them: About me + the active setup projected
 // onto the flat prep fields (src/setups.js).
@@ -1025,7 +1028,9 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
 ipcMain.handle('settings:get', () => store.redactForRenderer(store.getSettings()));
 ipcMain.handle('settings:set', (_e, patch) => {
   sttDisabled = false;
+  const before = store.getSettings();
   const next = store.setRendererSettings(patch);
+  removeOrphanedDecks(before, next);
   // Restart slide polling with the new interval when capturing (keeps slides).
   if (state.capturing) startSlideLoop();
   return store.redactForRenderer(next);
@@ -1525,6 +1530,165 @@ ipcMain.handle('profile:pickDocument', async () => {
     return { canceled: false, error: (e && e.message) || String(e) };
   }
 });
+// -------- presentation decks --------
+// The file dialog and the file read run in MAIN; the renderer never supplies a path.
+let deckStoreInstance = null;
+function deckStore() {
+  if (!deckStoreInstance) deckStoreInstance = new DeckStore({ dir: path.join(app.getPath('userData'), 'decks') });
+  return deckStoreInstance;
+}
+const deckEnrichments = new Map(); // setupId -> AbortController (one enrichment per setup)
+const NOT_PRESENTATION = 'Choose a presentation setup first.';
+
+function presentationSetup(setupId) {
+  const setup = (store.getSettings().setups || []).find(x => x.id === setupId);
+  return setup && setup.kind === 'presentation' ? setup : null;
+}
+
+function setDeckPointer(setupId, deck, file, importedAt) {
+  const saved = store.getSettings();
+  const pointer = { file, fileName: deck.source.fileName, slideCount: deck.slides.length, importedAt };
+  const next = store.setSettings({ setups: updateSetup(saved, setupId, { deck: pointer }) });
+  send('settings:changed', { setups: next.setups });
+}
+
+function removeOrphanedDecks(before, after) {
+  try {
+    const kept = new Set(((after && after.setups) || []).map(x => x.id));
+    for (const setup of (before && before.setups) || []) {
+      if (kept.has(setup.id)) continue;
+      const running = deckEnrichments.get(setup.id);
+      if (running) { running.abort(); deckEnrichments.delete(setup.id); }
+      if (setup.deck && setup.deck.file) deckStore().remove(setup.deck.file);
+    }
+  } catch (e) { console.error('[deck] cleanup failed', e); }
+}
+
+function deckSummary(deck) {
+  return { fileName: deck.source.fileName, slideCount: deck.slides.length };
+}
+
+// Enriches `ns` in the background, saving and reporting after every batch.
+// Starting a new run for the same setup aborts the old one's remaining batches.
+async function runDeckEnrichment(setupId, file, deck, ns) {
+  const previous = deckEnrichments.get(setupId);
+  if (previous) previous.abort();
+  const controller = new AbortController();
+  deckEnrichments.set(setupId, controller);
+  try {
+    const setup = presentationSetup(setupId);
+    if (!setup) return;
+    const llm = createLLM({ ...currentSettings(), smart: true });
+    const total = Math.ceil(deck.slides.filter(s => ns.includes(s.n) && !s.edited).length / 8);
+    if (!llm.ready) {
+      // Without a provider, flag the slides so the UI can offer a retry.
+      const failed = { ...deck, slides: deck.slides.map(s => (ns.includes(s.n) && !s.edited ? { ...s, enrichError: true } : s)) };
+      deckStore().save(file, failed);
+      send('deck:progress', { setupId, done: total, total });
+      return;
+    }
+    await enrichDeck(deck, {
+      ns,
+      conversation: setup.conversation,
+      notes: setup.notes,
+      signal: controller.signal,
+      call: request => streamWithWatchdog(params => llm.stream(params), {
+        system: request.system,
+        turns: request.turns,
+        maxTokens: request.maxTokens,
+        effort: request.effort,
+        onToken: () => {}
+      }, STREAM_INACTIVITY_MS, controller.signal),
+      onBatch: (d, done, count) => {
+        if (controller.signal.aborted) return;
+        // Edits made while a batch was in flight win over the batch result.
+        const latest = deckStore().load(file) || d;
+        const merged = { ...d, slides: d.slides.map(s => {
+          const cur = latest.slides.find(x => x.n === s.n);
+          return cur && cur.edited ? cur : s;
+        }) };
+        deckStore().save(file, merged);
+        send('deck:progress', { setupId, done, total: count });
+      }
+    });
+  } catch (e) {
+    console.error('[deck] enrichment failed', e);
+  } finally {
+    if (deckEnrichments.get(setupId) === controller) deckEnrichments.delete(setupId);
+  }
+}
+
+ipcMain.handle('deck:import', async (_e, setupId) => {
+  if (!presentationSetup(setupId)) return { error: NOT_PRESENTATION };
+  let fileName = 'the file';
+  try {
+    const res = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: [{ name: 'Presentation', extensions: ['pptx', 'pdf'] }]
+    });
+    if (res.canceled || !res.filePaths.length) return { canceled: true };
+    const filePath = res.filePaths[0];
+    fileName = path.basename(filePath);
+    const type = path.extname(filePath).toLowerCase() === '.pdf' ? 'pdf' : 'pptx';
+    const stat = await fs.promises.stat(filePath);
+    if (stat.size > MAX_FILE_BYTES) throw new DeckError('That file is larger than ' + Math.round(MAX_FILE_BYTES / (1024 * 1024)) + ' MB.');
+    const buffer = await fs.promises.readFile(filePath);
+    const file = deckStore().fileFor(setupId);
+    const { deck, unchanged, toEnrich } = await importDeck({ buffer, type, fileName, previous: deckStore().load(file) });
+    if (!unchanged) {
+      deckStore().save(file, deck);
+      setDeckPointer(setupId, deck, file, Date.now());
+      if (toEnrich.length) runDeckEnrichment(setupId, file, deck, toEnrich);
+    }
+    return { deck: deckSummary(deck), unchanged };
+  } catch (e) {
+    return { error: e instanceof DeckError ? e.message : 'Could not read ' + fileName + '.' };
+  }
+});
+
+ipcMain.handle('deck:get', (_e, setupId) => {
+  const setup = presentationSetup(setupId);
+  if (!setup || !setup.deck) return null;
+  return deckStore().load(setup.deck.file);
+});
+
+ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
+  const setup = presentationSetup(setupId);
+  if (!setup || !setup.deck) return { error: NOT_PRESENTATION };
+  const deck = deckStore().load(setup.deck.file);
+  const slide = deck && deck.slides.find(s => s.n === n);
+  if (!slide) return { error: 'That slide no longer exists.' };
+  const list = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
+  const p = patch && typeof patch === 'object' ? patch : {};
+  slide.points = list(p.points);
+  slide.questions = list(p.questions);
+  slide.keyIdea = typeof p.keyIdea === 'string' ? p.keyIdea : '';
+  slide.edited = true;
+  slide.enrichError = false;
+  deckStore().save(setup.deck.file, deck);
+  return { deck };
+});
+
+ipcMain.handle('deck:regenerate', (_e, setupId, which) => {
+  const setup = presentationSetup(setupId);
+  if (!setup || !setup.deck) return { error: NOT_PRESENTATION };
+  const file = setup.deck.file;
+  const deck = deckStore().load(file);
+  if (!deck) return { error: 'Import a deck first.' };
+  let ns;
+  if (which === 'unedited') {
+    ns = deck.slides.filter(s => !s.edited).map(s => s.n);
+  } else {
+    const slide = deck.slides.find(s => s.n === which);
+    if (!slide) return { error: 'That slide no longer exists.' };
+    slide.edited = false;
+    deckStore().save(file, deck);
+    ns = [slide.n];
+  }
+  if (ns.length) runDeckEnrichment(setupId, file, deck, ns);
+  return { started: ns.length };
+});
+
 ipcMain.handle('applink:state', () => appLinkConsentState());
 ipcMain.handle('applink:revoke', (_e, callerId) => {
   // Forgetting a caller also clears its separate slide-caption consent decision,

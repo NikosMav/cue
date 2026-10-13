@@ -71,13 +71,17 @@ contextBridge.exposeInMainWorld('cue', {
   appLinkRevoke: (callerId) => ipcRenderer.invoke('applink:revoke', callerId),
   appLinkConsentRespond: (id, allowed) => ipcRenderer.send('applink:consent-response', { id, allowed }),
   pickProfileDocument: () => ipcRenderer.invoke('profile:pickDocument'),
+  deckImport: (setupId) => ipcRenderer.invoke('deck:import', setupId),
+  deckGet: (setupId) => ipcRenderer.invoke('deck:get', setupId),
+  deckUpdateSlide: (setupId, n, patch) => ipcRenderer.invoke('deck:update-slide', setupId, n, patch),
+  deckRegenerate: (setupId, which) => ipcRenderer.invoke('deck:regenerate', setupId, which),
   quit: () => ipcRenderer.send('app:quit'),
   permissionsCheck: () => ipcRenderer.invoke('permissions:check'),
   permissionsRequest: () => ipcRenderer.invoke('permissions:request'),
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore', 'deck:progress'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }
