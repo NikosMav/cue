@@ -86,3 +86,12 @@ test('the deck UI adds no transitions or animations', () => {
   const block = css.slice(start, css.indexOf('/* end presentation setups */', start));
   assert.doesNotMatch(block, /transition|animation/);
 });
+
+test('the deck block renders while Settings is still loading its form', () => {
+  // openSettings fills the form (and so renders the deck) before it sets
+  // settingsFormReady; the deck block only reads, so it must not wait for it.
+  const start = src.indexOf('async function renderDeckBlock()');
+  assert.ok(start > -1);
+  const guard = src.slice(start, src.indexOf('\n', src.indexOf('return;', start)));
+  assert.doesNotMatch(guard, /settingsFormReady/);
+});

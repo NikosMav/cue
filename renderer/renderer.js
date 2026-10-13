@@ -2203,7 +2203,7 @@
   // Shows the editing setup's deck. Safe to call any time: it does nothing
   // unless the Settings form is showing a presentation setup.
   async function renderDeckBlock() {
-    if (!settingsFormReady || !settings || formKind() !== 'presentation') return;
+    if (!settings || !settings.setups || formKind() !== 'presentation') return;
     const setup = editingSetup();
     if (!setup) return;
     const token = ++deckLoadToken;
