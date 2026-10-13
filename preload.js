@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('cue', {
   captureState: () => ipcRenderer.invoke('capture:state'),
   micPcm: (arrayBuffer) => ipcRenderer.send('mic:pcm', arrayBuffer),
   systemPcm: (arrayBuffer) => ipcRenderer.send('system:pcm', arrayBuffer),
+  // Presentation slide frames from the renderer's screen stream (see main.js).
+  slideFrame: (frame) => ipcRenderer.send('frames:frame', frame),
+  slideFramesState: (st) => ipcRenderer.send('frames:state', st),
   setUiRects: (rects) => ipcRenderer.send('mouse:rects', rects),
   // Window size: the resize grip, Hide (header height only) and overlay growth.
   resizeStart: () => ipcRenderer.send('window:resize-start'),
@@ -93,7 +96,7 @@ contextBridge.exposeInMainWorld('cue', {
   permissionsContinue: () => ipcRenderer.send('permissions:continue'),
   log: (msg) => ipcRenderer.send('log', msg),
   on: (channel, cb) => {
-    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore', 'deck:progress', 'presentation:update'];
+    const allowed = ['capture:state', 'llm:start', 'llm:token', 'llm:done', 'llm:error', 'llm:cancelled', 'shortcuts:state', 'answers:scroll', 'settings:changed', 'sessions:saved', 'sessions:debrief-token', 'practice:state', 'practice:question', 'status', 'transcript', 'stt:interim', 'stt:final', 'stt:status', 'vad:state', 'applink:consent-request', 'hide:toggle', 'whisper:download-progress', 'whisper:models-changed', 'publik:state', 'slides:update', 'transcript:restore', 'deck:progress', 'presentation:update', 'frames:start', 'frames:stop'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, data) => cb(data));
   }

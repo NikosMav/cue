@@ -120,18 +120,31 @@ function isBackchannel(text) {
  * @param {{channel: string, text: string, ts?: number}[]} transcript
  * @returns {{channel: string, text: string, ts?: number}[]} oldest first
  */
-function currentQuestionTurns(transcript) {
+// answered: { startTs, endTs } of the last question cue answered. The next
+// question starts after it: with no reply from the user in between (a talk's
+// audience, or speakers whose echo was dropped) questions would otherwise pile
+// up into one. Words within QUESTION_CONTINUE_MS of it are that question still
+// being finished (Auto answered early), so it is taken whole.
+const QUESTION_CONTINUE_MS = 4000;
+function questionFloor(newestTs, answered) {
+  if (!answered || !Number.isFinite(answered.endTs) || !Number.isFinite(newestTs)) return -Infinity;
+  return newestTs - answered.endTs <= QUESTION_CONTINUE_MS ? answered.startTs - 1 : answered.endTs;
+}
+
+function currentQuestionTurns(transcript, answered = null) {
   if (!Array.isArray(transcript)) return [];
   let index = transcript.length - 1;
   while (index >= 0 && !(transcript[index].channel === 'them' && hasText(transcript[index]))) index--;
   if (index < 0) return [];
 
   const turns = [transcript[index]];
+  const floor = questionFloor(transcript[index].ts, answered);
   let chars = transcript[index].text.trim().length;
   let later = transcript[index];
   for (let j = index - 1; j >= 0 && turns.length < QUESTION_MAX_TURNS; j--) {
     const turn = transcript[j];
     if (!hasText(turn)) continue;
+    if (Number.isFinite(turn.ts) && turn.ts <= floor) break;
     if (turn.channel !== 'them') {
       if (isBackchannel(turn.text)) continue;
       break;
@@ -146,8 +159,8 @@ function currentQuestionTurns(transcript) {
   return turns;
 }
 
-function currentQuestion(transcript) {
-  return currentQuestionTurns(transcript).map(t => t.text.trim()).join(' ');
+function currentQuestion(transcript, answered = null) {
+  return currentQuestionTurns(transcript, answered).map(t => t.text.trim()).join(' ');
 }
 
 function classify(text) {

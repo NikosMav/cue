@@ -52,6 +52,7 @@ class OpenAIRealtimeSTT {
     this.onInterim = options.onInterim || (() => {});
     this.onError = options.onError || (() => {});
     this.onStatusChange = options.onStatusChange || (() => {});
+    this.onCommit = options.onCommit || (() => {}); // an utterance was closed (latency tracing)
     this._reconnectAttempts = 0;
     this._maxReconnectAttempts = 5;
     this._reconnectDelay = 1000;
@@ -212,6 +213,12 @@ class OpenAIRealtimeSTT {
     if (this._uncommittedMs >= OPENAI_MAX_TURN_MS) {
       if (this._partials.size > 0) {
         this._commit(); // a speaker who never pauses
+      } else if (this._vad.state !== 'silence') {
+        // Someone just started talking and no word is recognised yet:
+        // clearing now would cut the start of their sentence. The pause
+        // after it commits as usual; a buffer that keeps growing with no
+        // words at all is committed at twice the limit.
+        if (this._uncommittedMs >= 2 * OPENAI_MAX_TURN_MS) this._commit();
       } else {
         // Nothing recognised: drop the silence instead of transcribing it.
         this._uncommittedMs = 0;
@@ -225,6 +232,7 @@ class OpenAIRealtimeSTT {
     if (this._uncommittedMs === 0) return;
     this._uncommittedMs = 0;
     this._sendEvent({ type: 'input_audio_buffer.commit' });
+    this.onCommit();
   }
 
   _interimText() {
@@ -718,7 +726,8 @@ function createStreamingSTT(settings, channel, callbacks) {
       onTranscript: (text) => onTranscript(channel, text),
       onInterim: (text) => onInterim(channel, text),
       onError,
-      onStatusChange: (status) => onStatusChange(channel, status)
+      onStatusChange: (status) => onStatusChange(channel, status),
+      onCommit: () => { if (callbacks.onCommit) callbacks.onCommit(channel); }
     });
     return { type: 'streaming', provider: 'openai-realtime', instance: stt };
   }

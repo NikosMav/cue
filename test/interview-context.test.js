@@ -107,3 +107,20 @@ test('presentation context: talk, deck outline, notes, then About me, in that or
   assert.equal(build({ setupKind: 'presentation' }, 'say'), null);
   assert.equal(build({ setupKind: 'presentation', jobDescription: 'x' }, 'leetcode'), null);
 });
+
+test('a question that was already answered is not joined to the next one', () => {
+  const { currentQuestion } = require('../src/interview-context');
+  const them = (text, ts) => ({ channel: 'them', text, ts });
+  const t = [them('How long should a prompt be?', 1000), them('Can I use it for emails?', 17000)];
+  assert.equal(currentQuestion(t), 'How long should a prompt be? Can I use it for emails?', 'unchanged without an answered question');
+  assert.equal(currentQuestion(t, { startTs: 1000, endTs: 1000 }), 'Can I use it for emails?');
+});
+
+test('words that follow an answered question within seconds finish that question', () => {
+  const { currentQuestion } = require('../src/interview-context');
+  const them = (text, ts) => ({ channel: 'them', text, ts });
+  const t = [them('Earlier question?', 1000), them('What happens if Claude', 20000), them('does not know the answer.', 21900)];
+  const answered = { startTs: 20000, endTs: 20000 }; // Auto answered the first half
+  assert.equal(currentQuestion(t, answered), 'What happens if Claude does not know the answer.');
+  assert.equal(currentQuestion(t.slice(0, 2), answered), 'What happens if Claude', 'asking again repeats the answered question');
+});

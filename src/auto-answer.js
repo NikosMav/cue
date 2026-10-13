@@ -22,6 +22,7 @@ class AutoAnswer {
     isEnabled,
     getTranscript,
     onFire,
+    getAnswered = () => null, // { startTs, endTs } of the last answered question
     delayMs = DEFAULT_DELAY_MS,
     isComplete = isLikelyCompleteQuestion,
     timers = { setTimeout, clearTimeout }
@@ -29,6 +30,7 @@ class AutoAnswer {
     this.isEnabled = isEnabled;
     this.getTranscript = getTranscript;
     this.onFire = onFire;
+    this.getAnswered = getAnswered;
     this.delayMs = delayMs;
     this.isComplete = isComplete;
     this.timers = timers;
@@ -43,7 +45,10 @@ class AutoAnswer {
     if (channel === 'them') {
       this.pending = true;
       // A transcript can land while the interviewer is already talking again.
-      this._schedule(this.speaking ? this._fallbackMs() : this.delayMs);
+      // A line ending in "?" is very likely the end of the question: half the
+      // wait. If they keep going, the fuller question replaces the answer.
+      const asked = /\?\s*$/.test(String(text || ''));
+      this._schedule(this.speaking ? this._fallbackMs() : asked ? this.delayMs / 2 : this.delayMs);
     } else if (String(text || '').trim().split(/\s+/).length > ACKNOWLEDGEMENT_MAX_WORDS) {
       // The candidate is answering on their own.
       this.pending = false;
@@ -94,7 +99,7 @@ class AutoAnswer {
 
   _check() {
     if (!this.pending || !this.isEnabled()) return;
-    const question = currentQuestionTurns(this.getTranscript()).map((t) => t.text.trim()).join(' ');
+    const question = currentQuestionTurns(this.getTranscript(), this.getAnswered()).map((t) => t.text.trim()).join(' ');
     if (!question || question === this.lastQuestion || !this.isComplete(question)) return;
     this.pending = false;
     this.lastQuestion = question;

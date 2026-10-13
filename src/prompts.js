@@ -736,7 +736,7 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
   const general = settings.setupKind === 'general' && !!GENERAL_SYSTEMS[mode];
   const layer = settings.setupKind === 'presentation' && PRESENTATION_SYSTEMS[mode] ? 'presentation' : (general ? 'general' : 'interview');
   // Only worth restating when the question spans several transcript turns.
-  const questionTurns = mode === 'assist' || mode === 'say' ? currentQuestionTurns(turns) : [];
+  const questionTurns = mode === 'assist' || mode === 'say' ? currentQuestionTurns(turns, session.answered) : [];
   const question = questionTurns.length > 1 ? questionTurns.map(t => t.text.trim()).join(' ') : '';
   let system;
   if (layer === 'presentation') {

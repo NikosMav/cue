@@ -34,7 +34,9 @@ const { createStreamingSTT } = require('./src/stt-streaming');
 const { resolveSttLanguage } = require('./src/stt-language');
 const { BatchTranscriber } = require('./src/batch-transcriber');
 const { AutoAnswer } = require('./src/auto-answer');
-const { currentQuestion } = require('./src/interview-context');
+const { LatencyTrace } = require('./src/latency-trace');
+const { isEcho, ECHO_WINDOW_MS } = require('./src/echo-filter');
+const { currentQuestion, currentQuestionTurns } = require('./src/interview-context');
 const { ACTIONS: SHORTCUT_ACTIONS, resolveShortcuts, findConflicts, isValid: isValidAccelerator } = require('./src/shortcuts');
 const { AdaptiveVAD } = require('./src/vad');
 const { rms16 } = require('./src/wav');
@@ -179,10 +181,23 @@ const practice = { active: false, speaking: false, quietUntil: 0 };
 // The mic can pick up cue's spoken question from the speakers; ignore it
 // while the voice plays and briefly after.
 const PRACTICE_ECHO_GUARD_MS = 600;
+// { startTs, endTs } of the last heard question cue answered (see
+// currentQuestionTurns in src/interview-context.js).
+let answeredQuestion = null;
+const latency = new LatencyTrace({
+  enabled: process.env.CUE_TRACE_LATENCY === '1',
+  loopDelay: process.env.CUE_TRACE_LATENCY === '1' ? (() => {
+    const h = require('perf_hooks').monitorEventLoopDelay({ resolution: 20 });
+    h.enable();
+    return h;
+  })() : null
+});
 const autoAnswer = new AutoAnswer({
   isEnabled: () => !!store.getSettings().autoAnswer && state.capturing && !practice.active,
   getTranscript: () => transcript,
+  getAnswered: () => answeredQuestion,
   onFire: (question) => {
+    latency.fire();
     // The user already asked about this question by hand: leave their answer.
     const lastThem = [...transcript].reverse().find((t) => t.channel === 'them');
     if (lastThem && lastManualRequestAt >= lastThem.ts) return;
@@ -237,14 +252,38 @@ function getWhisperRuntime() {
   });
 }
 
+// While the other side is talking, the user's own lines wait briefly so a mic
+// echo of the meeting audio (speakers, no headphones) can be recognised and
+// dropped; see src/echo-filter.js. The meeting line usually lands first.
+const ECHO_HOLD_MS = 1500;
+let lastThemActivityAt = 0;
+
 function publishTranscript(channel, text) {
   if (!text || !text.trim()) return;
-  const turn = { channel, text: text.trim(), ts: Date.now() };
+  const arrivedAt = Date.now();
+  if (channel === 'them') lastThemActivityAt = arrivedAt;
+  else if (arrivedAt - lastThemActivityAt < ECHO_WINDOW_MS) {
+    setTimeout(() => {
+      if (!state.capturing) return;
+      if (isEcho(text, transcript, Date.now())) {
+        console.log('[echo] dropped a mic line that repeats the meeting audio');
+        return;
+      }
+      commitTranscript(channel, text, arrivedAt);
+    }, ECHO_HOLD_MS);
+    return;
+  }
+  commitTranscript(channel, text, arrivedAt);
+}
+
+function commitTranscript(channel, text, ts) {
+  const turn = { channel, text: text.trim(), ts };
   pushTranscript(turn);
   // The renderer's "Heard:" block shows the whole question the answer is built
   // from (consecutive segments joined), not only this last fragment.
-  send('transcript', { ...turn, question: channel === 'them' ? currentQuestion(transcript) : '' });
+  send('transcript', { ...turn, question: channel === 'them' ? currentQuestion(transcript, answeredQuestion) : '' });
   send('stt:final', { channel, text: turn.text });
+  latency.final(channel);
   autoAnswer.noteFinal(channel, turn.text);
 }
 
@@ -716,7 +755,12 @@ function initStreamingSTT() {
       onInterim: (ch, text) => {
         if (instance && streamingSTT[ch] !== instance) return;
         send('stt:interim', { channel: ch, text });
+        if (ch === 'them') lastThemActivityAt = Date.now();
         autoAnswer.noteInterim(ch, text);
+      },
+      onCommit: (ch) => {
+        if (instance && streamingSTT[ch] !== instance) return;
+        latency.commit(ch);
       },
       onError: (err) => {
         // A socket torn down by a quick stop/start can still report an error a
@@ -875,10 +919,12 @@ function startSlideLoop() {
     presentationTick = setInterval(sendPresentationUpdate, 1000);
     if (presentationTick.unref) presentationTick.unref();
     sendPresentationUpdate();
+    startRendererFrames();
   }
 }
 
 function stopSlideLoop() {
+  stopRendererFrames();
   if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
   if (presentationTick) { clearInterval(presentationTick); presentationTick = null; }
 }
@@ -1013,7 +1059,10 @@ function loadPresentationRuntime({ reset = false } = {}) {
       rt.file = deck ? file : null;
       next = rt;
     }
+    const displayChanged = next === prev && next.displayId !== s.watchDisplayId;
     next.displayId = s.watchDisplayId;
+    // Same runtime, other display: point the frame stream at it.
+    if (displayChanged && state.capturing) startRendererFrames();
   }
   if (prev && prev !== next) flushMatchCache();
   presentationRuntime = next;
@@ -1026,7 +1075,49 @@ function loadPresentationRuntime({ reset = false } = {}) {
   return presentationRuntime;
 }
 
+// Presentation frames normally come from the renderer: a desktopCapturer grab
+// captures every screen at full size and stalls the main process for up to
+// ~1.4 s on a large monitor, which delays transcripts, Auto and the answer's
+// tokens. The renderer keeps one small, low-rate stream of the watched display
+// open instead and sends a 68x64 frame each poll. The grab below is the
+// fallback when that stream cannot start.
+const FRAME_BOX = { width: 68, height: 64 };
+const rendererFrames = { active: false, generation: 0 };
+
+async function startRendererFrames() {
+  const rt = presentationRuntime;
+  if (!rt || !rt.matcher) return;
+  const generation = ++rendererFrames.generation;
+  try {
+    // Thumbnails off: the lookup then skips capturing every screen.
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    const src = pickSource(sources, rt.displayId, String(screen.getPrimaryDisplay().id));
+    if (!src || generation !== rendererFrames.generation) return;
+    send('frames:start', { generation, sourceId: src.id, intervalMs: presentationSlidesConfig().intervalMs, ...FRAME_BOX });
+  } catch (e) {
+    console.log('[presentation] frame stream lookup failed', e && e.message);
+  }
+}
+
+function stopRendererFrames() {
+  rendererFrames.generation++;
+  rendererFrames.active = false;
+  send('frames:stop', {});
+}
+
+ipcMain.on('frames:state', (_e, { generation, ok, message } = {}) => {
+  if (generation !== rendererFrames.generation) return;
+  rendererFrames.active = !!ok;
+  if (!ok) console.log('[presentation] frame stream unavailable, grabbing frames instead:', message || '');
+});
+
+ipcMain.on('frames:frame', (_e, { generation, width, height, data } = {}) => {
+  if (generation !== rendererFrames.generation || !rendererFrames.active || !state.capturing) return;
+  handlePresentationFrame(presentationRuntime, { width, height, data });
+});
+
 async function pollPresentation() {
+  if (rendererFrames.active) return;
   if (presentationPollBusy) return;
   const rt = presentationRuntime;
   // No deck, no matcher: nothing to compare a frame with, so do not capture.
@@ -1034,13 +1125,18 @@ async function pollPresentation() {
   let frame = null;
   presentationPollBusy = true;
   try {
-    frame = await captureHashFrame({ displayId: rt.displayId, width: 68, height: 64 });
+    frame = await captureHashFrame({ displayId: rt.displayId, ...FRAME_BOX });
   } catch {
     return;
   } finally {
     presentationPollBusy = false;
   }
-  if (!frame || presentationRuntime !== rt) return;
+  if (presentationRuntime !== rt) return;
+  handlePresentationFrame(rt, frame);
+}
+
+function handlePresentationFrame(rt, frame) {
+  if (!rt || !rt.matcher || !frame) return;
   const newHash = dhashRGBA(frame.width, frame.height, frame.data);
   if (!newHash) return;
   const cfg = presentationSlidesConfig();
@@ -1285,6 +1381,12 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
   activeRequest = job;
   state.busy = true;
   if (!auto) lastManualRequestAt = job.startedAt;
+  latency.start(job.id, requestedMode, auto);
+  // The heard question this request answers; the next one starts after it.
+  if (requestedMode === 'say' || requestedMode === 'assist' || (requestedMode === 'answerThis' && auto)) {
+    const turns = currentQuestionTurns(transcript, answeredQuestion);
+    if (turns.length) answeredQuestion = { startTs: turns[0].ts, endTs: turns[turns.length - 1].ts };
+  }
   const { signal } = job.controller;
   // Events of a cancelled request never reach the UI after its replacement starts.
   const emit = (channel, data) => { if (!signal.aborted) send(channel, { id: job.id, ...data }); };
@@ -1292,14 +1394,15 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
   try {
     const settings = currentSettings();
     const llm = createLLM(settings);
-    const session = { answers: sessionAnswers };
+    const session = { answers: sessionAnswers, answered: answeredQuestion };
     if (settings.setupKind === 'presentation') {
       const deck = presentationRuntime ? presentationRuntime.deck : null;
-      const asked = requestedMode === 'ask' || requestedMode === 'answerThis' ? text : currentQuestion(transcript) || text;
+      const asked = requestedMode === 'ask' || requestedMode === 'answerThis' ? text : currentQuestion(transcript, answeredQuestion) || text;
       settings.deckOutline = deckOutline(deck);
       session.slides = slideContext(deck, presentationRuntime ? presentationRuntime.state.snapshot().current : null, asked);
     }
     const request = buildPromptRequest(settings, requestedMode, transcript, text, session);
+    if (latency.enabled) console.log('[latency] prompt ' + (request.system.length + JSON.stringify(request.turns).length) + ' chars, model ' + (createLLM(settings).model || '?') + ', effort ' + request.effort);
     const mode = request.mode;
     const def = MODES[mode];
     const queuedScreens = mode === 'leetcode' ? screenshotQueue.slice() : [];
@@ -1361,18 +1464,19 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
       effort: request.effort,
       turns: request.turns,
       imageDataUrls: images,
-      onToken: t => emit('llm:token', { text: t }),
+      onToken: t => { latency.token(job.id); emit('llm:token', { text: t }); },
       onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
     }, STREAM_INACTIVITY_MS, signal);
     if (signal.aborted) return;
     if (mode === 'practiceQuestion') {
       publishPracticeQuestion(answer);
     } else {
-      const prompt = mode === 'say' || mode === 'assist' ? currentQuestion(transcript) : text;
+      const prompt = mode === 'say' || mode === 'assist' ? currentQuestion(transcript, answeredQuestion) : text;
       rememberAnswer(mode, prompt, answer);
     }
     if (queuedScreens.length) screenshotQueue = screenshotQueue.filter((image) => !queuedScreens.includes(image));
     emit('llm:done', {});
+    latency.done(job.id);
     // Streams settle after their headers, so the charge is reconciled from
     // GET /wallet shortly after the answer — one request per answer, debounced.
     if (settings.provider === publik.PUBLIK_PROVIDER) publikScheduleWalletRefresh();
@@ -1668,6 +1772,7 @@ function resetConversation() {
   transcript.splice(0, transcript.length);
   sessionAnswers.splice(0, sessionAnswers.length);
   screenshotQueue = [];
+  answeredQuestion = null;
   autoAnswer.reset();
   return sessionRecorder ? sessionRecorder.end() : null;
 }
@@ -1713,6 +1818,7 @@ ipcMain.handle('practice:end', () => {
   if (sessionRecorder) sessionRecorder.setKind('interview');
   transcript.splice(0, transcript.length);
   sessionAnswers.splice(0, sessionAnswers.length);
+  answeredQuestion = null;
   send('practice:state', practiceState());
   return { ...practiceState(), savedId };
 });

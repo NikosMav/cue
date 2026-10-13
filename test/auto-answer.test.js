@@ -49,6 +49,44 @@ test('answers once the interviewer has finished a question', () => {
   assert.equal(fired.length, 1, 'the same question is answered once');
 });
 
+test('the next question is answered on its own, not joined to the one answered', () => {
+  const timers = fakeTimers();
+  const transcript = [];
+  const fired = [];
+  let answered = null;
+  const auto = new AutoAnswer({
+    isEnabled: () => true,
+    getTranscript: () => transcript,
+    getAnswered: () => answered,
+    onFire: (q) => { fired.push(q); answered = { startTs: transcript[0].ts, endTs: transcript.at(-1).ts }; },
+    delayMs: 1200,
+    timers
+  });
+  transcript.push({ channel: 'them', text: 'How long should a good prompt be?', ts: 1000 });
+  auto.noteFinal('them', transcript[0].text);
+  timers.run(1300);
+  transcript.push({ channel: 'them', text: 'Can I use this formula for writing emails?', ts: 17000 });
+  auto.noteFinal('them', transcript[1].text);
+  timers.run(1300);
+  assert.deepEqual(fired, ['How long should a good prompt be?', 'Can I use this formula for writing emails?']);
+});
+
+test('a question that ends with a question mark is answered after half the wait', () => {
+  const { timers, fired, say } = setup();
+  say('them', 'How did you handle the outage last spring?');
+  timers.run(500);
+  assert.deepEqual(fired, []);
+  timers.run(100);
+  assert.deepEqual(fired, ['How did you handle the outage last spring?']);
+});
+
+test('a statement before the question keeps the full wait', () => {
+  const { timers, fired, say } = setup();
+  say('them', 'Let me give you some context about the team.');
+  timers.run(700);
+  assert.deepEqual(fired, []);
+});
+
 test('waits while the interviewer is still talking, then answers the joined question', () => {
   const { auto, timers, fired, say } = setup();
   say('them', 'So tell me about a time when');

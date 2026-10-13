@@ -86,6 +86,15 @@ test('OpenAI Realtime: a long silence is cleared, not committed as a turn', asyn
   assert.ok(ws.sentTypes().includes('input_audio_buffer.clear'));
 });
 
+test('OpenAI Realtime: speech that starts as the silence limit is reached is not cleared', async () => {
+  const { stt, ws } = await openSession();
+  for (let i = 0; i < 148; i++) stt.sendAudio(chunk(false)); // 14.8 s of quiet
+  for (let i = 0; i < 5; i++) stt.sendAudio(chunk(true)); // a question starts; no words recognised yet
+  assert.ok(!ws.sentTypes().includes('input_audio_buffer.clear'), 'the start of the question stays in the buffer');
+  for (let i = 0; i < 10; i++) stt.sendAudio(chunk(false));
+  assert.equal(ws.sentTypes().filter((t) => t === 'input_audio_buffer.commit').length, 1, 'and is committed when it ends');
+});
+
 test('OpenAI Realtime: an empty-buffer commit error does not stop streaming', async () => {
   const { ws, events } = await openSession();
   ws.serverEvent({ type: 'error', error: { code: 'input_audio_buffer_commit_empty', message: 'buffer too small' } });

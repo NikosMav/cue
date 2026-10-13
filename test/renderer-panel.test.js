@@ -568,7 +568,7 @@ test('the ⋯ menu opens under its button, not at the window edge', () => {
 });
 
 test('Heard shows the whole current question, up to three readable lines, and opens the transcript', () => {
-  assert.match(main, /send\('transcript', \{ \.\.\.turn, question: channel === 'them' \? currentQuestion\(transcript\) : '' \}\)/);
+  assert.match(main, /send\('transcript', \{ \.\.\.turn, question: channel === 'them' \? currentQuestion\(transcript, answeredQuestion\) : '' \}\)/);
   assert.match(src, /showHeard\(question \|\| text\)/);
   const rule = css.slice(css.indexOf('#heard {'), css.indexOf('}', css.indexOf('#heard {')));
   assert.match(rule, /-webkit-line-clamp:\s*3/);
@@ -634,4 +634,15 @@ test('Settings has a Script length choice for presentation setups', () => {
   assert.match(src, /\$\('#setup-script-length'\)\.value = setup\.scriptLength \|\| 'standard';/);
   assert.match(src, /patch\.scriptLength = \$\('#setup-script-length'\)\.value;/);
   assert.match(html, /Applies to newly generated scripts/);
+});
+
+test('slide frames come from a low-rate screen stream, sized and laid out like the main-process grab', () => {
+  const { frameSize, toBgra } = section('// ---- slide frame helpers', '// ---- end slide frame helpers', ['frameSize', 'toBgra']);
+  assert.deepEqual(frameSize(3440, 1440, 68, 64), { width: 68, height: 28 }, 'fits inside the box, keeping the aspect ratio');
+  assert.deepEqual(frameSize(1920, 1080, 68, 64), { width: 68, height: 38 });
+  assert.deepEqual(frameSize(1080, 1920, 68, 64), { width: 36, height: 64 });
+  assert.deepEqual(Array.from(toBgra(new Uint8ClampedArray([10, 20, 30, 255, 1, 2, 3, 4]))), [30, 20, 10, 255, 3, 2, 1, 4], 'NativeImage bitmaps are BGRA');
+  assert.match(src, /chromeMediaSource: 'desktop'/);
+  assert.match(src, /cue\.on\('frames:start'/);
+  assert.match(src, /cue\.on\('frames:stop'/);
 });

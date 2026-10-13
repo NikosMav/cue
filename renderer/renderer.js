@@ -646,6 +646,68 @@
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
   }
 
+  // ---- presentation: slide frames ----
+  // main.js asks for small frames of the watched display; one low-rate stream
+  // here is far cheaper than a main-process grab, which stalls answers.
+  // ---- slide frame helpers (pure; test/renderer-panel.test.js evaluates them)
+  // Fit inside the box keeping the aspect ratio, as a NativeImage thumbnail does.
+  function frameSize(vw, vh, maxW, maxH) {
+    const scale = Math.min(maxW / vw, maxH / vh);
+    return { width: Math.max(1, Math.round(vw * scale)), height: Math.max(1, Math.round(vh * scale)) };
+  }
+  // Canvas pixels are RGBA; the main-process grab (and every cached slide
+  // hash) uses NativeImage bitmaps, which are BGRA.
+  function toBgra(rgba) {
+    const out = new Uint8ClampedArray(rgba.length);
+    for (let i = 0; i < rgba.length; i += 4) {
+      out[i] = rgba[i + 2]; out[i + 1] = rgba[i + 1]; out[i + 2] = rgba[i]; out[i + 3] = rgba[i + 3];
+    }
+    return out;
+  }
+  // ---- end slide frame helpers
+  let frameStream = null;
+  let frameTimer = null;
+  let frameGeneration = 0;
+  function stopFrames() {
+    if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+    if (frameStream) { frameStream.getTracks().forEach((t) => t.stop()); frameStream = null; }
+  }
+  async function startFrames({ generation, sourceId, intervalMs, width, height }) {
+    stopFrames();
+    frameGeneration = generation;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxWidth: 640, maxHeight: 640, maxFrameRate: 2 } }
+      });
+      if (generation !== frameGeneration) { stream.getTracks().forEach((t) => t.stop()); return; }
+      frameStream = stream;
+      const video = document.createElement('video');
+      video.muted = true;
+      video.srcObject = stream;
+      await video.play();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      frameTimer = setInterval(() => {
+        if (!video.videoWidth || !video.videoHeight) return;
+        const size = frameSize(video.videoWidth, video.videoHeight, width, height);
+        canvas.width = size.width;
+        canvas.height = size.height;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(video, 0, 0, size.width, size.height);
+        const data = toBgra(ctx.getImageData(0, 0, size.width, size.height).data);
+        cue.slideFrame({ generation, width: size.width, height: size.height, data });
+      }, intervalMs);
+      cue.slideFramesState({ generation, ok: true });
+    } catch (err) {
+      if (generation !== frameGeneration) return;
+      stopFrames();
+      cue.slideFramesState({ generation, ok: false, message: err && err.message ? err.message : String(err) });
+    }
+  }
+  cue.on('frames:start', (req) => { startFrames(req || {}); });
+  cue.on('frames:stop', () => { frameGeneration = -1; stopFrames(); });
+
   // ---- capture: system/meeting audio (getDisplayMedia loopback, in cue's process) ----
   let sysStream = null, sysCtx = null, sysWorklet = null, sysStarting = false;
   async function startSystemAudio() {
