@@ -776,6 +776,12 @@ button:focus { outline: none; }
 .ps-script:empty { display: none; }
 .ps-script p { margin: 0 0 10px; font-size: calc(var(--answer-px, 18px) * 0.9); line-height: 1.45; color: var(--tx-1); -webkit-user-select: text; user-select: text; }
 /* Narrow has no room for paragraphs: key points only. */
+/* Stage directions (▶ show, ⏸ pause, ◀ back): smaller, accent-marked, set apart from the words to say. */
+.ps-script p.ps-cue { font-size: calc(var(--answer-px, 18px) * 0.72); font-weight: 600; line-height: 1.35; color: var(--accent-hi); border-left: 2px solid var(--accent); padding-left: 8px; }
+/* Spoken parts: the intro stands out, the bridge to the next slide is muted behind an arrow. */
+.ps-script p.ps-intro { font-weight: 700; }
+.ps-script p.ps-bridge { color: var(--tx-mut); }
+.ps-script p.ps-bridge::before { content: '→ '; }
 #app.narrow .ps-script { display: none; }
 .ps-points li { font-size: calc(var(--answer-px, 18px) * 0.9); font-weight: 500; line-height: 1.3; color: var(--tx-1); padding-left: 18px; position: relative; }
 .ps-points li::before { content: '•'; position: absolute; left: 2px; color: var(--tx-mut); }
@@ -798,9 +804,8 @@ button:focus { outline: none; }
 #panel-body > #reading { flex-shrink: 1; }
 /* Wide presentation: the strip is the left column and never collapses. */
 #app.wide #panel-body.presenting { flex-direction: row; gap: 18px; }
-/* No answer on screen: the script column takes most of the width. */
-#app.wide #panel-body.presenting > .presenter-strip:not(.has-answer) { flex-basis: 60%; }
-#app.wide #panel-body.presenting > .presenter-strip { flex: 0 0 40%; min-width: 280px; box-sizing: border-box; margin-bottom: 0; padding: 2px 16px 0 2px; border-bottom: none; border-right: 1px solid var(--bd-hair); overflow-y: auto; }
+/* The script column keeps most of the width; answers sit beside it. */
+#app.wide #panel-body.presenting > .presenter-strip { flex: 0 0 60%; min-width: 280px; box-sizing: border-box; margin-bottom: 0; padding: 2px 16px 0 2px; border-bottom: none; border-right: 1px solid var(--bd-hair); overflow-y: auto; }
 #app.wide #panel-body.presenting > #reading { flex: 1 1 0; min-width: 0; }
 /* Wide interview/general: one centred column of about 70 characters
    (ch of the answer size; the padding centres the latest answer, the

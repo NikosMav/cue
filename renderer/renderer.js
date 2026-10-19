@@ -1823,9 +1823,10 @@
   // Wide: the strip is its own column and always shows every point. Narrow:
   // while an answer is on screen the strip keeps only its status line, so the
   // answer gets the height.
-  function visiblePoints(points, answerShown, mode = 'narrow') {
+  // Wide: the script replaces the points when the slide has one.
+  function visiblePoints(points, answerShown, mode = 'narrow', hasScript = false) {
     const list = Array.isArray(points) ? points : [];
-    if (mode === 'wide') return list.slice();
+    if (mode === 'wide') return hasScript ? [] : list.slice();
     return answerShown ? [] : list.slice();
   }
   // Watch display picker: shown with more than one display, or to clear a
@@ -1943,13 +1944,26 @@
   // progress estimate before main reports real progress.
   const DECK_BATCH_SIZE = 4;
   // The speaker script: paragraphs separated by blank lines, as plain text.
+  // A paragraph starting with ▶, ⏸ or ◀ is a stage direction (switch screens,
+  // pause) and is styled apart from the words to say. Of the spoken
+  // paragraphs, the first is the intro and the last the bridge to the next slide.
+  function scriptParagraphs(text) {
+    const paras = String(text || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    const spoken = paras.filter((p) => !/^[▶⏸◀]/.test(p));
+    return paras.map((p) => ({
+      text: p,
+      kind: /^[▶⏸◀]/.test(p) ? 'cue'
+        : p === spoken[0] ? 'intro'
+          : spoken.length > 1 && p === spoken[spoken.length - 1] ? 'bridge' : 'body'
+    }));
+  }
   function renderScript(text) {
     const el = $('#ps-script');
     el.textContent = '';
-    for (const para of String(text || '').split(/\n\s*\n/)) {
-      if (!para.trim()) continue;
+    for (const { text: para, kind } of scriptParagraphs(text)) {
       const p = document.createElement('p');
-      p.textContent = para.trim();
+      if (kind !== 'body') p.className = 'ps-' + kind;
+      p.textContent = para;
       el.appendChild(p);
     }
   }
@@ -1983,14 +1997,15 @@
     const points = $('#ps-points');
     points.innerHTML = '';
     const slidePoints = hasDeck && update.slide && Array.isArray(update.slide.points) ? update.slide.points : [];
+    // Wide keeps the script on screen beside an answer; narrow has no room for it.
+    const script = hasDeck && update.slide && (mode === 'wide' || !folded) ? String(update.slide.script || '') : '';
     if (hasDeck && update.slide) {
-      for (const text of visiblePoints(update.slide.points, folded, mode)) {
+      for (const text of visiblePoints(update.slide.points, folded, mode, !!script.trim())) {
         const li = document.createElement('li');
         li.textContent = text;
         points.appendChild(li);
       }
     }
-    const script = hasDeck && update.slide && !folded ? String(update.slide.script || '') : '';
     renderScript(script);
     strip.classList.toggle('has-script', !!script.trim());
     const expand = $('#ps-expand');
@@ -2012,8 +2027,6 @@
     $('#ps-meta').classList.toggle('hidden', !nextText && !flags.length);
     // Narrow, with an answer on screen: only the status line (and its ▸).
     strip.classList.toggle('answering', mode === 'narrow' && folded);
-    // Wide: the script column takes more room until an answer arrives.
-    strip.classList.toggle('has-answer', !!presentationAnswerShown);
     strip.classList.remove('hidden');
     const status = headerStatus(update);
     headerStatusEl.textContent = status;
@@ -2443,6 +2456,7 @@
     $('#setup-save').checked = !!setup.saveSessions;
     $('#setup-duration').value = String(setup.durationMin || 45);
     $('#setup-script-length').value = setup.scriptLength || 'standard';
+    $('#setup-follow').value = setup.followSlides || 'auto';
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
     if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
@@ -2499,6 +2513,7 @@
       const minutes = Number.parseInt($('#setup-duration').value, 10);
       patch.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, minutes)) : (setup.durationMin || 45);
       patch.scriptLength = $('#setup-script-length').value;
+      patch.followSlides = $('#setup-follow').value;
       // Before the display list arrives the select is empty: keep the saved choice.
       if ($('#setup-display').options.length) patch.watchDisplayId = $('#setup-display').value;
     }

@@ -265,6 +265,21 @@ test('a deck pointer whose file only looks like .json is rejected', () => {
   for (const s of out.setups.slice(1)) assert.equal(s.deck, null);
 });
 
+test('a presentation setup follows slides automatically by default, or by keys only', () => {
+  assert.equal(makeSetup({ kind: 'presentation' }).followSlides, 'auto');
+  const out = normalizeSetups({ setups: [
+    { id: 'a', name: 'A', kind: 'presentation', followSlides: 'keys' },
+    { id: 'b', name: 'B', kind: 'presentation', followSlides: 'sometimes' },
+    { id: 'c', name: 'C', kind: 'general', followSlides: 'keys' }
+  ] });
+  const [, a, b, c] = out.setups;
+  assert.equal(a.followSlides, 'keys');
+  assert.equal(b.followSlides, 'auto');
+  assert.equal('followSlides' in c, false);
+  const e = effectiveSettings({ setupsVersion: 1, activeSetupId: 'p', setups: [{ id: 'p', name: 'P', kind: 'presentation', followSlides: 'keys' }] });
+  assert.equal(e.followSlides, 'keys');
+});
+
 test('a presentation setup has a script length, standard by default', () => {
   assert.equal(makeSetup({ kind: 'presentation' }).scriptLength, 'standard');
   const out = normalizeSetups({ setups: [

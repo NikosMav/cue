@@ -310,11 +310,15 @@ test('a changed import aborts any running enrichment, even with nothing to enric
   assert.match(mainBlock(main, 'function abortDeckEnrichment('), /running\.controller\.abort\(\); deckEnrichments\.delete\(setupId\)/);
 });
 
-test('presentation polling skips the frame capture without a matcher', () => {
+test('presentation polling skips the frame capture without a matcher or when following by keys', () => {
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8').replace(/\r\n/g, '\n');
+  const guard = "if (!rt || !rt.matcher || rt.followSlides === 'keys') return;";
   const poll = mainBlock(main, 'async function pollPresentation()');
-  assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') > -1);
-  assert.ok(poll.indexOf('if (!rt || !rt.matcher) return;') < poll.indexOf('captureHashFrame('));
+  assert.ok(poll.indexOf(guard) > -1);
+  assert.ok(poll.indexOf(guard) < poll.indexOf('captureHashFrame('));
+  const start = mainBlock(main, 'async function startRendererFrames()');
+  assert.ok(start.indexOf("if (rt.followSlides === 'keys') { stopRendererFrames(); return; }") > -1, 'keys only: no frame stream');
+  assert.ok(start.indexOf("rt.followSlides === 'keys'") < start.indexOf('desktopCapturer.getSources('));
 });
 
 test('coverage checks wait for speech-to-text and keep one flag per slide', () => {
@@ -342,10 +346,17 @@ test('visiblePoints: wide always shows every point; narrow hides them under an a
   assert.deepEqual(visiblePoints(undefined, true, 'wide'), []);
 });
 
-test('wide presentation: the strip is the left column, 40 % and at least 280 px', () => {
+test('visiblePoints: wide shows no points when the slide has a script; narrow keeps them', () => {
+  const { visiblePoints } = helpers();
+  assert.deepEqual(visiblePoints(['a', 'b'], false, 'wide', true), []);
+  assert.deepEqual(visiblePoints(['a', 'b'], true, 'wide', true), []);
+  assert.deepEqual(visiblePoints(['a', 'b'], false, 'narrow', true), ['a', 'b']);
+});
+
+test('wide presentation: the strip is the left column, 60 % and at least 280 px', () => {
   assert.match(html, /<div id="panel-body">\s*<div id="presenter-strip"/);
   assert.match(css, /#app\.wide #panel-body\.presenting \{[^}]*flex-direction: row;/);
-  assert.match(css, /#app\.wide #panel-body\.presenting > \.presenter-strip \{[^}]*flex: 0 0 40%;[^}]*min-width: 280px;/);
+  assert.match(css, /#app\.wide #panel-body\.presenting > \.presenter-strip \{[^}]*flex: 0 0 60%;[^}]*min-width: 280px;/);
   assert.match(src, /\$\('#panel-body'\)\.classList\.toggle\('presenting', !!setup\)/);
 });
 
@@ -358,7 +369,7 @@ test('narrow: a ▸ on the status line shows the points until the next answer or
   assert.match(html, /<div class="ps-head">[\s\S]*?<button id="ps-expand" class="ps-expand hidden" type="button"[^>]*>▸<\/button>/);
   const render = src.slice(src.indexOf('function renderPresenterStrip()'), src.indexOf("$('#ps-flags').addEventListener"));
   assert.match(render, /presentationPointsExpanded = false;/, 'a slide change folds them again');
-  assert.match(render, /visiblePoints\(update\.slide\.points, folded, mode\)/);
+  assert.match(render, /visiblePoints\(update\.slide\.points, folded, mode, !!script\.trim\(\)\)/);
   assert.match(render, /strip\.classList\.toggle\('answering', mode === 'narrow' && folded\)/);
   const set = src.slice(src.indexOf('function setPresentationAnswerShown('), src.indexOf('\n  }\n', src.indexOf('function setPresentationAnswerShown(')));
   assert.match(set, /if \(shown\) presentationPointsExpanded = false;/, 'a new answer folds them again');

@@ -9,8 +9,10 @@ const { MAX_AI_RULES_CHARS } = require('./profile-context');
 const BUILTIN_SETUP_ID = 'any';
 const SETUPS_VERSION = 1;
 const KINDS = ['interview', 'general', 'presentation'];
-const PRESENTATION_DEFAULTS = { durationMin: 45, watchDisplayId: '', deck: null, scriptLength: 'standard' };
+const PRESENTATION_DEFAULTS = { durationMin: 45, watchDisplayId: '', deck: null, scriptLength: 'standard', followSlides: 'auto' };
 const SCRIPT_LENGTHS = ['short', 'standard', 'detailed'];
+// 'auto' watches the screen for slide changes; 'keys' moves only on the slide shortcuts.
+const FOLLOW_SLIDES = ['auto', 'keys'];
 const DECK_FILE_RE = /^[A-Za-z0-9_-]+\.json$/;
 const ABOUT_ME_FIELDS = ['resumeText', 'stories', 'workStyle'];
 const SETUP_TEXT_FIELDS = ['conversation', 'notes', 'whyCompany', 'whyLeaving', 'salaryTarget', 'questionsToAsk', 'instructions'];
@@ -71,6 +73,7 @@ function normalizeSetups(settings) {
       setup.watchDisplayId = str(raw.watchDisplayId);
       setup.deck = normalizeDeckPointer(raw.deck);
       setup.scriptLength = SCRIPT_LENGTHS.includes(raw.scriptLength) ? raw.scriptLength : PRESENTATION_DEFAULTS.scriptLength;
+      setup.followSlides = FOLLOW_SLIDES.includes(raw.followSlides) ? raw.followSlides : PRESENTATION_DEFAULTS.followSlides;
     }
     // The import and the Settings form cap this too; a hand-edited file may not.
     setup.instructions = setup.instructions.slice(0, MAX_AI_RULES_CHARS);
@@ -144,7 +147,7 @@ function effectiveSettings(settings) {
     setupName: setup.name,
     setupId: setup.id,
     ...(setup.kind === 'presentation'
-      ? { durationMin: setup.durationMin, watchDisplayId: setup.watchDisplayId, deck: setup.deck, scriptLength: setup.scriptLength }
+      ? { durationMin: setup.durationMin, watchDisplayId: setup.watchDisplayId, deck: setup.deck, scriptLength: setup.scriptLength, followSlides: setup.followSlides }
       : {})
   };
 }

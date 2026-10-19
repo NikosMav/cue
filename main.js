@@ -1060,9 +1060,11 @@ function loadPresentationRuntime({ reset = false } = {}) {
       next = rt;
     }
     const displayChanged = next === prev && next.displayId !== s.watchDisplayId;
+    const followChanged = next === prev && next.followSlides !== s.followSlides;
     next.displayId = s.watchDisplayId;
-    // Same runtime, other display: point the frame stream at it.
-    if (displayChanged && state.capturing) startRendererFrames();
+    next.followSlides = s.followSlides;
+    // Same runtime, other display or follow mode: restart (or stop) the frame stream.
+    if ((displayChanged || followChanged) && state.capturing) startRendererFrames();
   }
   if (prev && prev !== next) flushMatchCache();
   presentationRuntime = next;
@@ -1087,6 +1089,8 @@ const rendererFrames = { active: false, generation: 0 };
 async function startRendererFrames() {
   const rt = presentationRuntime;
   if (!rt || !rt.matcher) return;
+  // Following by keys only: no screen watching at all.
+  if (rt.followSlides === 'keys') { stopRendererFrames(); return; }
   const generation = ++rendererFrames.generation;
   try {
     // Thumbnails off: the lookup then skips capturing every screen.
@@ -1120,8 +1124,8 @@ async function pollPresentation() {
   if (rendererFrames.active) return;
   if (presentationPollBusy) return;
   const rt = presentationRuntime;
-  // No deck, no matcher: nothing to compare a frame with, so do not capture.
-  if (!rt || !rt.matcher) return;
+  // No deck, no matcher, or following by keys only: do not capture.
+  if (!rt || !rt.matcher || rt.followSlides === 'keys') return;
   let frame = null;
   presentationPollBusy = true;
   try {

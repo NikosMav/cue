@@ -594,7 +594,7 @@ test('dialog overlays do not darken or blur the window behind them', () => {
 test('the wide presenter column shows the speaker script, in paragraphs, under smaller key points', () => {
   assert.match(html, /<div id="ps-script" class="ps-script"><\/div>/);
   assert.match(src, /function renderScript\(/);
-  const body = src.slice(src.indexOf('function renderScript('), src.indexOf('\n  }\n', src.indexOf('function renderScript(')));
+  const body = src.slice(src.indexOf('function scriptParagraphs('), src.indexOf('\n  }\n', src.indexOf('function renderScript(')));
   assert.ok(body.includes(String.raw`.split(/\n\s*\n/)`), 'blank lines separate paragraphs');
   assert.match(body, /\.textContent = /);
   assert.doesNotMatch(body, /innerHTML = [^'"]/);
@@ -612,9 +612,30 @@ test('Review slides edits a Script per slide', () => {
   assert.match(src, /script: slide\.script \|\| ''/);
 });
 
-test('wide presenting: the script column widens while no answer is shown', () => {
-  assert.match(src, /strip\.classList\.toggle\('has-answer', !!presentationAnswerShown\);/);
-  assert.match(css, /#app\.wide #panel-body\.presenting > \.presenter-strip:not\(\.has-answer\) \{ flex-basis: 60%; \}/);
+test('wide presenting: the script column keeps 60 % and stays visible beside an answer', () => {
+  assert.doesNotMatch(src, /has-answer/);
+  assert.doesNotMatch(css, /has-answer/);
+  const render = src.slice(src.indexOf('function renderPresenterStrip()'), src.indexOf("$('#ps-flags').addEventListener"));
+  assert.match(render, /\(mode === 'wide' \|\| !folded\) \? String\(update\.slide\.script \|\| ''\)/);
+});
+
+test('stage directions in the script (▶ ⏸ ◀) are styled apart', () => {
+  const body = src.slice(src.indexOf('function renderScript('), src.indexOf('\n  }\n', src.indexOf('function renderScript(')));
+  assert.match(body, /p\.className = 'ps-' \+ kind/);
+  assert.match(css, /\.ps-script p\.ps-cue \{[^}]*color: var\(--accent-hi\)/);
+});
+
+test('the script marks the first spoken paragraph as intro and the last as the bridge', () => {
+  const start = src.indexOf('function scriptParagraphs(');
+  const fnSrc = src.slice(start, src.indexOf('\n  }\n', start) + 4);
+  const scriptParagraphs = new Function(fnSrc + '\nreturn scriptParagraphs;')();
+  const kinds = (t) => scriptParagraphs(t).map((p) => p.kind);
+  assert.deepEqual(kinds('▶ SHOW\n\nHello.\n\nMiddle.\n\n⏸ PAUSE\n\nNext slide.\n\n◀ BACK'), ['cue', 'intro', 'body', 'cue', 'bridge', 'cue']);
+  assert.deepEqual(kinds('Only line.'), ['intro'], 'a single spoken paragraph is just the intro');
+  assert.deepEqual(kinds('Hi.\n\nBye.'), ['intro', 'bridge']);
+  assert.deepEqual(kinds(''), []);
+  assert.match(css, /\.ps-script p\.ps-intro \{ font-weight: 700; \}/);
+  assert.match(css, /\.ps-script p\.ps-bridge::before \{ content: '→ '; \}/);
 });
 
 test('the empty state says cue is listening once listening has started', () => {
@@ -633,6 +654,9 @@ test('Settings has a Script length choice for presentation setups', () => {
   for (const v of ['short', 'standard', 'detailed']) assert.match(html, new RegExp('<option value="' + v + '"'));
   assert.match(src, /\$\('#setup-script-length'\)\.value = setup\.scriptLength \|\| 'standard';/);
   assert.match(src, /patch\.scriptLength = \$\('#setup-script-length'\)\.value;/);
+  assert.match(src, /\$\('#setup-follow'\)\.value = setup\.followSlides \|\| 'auto';/);
+  assert.match(src, /patch\.followSlides = \$\('#setup-follow'\)\.value;/);
+  assert.match(html, /<select id="setup-follow"[\s\S]*?<option value="keys">/);
   assert.match(html, /Applies to newly generated scripts/);
 });
 
