@@ -334,3 +334,20 @@ in public issues, examples and test fixtures.
   publik transcription batcher and its meeting-audio cut rules (the fork's
   own batch transcriber covers every provider); meeting memory; upstream's
   `.loop/` merge automation and its publik-build and loop workflows.
+
+## Dependencies
+
+- 2026-11-09. Each pinned to its newest release at least two weeks old:
+  `@anthropic-ai/sdk` 1.3.0 (from 0.32; sends API version 2026-10-21 and the
+  key as `Authorization: Bearer`, both accepted by the Claude API; the fork
+  sends no sampling parameters, documents in assistant turns or user-side
+  citations, so nothing else changed; the SDK is now Apache-2.0, which the
+  GPL-3.0 app may include), `openai` 7.43.0 (from 4.x), Electron 44.9.3,
+  electron-builder 26.18.0, `@google/genai` 2.31.0, `ws` 8.22.0, plus jszip,
+  mammoth and resedit patches. `lucide-static` (unused; icons are inlined)
+  and `extract-zip` (symlink path traversal, no fix) are gone;
+  `scripts/prepare-whisper-runtime.js` unpacks with a jszip extractor that
+  refuses symlinks and escaping paths. Not upgraded: Electron 45 (only the
+  bare 45.0.0 was two weeks old; 44 is supported), `@google/genai` 3 and
+  `pdf-parse` 2 (API rewrites). `npm audit` still reports 6 moderate
+  findings, all in electron-builder's build-time dependencies.
