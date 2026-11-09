@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const extractZip = require('extract-zip');
+const JSZip = require('jszip');
 const tar = require('tar');
 const {
   WHISPER_CPP_VERSION,
@@ -96,6 +96,38 @@ async function copyRuntimeDependencies(sourceDirectory, executableName, destinat
   await fs.promises.copyFile(LICENSE_PATH, path.join(destinationDirectory, 'whisper.cpp.LICENSE'));
   if (process.platform !== 'win32') {
     await fs.promises.chmod(path.join(destinationDirectory, executableName), 0o755);
+  }
+}
+
+// Unpacks a zip into `directory`, refusing entries that are symbolic links or
+// whose path would land outside it (extract-zip <= 2.0.1 followed both).
+const SYMLINK_MODE = 0o120000;
+async function extractZip(archivePath, { dir }) {
+  const root = path.resolve(dir);
+  const zip = await JSZip.loadAsync(await fs.promises.readFile(archivePath));
+  for (const entry of Object.values(zip.files)) {
+    // JSZip renames an escaping entry ("../x" becomes "x") and keeps the
+    // original name here; refuse the archive rather than write it elsewhere.
+    if (entry.unsafeOriginalName && entry.unsafeOriginalName !== entry.name) {
+      throw new Error(`Unsafe archive path: ${entry.unsafeOriginalName}`);
+    }
+    const name = entry.name.replace(/\\/g, '/');
+    const target = path.resolve(root, name);
+    const relative = path.relative(root, target);
+    if (!name || path.posix.isAbsolute(name) || /^[A-Za-z]:/.test(name) || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`Unsafe archive path: ${entry.name}`);
+    }
+    if (entry.unixPermissions && (entry.unixPermissions & 0o170000) === SYMLINK_MODE) {
+      throw new Error(`Archive entry is a symbolic link: ${entry.name}`);
+    }
+    if (entry.dir) {
+      await fs.promises.mkdir(target, { recursive: true });
+      continue;
+    }
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.writeFile(target, await entry.async('nodebuffer'));
+    const mode = entry.unixPermissions & 0o777;
+    if (process.platform !== 'win32' && mode) await fs.promises.chmod(target, mode);
   }
 }
 
@@ -292,5 +324,6 @@ module.exports = {
   prepareWhisperRuntime,
   assertSafeManagedDirectory,
   shouldCopyRuntimeEntry,
-  extractTarWithMaterializedLinks
+  extractTarWithMaterializedLinks,
+  extractZip
 };
