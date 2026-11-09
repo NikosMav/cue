@@ -213,6 +213,24 @@ Them is the audience, You is the presenter.
   16-character hashes and slide numbers for matching.
   Interview and general prompts are unchanged byte for byte
   (`test/prompts-guard.test.js`).
+- **Answer language** (Settings → Style): English (default), Auto (the
+  language of the slides and the conversation) or one of the speech languages
+  (Greek, German, French, Spanish, Italian, Portuguese, Dutch).
+  `src/answer-language.js` swaps the English rule in every prompt that has it
+  (live answers, ask, practice, debriefs, slide scripts) and adds the rule to
+  follow-ups and recaps, before the user's own rules. The coding solver writes
+  its prose in that language and keeps code, identifiers and comments in
+  English. English prompts are unchanged byte for byte.
+- **Script source** (per presentation setup, next to Script length and Follow
+  slides): "Write it for me" (default) or "Use my speaker notes as written".
+  With notes, each slide's script is its speaker notes word for word, line
+  breaks included (a soft line break in the notes stays a line break). Slides
+  without notes get an empty script. The import makes no AI call, needs no
+  provider and leaves points, questions and key idea empty. Each line is
+  shown as written, and lines starting with ▶, ⏸ or ◀ keep the stage-direction
+  style. A re-import takes corrected notes for unedited slides. Review slides
+  still edits the script; the script editor now takes up to 3,000 characters,
+  the same as the notes limit (`NOTES_CHARS`). Before, the editor cut scripts at 2,400.
 
 ## Live panel redesign
 

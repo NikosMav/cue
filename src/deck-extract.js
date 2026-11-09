@@ -30,8 +30,9 @@ function attr(tag, name) {
 }
 
 // Paragraph texts (a:p -> joined a:t), empty paragraphs dropped. A soft line
-// break (a:br) inside a paragraph becomes a single space.
-function paragraphs(xml) {
+// break (a:br) inside a paragraph becomes a single space, or with keepBreaks
+// (speaker notes, which can be the script as written) a line break.
+function paragraphs(xml, keepBreaks = false) {
   const out = [];
   const pRe = /<a:p(?=[\s>])[^>]*>([\s\S]*?)<\/a:p>/g;
   let m;
@@ -40,9 +41,10 @@ function paragraphs(xml) {
     let t, text = '';
     while ((t = tRe.exec(m[1]))) {
       if (t[1] !== undefined) text += decode(t[1]);
+      else if (keepBreaks) text += '\n';
       else if (text && !/\s$/.test(text)) text += ' ';
     }
-    text = text.trim();
+    text = keepBreaks ? text.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{2,}/g, '\n').trim() : text.trim();
     if (text) out.push(text);
   }
   return out;
@@ -116,7 +118,7 @@ async function extractPptx(buffer) {
       const nxml = nr ? await read(resolve(path.posix.dirname(slidePath), nr.target)) : null;
       if (nxml) {
         const lines = [];
-        mapShapes(nxml, (sp, type) => { if (type === 'body') lines.push(...paragraphs(sp)); return ''; });
+        mapShapes(nxml, (sp, type) => { if (type === 'body') lines.push(...paragraphs(sp, true)); return ''; });
         notes = lines.join('\n');
       }
     }

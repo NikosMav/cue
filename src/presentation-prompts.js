@@ -1,4 +1,5 @@
 const { shouldCheckCoverage } = require('./presentation-state');
+const { ENGLISH_RULE_PRESENTATION, applyAnswerLanguage } = require('./answer-language');
 const POINT_CHARS = 160;
 // A backstop on characters; the word limit below normally applies first.
 const SCRIPT_CHARS = 2400;
@@ -13,8 +14,8 @@ const QUESTION_CHARS = 160;
 const KEY_IDEA_CHARS = 120;
 const IMAGE_PLACEHOLDER = '(image slide: add your own points)';
 
-const BASE_RULES =
-  'Always respond in clear, natural English. Never switch to any other language unless the user explicitly asks for it. ';
+// English as written; applyAnswerLanguage swaps it for the chosen answer language.
+const BASE_RULES = ENGLISH_RULE_PRESENTATION;
 
 // Pull the first top-level JSON array or object out of model text.
 function extractJson(text) {
@@ -62,7 +63,7 @@ function trimToWords(text, maxWords) {
   }
   return out.trim();
 }
-function buildEnrichRequest({ conversation, notes, titles, batch, scriptLength = 'standard' }) {
+function buildEnrichRequest({ conversation, notes, titles, batch, scriptLength = 'standard', answerLanguage = 'en' }) {
   const [low, high] = SCRIPT_WORDS[scriptLength] || SCRIPT_WORDS.standard;
   const target = Math.round((low + high) / 2);
   const lead = scriptLength === 'detailed'
@@ -95,7 +96,7 @@ function buildEnrichRequest({ conversation, notes, titles, batch, scriptLength =
     'All slide titles, for context:\n' + list + '\n\n' +
     'Slides to write for (JSON):\n' + JSON.stringify(batch || []);
   // Four scripts of up to 200 words plus points and questions, in JSON.
-  return { system, turns: [{ role: 'user', text }], maxTokens: 5000, effort: 'medium' };
+  return { system: applyAnswerLanguage(system, { answerLanguage }), turns: [{ role: 'user', text }], maxTokens: 5000, effort: 'medium' };
 }
 
 function cleanList(v, max, cap) {

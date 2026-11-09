@@ -2124,9 +2124,11 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
   try {
     const setup = presentationSetup(setupId);
     if (!setup) return;
-    const llm = createLLM({ ...currentSettings(), smart: true });
+    // Speaker notes used as written need no AI provider.
+    const fromNotes = setup.scriptSource === 'notes';
+    const llm = fromNotes ? null : createLLM({ ...currentSettings(), smart: true });
     const total = Math.ceil(deck.slides.filter(s => ns.includes(s.n) && !s.edited).length / 8);
-    if (!llm.ready) {
+    if (llm && !llm.ready) {
       // Without a provider, flag the slides so the UI can offer a retry.
       const failed = { ...deck, slides: deck.slides.map(s => (ns.includes(s.n) && !s.edited ? { ...s, enrichError: true } : s)) };
       deckStore().save(file, failed);
@@ -2139,6 +2141,8 @@ async function runDeckEnrichment(setupId, file, deck, ns, { fromImport = false }
       conversation: setup.conversation,
       notes: setup.notes,
       scriptLength: setup.scriptLength,
+      scriptSource: setup.scriptSource,
+      answerLanguage: currentSettings().answerLanguage,
       signal: controller.signal,
       call: request => streamWithWatchdog(params => llm.stream(params), {
         system: request.system,
@@ -2188,7 +2192,8 @@ ipcMain.handle('deck:import', async (_e, setupId) => {
     if (stat.size > MAX_FILE_BYTES) throw new DeckError('That file is larger than ' + Math.round(MAX_FILE_BYTES / (1024 * 1024)) + ' MB.');
     const buffer = await fs.promises.readFile(filePath);
     const file = deckStore().fileFor(setupId);
-    const { deck, unchanged, toEnrich } = await importDeck({ buffer, type, fileName, previous: deckStore().load(file) });
+    const setup = presentationSetup(setupId);
+    const { deck, unchanged, toEnrich } = await importDeck({ buffer, type, fileName, previous: deckStore().load(file), scriptSource: setup && setup.scriptSource });
     if (!unchanged) {
       // A run for the old deck must stop merging its slide-n points into this
       // one, even when this import needs no enrichment at all.
@@ -2229,7 +2234,8 @@ ipcMain.handle('deck:update-slide', (_e, setupId, n, patch) => {
   slide.points = list(p.points);
   slide.questions = list(p.questions);
   slide.keyIdea = typeof p.keyIdea === 'string' ? p.keyIdea : '';
-  if (typeof p.script === 'string') slide.script = p.script.slice(0, 2400);
+  // Room for a script taken from speaker notes (src/deck-extract.js NOTES_CHARS).
+  if (typeof p.script === 'string') slide.script = p.script.slice(0, 3000);
   slide.edited = true;
   slide.enrichError = false;
   deckStore().save(file, deck);

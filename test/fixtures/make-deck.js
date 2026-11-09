@@ -8,7 +8,8 @@ const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const para = (t) => (t === '' ? '<a:p/>' : `<a:p><a:r><a:t>${esc(t)}</a:t></a:r></a:p>`);
+// A line break inside a paragraph's text becomes a soft line break (a:br).
+const para = (t) => (t === '' ? '<a:p/>' : '<a:p>' + String(t).split('\n').map((x) => `<a:r><a:t>${esc(x)}</a:t></a:r>`).join('<a:br/>') + '</a:p>');
 const sp = (ph, lines) =>
   `<p:sp><p:nvSpPr><p:cNvPr id="1" name="s"/><p:cNvSpPr/><p:nvPr><p:ph ${ph}/></p:nvPr></p:nvSpPr>` +
   `<p:txBody><a:bodyPr/>${lines.map(para).join('')}</p:txBody></p:sp>`;
@@ -37,7 +38,7 @@ async function makePptx(slides, { order } = {}) {
     if (s.notes) {
       zip.file(`ppt/slides/_rels/slide${n}.xml.rels`, rels([['rId1', 'notesSlide', `../notesSlides/notesSlide${n}.xml`]]));
       zip.file(`ppt/notesSlides/notesSlide${n}.xml`,
-        `<p:notes ${NS}><p:cSld><p:spTree>${sp('type="sldImg"', [])}${sp('type="body" idx="1"', [s.notes])}${sp('type="sldNum"', [String(n)])}</p:spTree></p:cSld></p:notes>`);
+        `<p:notes ${NS}><p:cSld><p:spTree>${sp('type="sldImg"', [])}${sp('type="body" idx="1"', Array.isArray(s.notes) ? s.notes : [s.notes])}${sp('type="sldNum"', [String(n)])}</p:spTree></p:cSld></p:notes>`);
     }
   });
   return zip.generateAsync({ type: 'nodebuffer' });

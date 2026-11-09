@@ -9,7 +9,12 @@ const { buildEnrichRequest, parseEnrichResponse } = require('./presentation-prom
 const BATCH_SIZE = 4;
 const MAX_QUESTIONS = 6;
 
-async function importDeck({ buffer, type, fileName, previous, extract = extractDeck }) {
+// "Use my speaker notes as written": the script is the slide's notes, unchanged.
+function notesScript(slide) {
+  return typeof slide.notes === 'string' ? slide.notes : '';
+}
+
+async function importDeck({ buffer, type, fileName, previous, scriptSource = 'write', extract = extractDeck }) {
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
   if (previous && previous.source && previous.source.sha256 === sha256) {
     return { deck: previous, unchanged: true, toEnrich: [] };
@@ -20,7 +25,9 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
 
   const carried = new Map();
   for (const s of (previous && previous.slides) || []) {
-    const has = s.edited || s.points.length || s.questions.length || s.keyIdea || s.script;
+    // With notes as the script, only hand edits carry over: an unedited slide
+    // takes its notes again, so a corrected note is not hidden by the old one.
+    const has = scriptSource === 'notes' ? s.edited : s.edited || s.points.length || s.questions.length || s.keyIdea || s.script;
     if (has && s.fingerprint && !carried.has(s.fingerprint)) carried.set(s.fingerprint, s);
   }
   const toEnrich = [];
@@ -38,11 +45,26 @@ async function importDeck({ buffer, type, fileName, previous, extract = extractD
 }
 
 // Never throws. A failed call or an unparseable reply flags that batch only.
-async function enrichDeck(deck, { ns, call, conversation, notes, scriptLength, onBatch, signal }) {
+// scriptSource 'notes' makes no call: each script is the slide's notes as
+// written, and points, questions and key idea stay empty.
+async function enrichDeck(deck, { ns, call, conversation, notes, scriptLength, scriptSource = 'write', answerLanguage, onBatch, signal }) {
   let current = { ...deck, slides: deck.slides.map((s) => ({ ...s })) };
   const scriptOnly = new Set(current.slides.filter((s) => s.edited && !s.script).map((s) => s.n));
   const wanted = new Set(ns || []);
   const targets = current.slides.filter((s) => wanted.has(s.n) && (!s.edited || scriptOnly.has(s.n))).map((s) => s.n);
+  if (scriptSource === 'notes') {
+    if (!targets.length || (signal && signal.aborted)) return current;
+    current = {
+      ...current,
+      slides: current.slides.map((s) => {
+        if (!targets.includes(s.n)) return s;
+        if (scriptOnly.has(s.n)) return { ...s, script: notesScript(s) };
+        return { ...s, points: [], questions: [], keyIdea: '', script: notesScript(s), enrichError: false };
+      }),
+    };
+    if (onBatch) onBatch(current, 1, 1, targets);
+    return current;
+  }
   const titles = current.slides.map((s) => s.title);
   const total = Math.ceil(targets.length / BATCH_SIZE);
   for (let i = 0; i < total; i++) {
@@ -55,7 +77,7 @@ async function enrichDeck(deck, { ns, call, conversation, notes, scriptLength, o
     });
     let results = [];
     try {
-      const text = await call(buildEnrichRequest({ conversation, notes, titles, batch, scriptLength }));
+      const text = await call(buildEnrichRequest({ conversation, notes, titles, batch, scriptLength, answerLanguage }));
       results = parseEnrichResponse(text, batchNs, { scriptLength }) || [];
     } catch (_) { results = []; }
     if (signal && signal.aborted) break;

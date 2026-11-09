@@ -4,6 +4,7 @@ const { acceleratorFromEvent, acceleratorParts, formatAccelerator } = require('.
 const { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./src/setups');
 const { findSetupSpecificLines } = require('./src/about-me-check');
 const { STT_LANGUAGES, resolveSttLanguage } = require('./src/stt-language');
+const { ANSWER_LANGUAGES, resolveAnswerLanguage } = require('./src/answer-language');
 const { TEXT_DEFAULT, TEXT_MIN, TEXT_MAX, TEXT_STEP, answerScale, BREAKPOINT, layoutMode } = require('./src/panel-layout');
 const platform = process.platform;
 
@@ -11,6 +12,7 @@ contextBridge.exposeInMainWorld('cue', {
   platform,
   setupsModel: { makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS, findSetupSpecificLines },
   sttLanguages: { list: STT_LANGUAGES, resolve: resolveSttLanguage },
+  answerLanguages: { list: ANSWER_LANGUAGES, resolve: resolveAnswerLanguage },
   // Answer text size limits and clamp (one source with the settings store).
   panelText: { TEXT_DEFAULT, TEXT_MIN, TEXT_MAX, TEXT_STEP, answerScale },
   // narrow below BREAKPOINT px, wide from it (one source with the tests).

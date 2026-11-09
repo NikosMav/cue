@@ -605,7 +605,10 @@ test('the wide presenter column shows the speaker script, in paragraphs, under s
 
 test('Review slides edits a Script per slide', () => {
   assert.match(src, /script\.dataset\.field = 'script';/);
-  assert.match(src, /script: fields\.script\.value\.trim\(\)\.slice\(0, 2400\)/);
+  // Room for a script taken from speaker notes (NOTES_CHARS).
+  assert.match(src, /script: fields\.script\.value\.trim\(\)\.slice\(0, 3000\)/);
+  assert.match(src, /script\.maxLength = 3000;/);
+  assert.match(main, /slide\.script = p\.script\.slice\(0, 3000\)/);
   assert.match(src, /const DECK_BATCH_SIZE = 4;/);
   assert.doesNotMatch(src, /\/ 8\)/, 'batch estimates use DECK_BATCH_SIZE');
   assert.match(src, /points: parseLines\(fields\.points\.value\)\.map\(\(line\) => line\.slice\(0, 160\)\)/);
@@ -636,6 +639,35 @@ test('the script marks the first spoken paragraph as intro and the last as the b
   assert.deepEqual(kinds(''), []);
   assert.match(css, /\.ps-script p\.ps-intro \{ font-weight: 700; \}/);
   assert.match(css, /\.ps-script p\.ps-bridge::before \{ content: '→ '; \}/);
+});
+
+test('speaker notes used as written show line by line, stage directions apart, no intro or bridge', () => {
+  const start = src.indexOf('function scriptParagraphs(');
+  const fnSrc = src.slice(start, src.indexOf('\n  }\n', start) + 4);
+  const scriptParagraphs = new Function(fnSrc + '\nreturn scriptParagraphs;')();
+  const notes = 'Καλώς ήρθατε.\n▶ Δείξτε το διάγραμμα\nΈνα API είναι μια συμφωνία.\n⏸ Παύση\n◀ Πίσω\nΣτο επόμενο βίντεο.';
+  assert.deepEqual(scriptParagraphs(notes, true), [
+    { text: 'Καλώς ήρθατε.', kind: 'body' },
+    { text: '▶ Δείξτε το διάγραμμα', kind: 'cue' },
+    { text: 'Ένα API είναι μια συμφωνία.', kind: 'body' },
+    { text: '⏸ Παύση', kind: 'cue' },
+    { text: '◀ Πίσω', kind: 'cue' },
+    { text: 'Στο επόμενο βίντεο.', kind: 'body' }
+  ]);
+  assert.deepEqual(scriptParagraphs('', true), []);
+  const render = src.slice(src.indexOf('function renderPresenterStrip()'), src.indexOf("$('#ps-flags').addEventListener"));
+  assert.match(render, /renderScript\(script, setup\.scriptSource === 'notes'\)/);
+});
+
+test('Settings has a Script source choice for presentation setups and an Answer language under Style', () => {
+  assert.match(html, /<select id="setup-script-source"[^>]*>\s*<option value="write">Write it for me<\/option>\s*<option value="notes">Use my speaker notes as written<\/option>/);
+  assert.match(src, /\$\('#setup-script-source'\)\.value = setup\.scriptSource \|\| 'write';/);
+  assert.match(src, /patch\.scriptSource = \$\('#setup-script-source'\)\.value;/);
+  const style = html.slice(html.indexOf('data-pane="style"'));
+  assert.match(style, /<label class="s-label" for="answer-language">Answer language<\/label>/);
+  assert.match(src, /answerLanguageSelect\.value = cue\.answerLanguages\.resolve\(settings\);/);
+  assert.match(src, /settings\.answerLanguage = \$\('#answer-language'\)\.value \|\| 'en';/);
+  assert.doesNotMatch(html, /Answers stay in English/);
 });
 
 test('the empty state says cue is listening once listening has started', () => {

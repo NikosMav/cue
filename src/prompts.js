@@ -6,6 +6,7 @@
 const { appendAiRules } = require('./profile-context');
 const { buildInterviewContext, detectCategory, detectGeneralCategory, currentQuestionTurns } = require('./interview-context');
 const { extractJson } = require('./presentation-prompts');
+const { ENGLISH_RULE, applyAnswerLanguage } = require('./answer-language');
 
 // Length targets shared by the interview and general spoken styles.
 const ANSWER_SIZES = {
@@ -217,8 +218,8 @@ const SOLVE_PROMPT = 'Solve the coding problem shown in the screenshot.';
 // How many earlier coding exchanges a follow-up carries.
 const MAX_CODING_THREAD = 4;
 
-const BASE_RULES =
-  'Always respond in clear, natural English. Never switch to Hindi or any other language unless the user explicitly asks for it. ';
+// English as written; applyAnswerLanguage swaps it for the chosen answer language.
+const BASE_RULES = ENGLISH_RULE;
 
 // General-layer system prompts, one per spoken/summary mode.
 const GENERAL_SYSTEMS = {
@@ -746,6 +747,8 @@ function buildPromptRequest(settings, requestedMode, transcript, userText = '', 
   } else {
     system = def.buildSystem(context, settings.aiRules || '', settings.answerLength);
   }
+  // Every live answer gets its language here (Settings → Style → Answer language).
+  system = applyAnswerLanguage(system, settings, { coding: !!def.coding });
   const now = Number.isFinite(session.now) ? session.now : Date.now();
   // session.slides = { current, neighbours, relevant } from the caller (main.js).
   const slides = session.slides && typeof session.slides === 'object' ? session.slides : null;
@@ -820,7 +823,7 @@ const DEBRIEF_RULES =
 function buildGeneralDebriefRequest(settings, session) {
   const context = buildInterviewContext(settings, 'say');
   const heardUser = (session.transcript || []).some(t => t.channel === 'you');
-  const system = buildSystemGeneral(
+  const system = applyAnswerLanguage(buildSystemGeneral(
     'You are an assistant writing a debrief of a conversation for the user. ' +
     BASE_RULES +
     '"Them" is the other participants and "You" is the user, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
@@ -834,7 +837,7 @@ function buildGeneralDebriefRequest(settings, session) {
     DEBRIEF_RULES +
     (heardUser ? '' : 'The user\'s microphone was not captured: say so under Summary and work from what the others said. '),
     context
-  );
+  ), settings);
   return {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',
@@ -927,7 +930,7 @@ function slideMarkerEvents(session) {
 function buildPresentationDebriefRequest(settings, session) {
   const context = buildInterviewContext(settings, 'say');
   const heardPresenter = (session.transcript || []).some(t => t.channel === 'you');
-  const system = buildSystemPresentation(
+  const system = applyAnswerLanguage(buildSystemPresentation(
     'You are an experienced presentation coach writing a debrief of an educational talk for the presenter. ' +
     BASE_RULES +
     '"Them" is the audience (possibly several people) and "You" is the presenter, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
@@ -946,7 +949,7 @@ function buildPresentationDebriefRequest(settings, session) {
     'Ground everything in the record and the transcript: never invent questions, times or reactions, or what anyone said. ' +
     (heardPresenter ? '' : 'The presenter\'s microphone was not captured: say so under Timing and work from what the audience said. '),
     context
-  );
+  ), settings);
   return {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',
@@ -986,7 +989,7 @@ function buildDebriefRequest(settings, session) {
   const context = buildInterviewContext(settings, 'say');
   const practice = session.kind === 'practice';
   const heardCandidate = (session.transcript || []).some(t => t.channel === 'you');
-  const system = buildSystem(
+  const system = applyAnswerLanguage(buildSystem(
     'You are an experienced interview coach writing a debrief of ' + (practice ? 'a practice interview' : 'a job interview') + ' for the candidate. ' +
     BASE_RULES +
     '"Them" is the interviewer and "You" is the candidate, transcribed by speech-to-text (ignore filler words and transcription errors). ' +
@@ -1003,7 +1006,7 @@ function buildDebriefRequest(settings, session) {
     (practice ? 'Never invent what anyone said. ' : DEBRIEF_RULES) +
     (heardCandidate ? '' : 'The candidate\'s microphone was not captured: say so under Summary, list the questions, and review cue\'s suggestions instead of the candidate\'s answers. '),
     context
-  );
+  ), settings);
   return {
     system,
     cachePrefix: context && system.startsWith(context) ? context : '',

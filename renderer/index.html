@@ -258,7 +258,7 @@
 
         <label class="s-label" for="stt-language">Speech language <span class="s-hint">the language people speak in your calls</span></label>
         <select id="stt-language" class="s-select"></select>
-        <div class="s-note">Choose the language when you know it: transcription is more accurate. Auto-detect lets OpenAI, Groq and Local work it out; Deepgram then transcribes English and the main European languages, but not Greek. Answers stay in English.</div>
+        <div class="s-note">Choose the language when you know it: transcription is more accurate. Auto-detect lets OpenAI, Groq and Local work it out; Deepgram then transcribes English and the main European languages, but not Greek. Answers use Settings → Style → Answer language.</div>
 
         <label class="s-label">Meeting audio <span class="s-hint">transcribe the other side of a call</span></label>
         <div class="s-seg" id="meeting-audio-seg">
@@ -342,6 +342,12 @@
         <div class="presentation-only s-body hidden">
           <label class="s-label" for="setup-duration">Planned length <span class="s-hint">minutes, 5 to 240</span></label>
           <input id="setup-duration" class="s-input deck-duration" type="number" min="5" max="240" step="1" value="45" />
+          <label class="s-label" for="setup-script-source">Script source <span class="s-hint">where each slide's script comes from</span></label>
+          <select id="setup-script-source" class="s-select" aria-label="Script source">
+            <option value="write">Write it for me</option>
+            <option value="notes">Use my speaker notes as written</option>
+          </select>
+          <div class="s-note">With your notes, each slide shows its speaker notes word for word, with no talking points and no AI call. Use Generate again for unedited slides to switch an imported deck.</div>
           <label class="s-label" for="setup-script-length">Script length <span class="s-hint">what you say per slide</span></label>
           <select id="setup-script-length" class="s-select" aria-label="Script length">
             <option value="short">Short (about 50–80 words)</option>
@@ -408,6 +414,9 @@
           <option value="detailed">Detailed — fuller explanation</option>
         </select>
         <div class="s-hint-block">For spoken answers, start with the point, add one relevant detail, then stop. Explicit requests for more detail and coding solutions can be longer. Your AI rules can override this style.</div>
+        <label class="s-label" for="answer-language">Answer language</label>
+        <select id="answer-language" class="s-select" aria-label="Answer language"></select>
+        <div class="s-hint-block">The language of answers, recaps, follow-ups, debriefs and slide scripts. Auto answers in the language of the slides and the conversation. Coding solutions keep their code in English.</div>
         <label class="s-label" for="include-screen">Screen context for Assist and Ask</label>
         <select id="include-screen" class="s-select">
           <option value="yes">Include a screenshot</option>

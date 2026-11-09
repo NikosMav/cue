@@ -8,6 +8,8 @@ const MAX_AI_RULES_CHARS = 2000;
 // MAX_AI_RULES_CHARS and joined with a blank line (src/setups.js), so the
 // combined text fits here without clipping the global rules at the end.
 const MAX_COMBINED_RULES_CHARS = 2 * MAX_AI_RULES_CHARS + 2;
+// Opens the user's rules block; src/answer-language.js inserts before it.
+const USER_RULES_INTRO = 'The user has set the following rules for how you write. ';
 
 /**
  * Adds the user-written "AI rules" — instructions on HOW the AI should write —
@@ -32,8 +34,8 @@ function appendAiRules(systemPrompt, aiRules) {
   const rules = typeof aiRules === 'string' ? aiRules.trim() : '';
   if (!rules) return systemPrompt;
   const clipped = rules.slice(0, MAX_COMBINED_RULES_CHARS);
-  return systemPrompt +
-    '\n\nThe user has set the following rules for how you write. Follow them strictly — they override any default tone, length or formatting in the instructions above. ' +
+  return systemPrompt + '\n\n' + USER_RULES_INTRO +
+    'Follow them strictly — they override any default tone, length or formatting in the instructions above. ' +
     'If two rules conflict, prefer the rule that is more specific.\n' +
     '--- USER RULES ---\n' + clipped + '\n--- END USER RULES ---';
 }
@@ -42,4 +44,5 @@ module.exports = {
   MAX_AI_RULES_CHARS,
   MAX_COMBINED_RULES_CHARS,
   appendAiRules,
+  USER_RULES_INTRO,
 };

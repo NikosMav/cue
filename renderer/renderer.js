@@ -1495,6 +1495,16 @@
     // Style tab
     $('#ai-rules').value = settings.aiRules || '';
     $('#answer-length').value = ['brief', 'balanced', 'detailed'].includes(settings.answerLength) ? settings.answerLength : 'brief';
+    const answerLanguageSelect = $('#answer-language');
+    if (!answerLanguageSelect.options.length) {
+      for (const [code, name] of cue.answerLanguages.list) {
+        const option = document.createElement('option');
+        option.value = code;
+        option.textContent = name;
+        answerLanguageSelect.appendChild(option);
+      }
+    }
+    answerLanguageSelect.value = cue.answerLanguages.resolve(settings);
     applyPanelOpacity(settings.panelOpacity);
     $('#include-screen').value = settings.includeScreen === false ? 'no' : 'yes';
     $('#warm-up').value = settings.warmUp === false ? 'off' : 'on';
@@ -1947,7 +1957,13 @@
   // A paragraph starting with ▶, ⏸ or ◀ is a stage direction (switch screens,
   // pause) and is styled apart from the words to say. Of the spoken
   // paragraphs, the first is the intro and the last the bridge to the next slide.
-  function scriptParagraphs(text) {
+  // Speaker notes used as written show one paragraph per line, as typed, with
+  // stage directions still set apart and no intro or bridge styling.
+  function scriptParagraphs(text, asWritten) {
+    if (asWritten) {
+      return String(text || '').split(/\r?\n/).map((p) => p.trim()).filter(Boolean)
+        .map((p) => ({ text: p, kind: /^[▶⏸◀]/.test(p) ? 'cue' : 'body' }));
+    }
     const paras = String(text || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
     const spoken = paras.filter((p) => !/^[▶⏸◀]/.test(p));
     return paras.map((p) => ({
@@ -1957,10 +1973,10 @@
           : spoken.length > 1 && p === spoken[spoken.length - 1] ? 'bridge' : 'body'
     }));
   }
-  function renderScript(text) {
+  function renderScript(text, asWritten) {
     const el = $('#ps-script');
     el.textContent = '';
-    for (const { text: para, kind } of scriptParagraphs(text)) {
+    for (const { text: para, kind } of scriptParagraphs(text, asWritten)) {
       const p = document.createElement('p');
       if (kind !== 'body') p.className = 'ps-' + kind;
       p.textContent = para;
@@ -2006,7 +2022,7 @@
         points.appendChild(li);
       }
     }
-    renderScript(script);
+    renderScript(script, setup.scriptSource === 'notes');
     strip.classList.toggle('has-script', !!script.trim());
     const expand = $('#ps-expand');
     expand.classList.toggle('hidden', !(mode === 'narrow' && presentationAnswerShown && slidePoints.length));
@@ -2189,7 +2205,7 @@
   }
   // Slides an import left for enrichment (mirrors src/deck-import.js).
   function deckPending(deck) {
-    return deck.slides.filter((s) => !s.edited && !s.enrichError && !s.points.length && !s.questions.length && !s.keyIdea).length;
+    return deck.slides.filter((s) => !s.edited && !s.enrichError && !s.points.length && !s.questions.length && !s.keyIdea && !s.script).length;
   }
   function showDeckError(message) {
     const status = $('#deck-status');
@@ -2322,7 +2338,7 @@
     points.setAttribute('aria-label', 'Talking points');
     const script = document.createElement('textarea');
     script.rows = 7;
-    script.maxLength = 2400;
+    script.maxLength = 3000;
     script.dataset.field = 'script';
     script.setAttribute('aria-label', 'Script');
     const questions = document.createElement('textarea');
@@ -2384,7 +2400,7 @@
       res = await cue.deckUpdateSlide(setupId, slide.n, {
         keyIdea: fields.keyIdea.value.trim().slice(0, 120),
         points: parseLines(fields.points.value).map((line) => line.slice(0, 160)),
-        script: fields.script.value.trim().slice(0, 2400),
+        script: fields.script.value.trim().slice(0, 3000),
         questions: parseLines(fields.questions.value).map((line) => line.slice(0, 160))
       });
     } catch (error) {
@@ -2457,6 +2473,7 @@
     $('#setup-duration').value = String(setup.durationMin || 45);
     $('#setup-script-length').value = setup.scriptLength || 'standard';
     $('#setup-follow').value = setup.followSlides || 'auto';
+    $('#setup-script-source').value = setup.scriptSource || 'write';
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
     if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
@@ -2514,6 +2531,7 @@
       patch.durationMin = Number.isFinite(minutes) ? Math.min(240, Math.max(5, minutes)) : (setup.durationMin || 45);
       patch.scriptLength = $('#setup-script-length').value;
       patch.followSlides = $('#setup-follow').value;
+      patch.scriptSource = $('#setup-script-source').value;
       // Before the display list arrives the select is empty: keep the saved choice.
       if ($('#setup-display').options.length) patch.watchDisplayId = $('#setup-display').value;
     }
@@ -2668,6 +2686,7 @@
     // Style tab
     settings.aiRules = $('#ai-rules').value.trim();
     settings.answerLength = $('#answer-length').value;
+    settings.answerLanguage = $('#answer-language').value || 'en';
     settings.panelOpacity = Number($('#panel-opacity').value) / 100;
     settings.includeScreen = $('#include-screen').value !== 'no';
     settings.warmUp = $('#warm-up').value !== 'off';

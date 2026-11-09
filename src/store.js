@@ -67,6 +67,7 @@ const DEFAULTS = {
   // strict for coding problems).
   aiRules: '',
   answerLength: 'brief', // Spoken answers: brief, balanced, detailed.
+  answerLanguage: 'en',  // src/answer-language.js: 'en', 'auto' or a language code.
   includeScreen: true,  // Assist/Ask can run with conversation only.
   autoAnswer: false,
   warmUp: true,          // Prime the provider connection and prompt cache (main.js warmUpProvider).
