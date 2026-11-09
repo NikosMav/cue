@@ -105,3 +105,32 @@ test('"Write it for me" still calls the model', async () => {
   assert.equal(calls, 1);
   assert.equal(out.slides[0].script, 'Hello.');
 });
+
+test('a script that was the old notes follows the new notes, even on a slide edited otherwise; a typed script stays', async () => {
+  const { appendQuestions } = require('../src/deck-import');
+  const first = await importNotesDeck([{ title: 'A', body: ['x'], notes: 'παλιό' }, { title: 'B', body: ['y'], notes: 'σημειώσεις' }]);
+  let deck = await enrichDeck(first.deck, { ns: first.toEnrich, call: neverCall, scriptSource: 'notes' });
+  deck = appendQuestions(deck, [{ n: 1, question: 'Τι είναι REST;' }]);
+  deck = { ...deck, slides: deck.slides.map((s) => (s.n === 2 ? { ...s, script: 'δικά μου λόγια', edited: true } : s)) };
+  const buffer = await makePptx([{ title: 'A', body: ['x'], notes: 'διορθωμένο' }, { title: 'B', body: ['y'], notes: 'νέες σημειώσεις' }]);
+  const again = await importDeck({ buffer, type: 'pptx', fileName: 'lesson-1-2.pptx', previous: deck, scriptSource: 'notes' });
+  const [a, b] = again.deck.slides;
+  assert.equal(a.script, 'διορθωμένο');
+  assert.deepEqual(a.questions, ['Τι είναι REST;']);
+  assert.equal(b.script, 'δικά μου λόγια');
+});
+
+test('a blank line typed with soft line breaks inside a notes paragraph is kept', async () => {
+  const { slides } = await extractDeck(await makePptx([{ title: 'A', notes: ['Μέρος Α\n\nΜέρος Β', 'Τέλος'] }]), 'pptx');
+  assert.equal(slides[0].notes, 'Μέρος Α\n\nΜέρος Β\nΤέλος');
+});
+
+test('main uses the setup\'s script source and needs no AI provider for notes', () => {
+  const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
+  const run = main.slice(main.indexOf('async function runDeckEnrichment('), main.indexOf("ipcMain.handle('deck:import'"));
+  assert.match(run, /const llm = fromNotes \? null : createLLM\(/);
+  assert.match(run, /if \(llm && !llm\.ready\)/);
+  assert.match(run, /scriptSource: setup\.scriptSource,/);
+  assert.match(run, /answerLanguage: currentSettings\(\)\.answerLanguage,/);
+  assert.match(main, /importDeck\(\{ buffer, type, fileName, previous: deckStore\(\)\.load\(file\), scriptSource: setup && setup\.scriptSource \}\)/);
+});

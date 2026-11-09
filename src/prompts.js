@@ -365,14 +365,21 @@ function currentSlideBlock(slide) {
   if (textOf(slide.notes)) lines.push('Speaker notes: ' + textOf(slide.notes));
   const points = pointsOf(slide);
   if (points.length) lines.push('Talking points:\n' + points.map((p) => '- ' + p).join('\n'));
-  // What the presenter is saying on this slide, so an answer matches it.
-  if (textOf(slide.script)) lines.push('Presenter\'s script for this slide: ' + textOf(slide.script));
+  // What the presenter is saying on this slide, so an answer matches it. A
+  // script that is the speaker notes as written is already there once.
+  if (textOf(slide.script) && textOf(slide.script) !== textOf(slide.notes)) lines.push('Presenter\'s script for this slide: ' + textOf(slide.script));
   return lines.join('\n');
 }
 
+// Without talking points (speaker notes used as written, or not generated),
+// a short piece of the slide text stands in, so the slide is more than a title.
+const SUMMARY_BODY_CHARS = 200;
 function slideSummary(slide) {
   const points = pointsOf(slide);
-  return '- ' + slide.n + '. ' + (textOf(slide.title) || '(untitled)') + (points.length ? ': ' + points.join('; ') : '');
+  const body = textOf(slide.body).replace(/\s+/g, ' ');
+  const detail = points.length ? points.join('; ')
+    : body.length > SUMMARY_BODY_CHARS ? body.slice(0, SUMMARY_BODY_CHARS).trimEnd() + '…' : body;
+  return '- ' + slide.n + '. ' + (textOf(slide.title) || '(untitled)') + (detail ? ': ' + detail : '');
 }
 
 // Slide context for the user turn; empty when no deck is loaded.

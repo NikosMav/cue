@@ -1,10 +1,11 @@
 // Imports a prep profile (JSON) into About me and one setup, keeping keys,
 // models and every other setup as they are.
 const { migrateSettings, makeSetup, BUILTIN_SETUP_ID, INTERVIEW_ONLY_FIELDS } = require('./setups');
+const { resolveAnswerLanguage } = require('./answer-language');
 
 const IMPORTED_INTERVIEW_NAME = 'Imported interview';
 
-const GLOBAL_FIELDS = { answerLength: 'string', includeScreen: 'boolean', autoAnswer: 'boolean' };
+const GLOBAL_FIELDS = { answerLength: 'string', answerLanguage: 'string', includeScreen: 'boolean', autoAnswer: 'boolean' };
 // Profile key -> About me field. Old single-profile names are accepted.
 const ABOUT_ME_KEYS = { resumeText: 'resumeText', starStories: 'stories', stories: 'stories', workStyle: 'workStyle' };
 // Profile key -> setup field.
@@ -26,6 +27,7 @@ function mergeProfile(settings, profile, { setupName, warnings } = {}) {
     next[key] = profile[key];
   }
   if (next.answerLength && !['brief', 'balanced', 'detailed'].includes(next.answerLength)) throw new Error('Invalid answer length.');
+  if (Object.hasOwn(profile, 'answerLanguage') && resolveAnswerLanguage(profile) !== profile.answerLanguage) throw new Error('Invalid answer language.');
 
   next.aboutMe = { ...next.aboutMe };
   for (const [key, field] of Object.entries(ABOUT_ME_KEYS)) {

@@ -54,7 +54,7 @@ try {
     profileFields: FLAT_PREP_FIELDS.filter((name) => typeof view[name] === 'string' && view[name].trim()),
     aboutMeFields: ABOUT_ME_FIELDS.filter((name) => view.aboutMe[name] && view.aboutMe[name].trim()),
     setups: view.setups.map((s) => ({ name: s.name, kind: s.kind, saveSessions: s.saveSessions, active: s.id === view.activeSetupId })),
-    answerLength: settings.answerLength, includeScreen: settings.includeScreen
+    answerLength: settings.answerLength, answerLanguage: settings.answerLanguage || 'en', includeScreen: settings.includeScreen
   }, null, 2));
 } catch (error) {
   // JSON parse errors can echo parts of credentials; report only a safe summary.

@@ -657,6 +657,21 @@ test('speaker notes used as written show line by line, stage directions apart, n
   assert.deepEqual(scriptParagraphs('', true), []);
   const render = src.slice(src.indexOf('function renderPresenterStrip()'), src.indexOf("$('#ps-flags').addEventListener"));
   assert.match(render, /renderScript\(script, setup\.scriptSource === 'notes'\)/);
+  // Narrow hides the script in favour of points; with no points it stays.
+  assert.match(render, /strip\.classList\.toggle\('script-only', !!script\.trim\(\) && !slidePoints\.length\)/);
+  assert.match(css, /#app\.narrow \.presenter-strip\.script-only \.ps-script:not\(:empty\) \{ display: block; max-height: 40vh; overflow-y: auto; \}/);
+});
+
+test('the stylesheets add no transitions or animations anywhere', () => {
+  const perm = fs.readFileSync(path.join(root, 'renderer/permissions.html'), 'utf8');
+  assert.doesNotMatch(css, /transition|animation|@keyframes/);
+  assert.doesNotMatch(perm, /transition|animation|@keyframes|transform: scale/);
+});
+
+test('white text sits on the darker accent fill, never on the accent itself', () => {
+  assert.match(css, /--accent-fill: #2563EB;/);
+  assert.doesNotMatch(css, /background: var\(--accent\); color: #fff/);
+  assert.doesNotMatch(css, /11\.5px/);
 });
 
 test('Settings has a Script source choice for presentation setups and an Answer language under Style', () => {

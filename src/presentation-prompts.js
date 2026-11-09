@@ -3,11 +3,17 @@ const { ENGLISH_RULE_PRESENTATION, applyAnswerLanguage } = require('./answer-lan
 const POINT_CHARS = 160;
 // A backstop on characters; the word limit below normally applies first.
 const SCRIPT_CHARS = 2400;
+// Greek ends a question with ";" (or U+037E, the Greek question mark); in
+// other text ";" is a semicolon, not the end of a sentence.
+const GREEK_RE = /[Ͱ-Ͽἀ-῿]/;
+function sentenceEnds(text) {
+  return GREEK_RE.test(text) ? '.?!;;' : '.?!;';
+}
 function capScript(text) {
   const t = text.trim();
   if (t.length <= SCRIPT_CHARS) return t;
   const cut = t.slice(0, SCRIPT_CHARS);
-  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '), cut.lastIndexOf('.\n'));
+  const end = Math.max(cut.lastIndexOf('.\n'), ...[...sentenceEnds(t)].map((c) => cut.lastIndexOf(c + ' ')));
   return end > 0 ? cut.slice(0, end + 1) : cut;
 }
 const QUESTION_CHARS = 160;
@@ -53,7 +59,8 @@ function extractJson(text) {
 const SCRIPT_WORDS = { short: [50, 80], standard: [80, 130], detailed: [130, 200] };
 const SCRIPT_OVERRUN = 1.15;
 function trimToWords(text, maxWords) {
-  const sentences = text.match(/[^.?!]+[.?!]+["'’”)]*\s*|[^.?!]+$/g) || [text];
+  const e = sentenceEnds(text);
+  const sentences = text.match(new RegExp('[^' + e + ']+[' + e + ']+["\'’”»)]*\\s*|[^' + e + ']+$', 'g')) || [text];
   let out = '', count = 0;
   for (const s of sentences) {
     const n = s.split(/\s+/).filter(Boolean).length;
@@ -96,7 +103,7 @@ function buildEnrichRequest({ conversation, notes, titles, batch, scriptLength =
     'All slide titles, for context:\n' + list + '\n\n' +
     'Slides to write for (JSON):\n' + JSON.stringify(batch || []);
   // Four scripts of up to 200 words plus points and questions, in JSON.
-  return { system: applyAnswerLanguage(system, { answerLanguage }), turns: [{ role: 'user', text }], maxTokens: 5000, effort: 'medium' };
+  return { system: applyAnswerLanguage(system, { answerLanguage }, { deck: true }), turns: [{ role: 'user', text }], maxTokens: 5000, effort: 'medium' };
 }
 
 function cleanList(v, max, cap) {

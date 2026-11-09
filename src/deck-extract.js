@@ -44,7 +44,7 @@ function paragraphs(xml, keepBreaks = false) {
       else if (keepBreaks) text += '\n';
       else if (text && !/\s$/.test(text)) text += ' ';
     }
-    text = keepBreaks ? text.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{2,}/g, '\n').trim() : text.trim();
+    text = keepBreaks ? text.replace(/[ \t]*\n[ \t]*/g, '\n').trim() : text.trim();
     if (text) out.push(text);
   }
   return out;

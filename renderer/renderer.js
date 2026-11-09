@@ -2024,6 +2024,9 @@
     }
     renderScript(script, setup.scriptSource === 'notes');
     strip.classList.toggle('has-script', !!script.trim());
+    // A slide with a script and no points (speaker notes used as written)
+    // shows the script in narrow too: otherwise it would show nothing.
+    strip.classList.toggle('script-only', !!script.trim() && !slidePoints.length);
     const expand = $('#ps-expand');
     expand.classList.toggle('hidden', !(mode === 'narrow' && presentationAnswerShown && slidePoints.length));
     expand.textContent = presentationPointsExpanded ? '▾' : '▸';

@@ -271,3 +271,21 @@ test('interview answers do not end with a question back to the interviewer', () 
   const g = buildPromptRequest({ setupKind: 'general' }, 'say', [{ channel: 'them', text: 'Tell me about yourself.', ts: 1 }]);
   assert.doesNotMatch(g.system, /question to the interviewer/);
 });
+
+test('presentation slide context: notes used as the script are sent once, and slides without points show their text', () => {
+  const notes = 'Καλώς ήρθατε.\n▶ Δείξτε το διάγραμμα';
+  const slides = {
+    current: { n: 2, title: 'API', body: 'Ορισμός', notes, script: notes, points: [] },
+    neighbours: [{ n: 3, title: 'REST', body: 'Πόροι και ρήματα HTTP', points: [] }, { n: 1, title: 'Intro', body: 'x'.repeat(300), points: [] }],
+    relevant: []
+  };
+  const t = [{ channel: 'them', text: 'Τι είναι το REST;', ts: 1000 }];
+  const text = buildPromptRequest({ setupKind: 'presentation' }, 'answerThis', t, 'Τι είναι το REST;', { slides, now: 5000 }).turns[0].text;
+  assert.equal(text.split('Καλώς ήρθατε.').length - 1, 1, 'the notes appear once');
+  assert.doesNotMatch(text, /Presenter's script for this slide/);
+  assert.match(text, /- 3\. REST: Πόροι και ρήματα HTTP/);
+  assert.match(text, /- 1\. Intro: x{200}…/);
+  // A written script that differs from the notes is still sent.
+  const written = { ...slides, current: { ...slides.current, script: 'Γεια σας.' } };
+  assert.match(buildPromptRequest({ setupKind: 'presentation' }, 'answerThis', t, 'x', { slides: written, now: 5000 }).turns[0].text, /Presenter's script for this slide: Γεια σας\./);
+});

@@ -97,6 +97,7 @@ test('Auto answers in the language of the slides and the conversation', () => {
     const s = item.request.system;
     assert.ok(!s.includes(ENGLISH_TEXT), item.name);
     if (item.coding) assert.match(s, /in the language of the problem on screen and the conversation; keep the code, including its identifiers and comments, in English\./, item.name);
+    else if (item.name === 'enrich') assert.match(s, /Always write in the language the slides and speaker notes are written in/);
     else assert.match(s, /Always respond in the same language as the slides and the conversation/, item.name);
   }
 });
@@ -122,4 +123,30 @@ test('the coding solver keeps its code in English and ignores the user rules as 
     assert.doesNotMatch(el, /Be casual/, mode);
     assert.match(el, /keep the code, including its identifiers and comments, in English/, mode);
   }
+});
+
+test('Auto writes slide scripts in the language of the slides, not of the setup description', () => {
+  const { system } = buildEnrichRequest({ conversation: 'Training videos for new staff', notes: '', titles: ['Α'], batch: [{ n: 1, title: 'Α', body: 'x', notes: '' }], answerLanguage: 'auto' });
+  assert.match(system, /Always write in the language the slides and speaker notes are written in/);
+  assert.doesNotMatch(system, /follow the conversation/);
+});
+
+test('a profile import can set the answer language, and rejects an unknown one', () => {
+  const { mergeProfile } = require('../src/profile-import');
+  assert.equal(mergeProfile({}, { answerLanguage: 'el' }).answerLanguage, 'el');
+  assert.throws(() => mergeProfile({}, { answerLanguage: 'klingon' }), /Invalid answer language/);
+});
+
+test('Greek scripts are trimmed at Greek question marks too, English trimming is unchanged', () => {
+  const { parseEnrichResponse } = require('../src/presentation-prompts');
+  const sentence = (i) => 'Ερώτηση νούμερο ' + i + ' για το μάθημα μας σήμερα εδώ;';
+  const greek = Array.from({ length: 20 }, (_, i) => sentence(i)).join(' ');
+  const reply = (script) => JSON.stringify([{ n: 1, script, points: ['p'], questions: [], keyIdea: 'k' }]);
+  const [g] = parseEnrichResponse(reply(greek), [1], { scriptLength: 'short' });
+  const words = g.script.split(/\s+/).length;
+  assert.ok(words <= Math.round(80 * 1.15) && words > 40, String(words));
+  assert.ok(g.script.endsWith(';'), 'cut after a whole question');
+  const english = 'One two three; four five six. '.repeat(30).trim();
+  const [e] = parseEnrichResponse(reply(english), [1], { scriptLength: 'short' });
+  assert.ok(e.script.endsWith('six.'), 'a semicolon in English is not a sentence end');
 });

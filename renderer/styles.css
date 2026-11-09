@@ -785,6 +785,8 @@ button:focus { outline: none; }
 .ps-script p.ps-bridge { color: var(--tx-mut); }
 .ps-script p.ps-bridge::before { content: '→ '; }
 #app.narrow .ps-script { display: none; }
+/* No points to show instead (speaker notes used as written): keep the script, scrolling within the strip. */
+#app.narrow .presenter-strip.script-only .ps-script:not(:empty) { display: block; max-height: 40vh; overflow-y: auto; }
 .ps-points li { font-size: calc(var(--answer-px, 18px) * 0.9); font-weight: 500; line-height: 1.3; color: var(--tx-1); padding-left: 18px; position: relative; }
 .ps-points li::before { content: '•'; position: absolute; left: 2px; color: var(--tx-mut); }
 /* next → and the newest flag on one line; all flags (when opened) wrap below. */

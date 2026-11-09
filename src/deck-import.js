@@ -35,7 +35,10 @@ async function importDeck({ buffer, type, fileName, previous, scriptSource = 'wr
     const old = carried.get(s.fingerprint);
     const base = { n: s.n, title: s.title, body: s.body, notes: s.notes, fingerprint: s.fingerprint };
     if (old) {
-      return { ...base, points: [...old.points], questions: [...old.questions], keyIdea: old.keyIdea, script: old.script || '', edited: old.edited, enrichError: false };
+      // A script that was the old notes (not typed by hand) follows the new notes.
+      const followsNotes = scriptSource === 'notes' && (old.script || '') === (old.notes || '');
+      const script = followsNotes ? notesScript(s) : old.script || '';
+      return { ...base, points: [...old.points], questions: [...old.questions], keyIdea: old.keyIdea, script, edited: old.edited, enrichError: false };
     }
     toEnrich.push(s.n);
     return { ...base, points: [], questions: [], keyIdea: '', script: '', edited: false, enrichError: false };
@@ -54,10 +57,11 @@ async function enrichDeck(deck, { ns, call, conversation, notes, scriptLength, s
   const targets = current.slides.filter((s) => wanted.has(s.n) && (!s.edited || scriptOnly.has(s.n))).map((s) => s.n);
   if (scriptSource === 'notes') {
     if (!targets.length || (signal && signal.aborted)) return current;
+    const fill = new Set(targets);
     current = {
       ...current,
       slides: current.slides.map((s) => {
-        if (!targets.includes(s.n)) return s;
+        if (!fill.has(s.n)) return s;
         if (scriptOnly.has(s.n)) return { ...s, script: notesScript(s) };
         return { ...s, points: [], questions: [], keyIdea: '', script: notesScript(s), enrichError: false };
       }),

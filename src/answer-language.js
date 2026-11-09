@@ -24,7 +24,13 @@ function resolveAnswerLanguage(settings) {
   return CODES.has(code) ? code : 'en';
 }
 
-function languageRule(code) {
+// deck: writing slide scripts, where the "conversation" is only the setup's
+// description, so the slides decide.
+function languageRule(code, deck = false) {
+  if (code === 'auto' && deck) {
+    return 'Always write in the language the slides and speaker notes are written in, in clear, natural wording. ' +
+      'Never switch to any other language unless the user explicitly asks for it. ';
+  }
   if (code === 'auto') {
     return 'Always respond in the same language as the slides and the conversation: the language the deck and notes are written in and the people are speaking. ' +
       'If they differ, follow the conversation. Use clear, natural wording, and never switch to any other language unless the user explicitly asks for it. ';
@@ -54,11 +60,11 @@ function insertRule(system, rule) {
  * (follow-ups, recaps) gets the rule added, and a coding prompt gets a rule
  * that keeps its code in English.
  */
-function applyAnswerLanguage(system, settings, { coding = false } = {}) {
+function applyAnswerLanguage(system, settings, { coding = false, deck = false } = {}) {
   const code = resolveAnswerLanguage(settings);
   if (code === 'en' || typeof system !== 'string') return system;
   if (coding) return insertRule(system, codingRule(code));
-  const rule = languageRule(code);
+  const rule = languageRule(code, deck);
   if (system.includes(ENGLISH_RULE) || system.includes(ENGLISH_RULE_PRESENTATION)) {
     return system.split(ENGLISH_RULE).join(rule).split(ENGLISH_RULE_PRESENTATION).join(rule);
   }
