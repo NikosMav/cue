@@ -717,3 +717,9 @@ test('slide frames come from a low-rate screen stream, sized and laid out like t
   assert.match(src, /cue\.on\('frames:start'/);
   assert.match(src, /cue\.on\('frames:stop'/);
 });
+
+test('Script length is greyed out while notes are the script', () => {
+  assert.match(src, /\$\('#setup-script-length'\)\.disabled = \$\('#setup-script-source'\)\.value === 'notes';/);
+  assert.match(src, /\$\('#setup-script-source'\)\.addEventListener\('change', syncScriptLength\);/);
+  assert.match(css, /\.s-select:disabled \{ opacity: 0\.5; cursor: default; \}/);
+});

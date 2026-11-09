@@ -5,7 +5,7 @@
 // answer started, the next check fires again with the longer question, and
 // the caller replaces the earlier answer.
 const { currentQuestionTurns } = require('./interview-context');
-const { isLikelyCompleteQuestion } = require('./question-detector');
+const { isLikelyCompleteQuestion, endsWithQuestionMark } = require('./question-detector');
 
 const DEFAULT_DELAY_MS = 1200;
 // "Mm-hm", "okay, sure": the candidate acknowledging, not answering.
@@ -47,7 +47,7 @@ class AutoAnswer {
       // A transcript can land while the interviewer is already talking again.
       // A line ending in "?" is very likely the end of the question: half the
       // wait. If they keep going, the fuller question replaces the answer.
-      const asked = /\?\s*$/.test(String(text || ''));
+      const asked = endsWithQuestionMark(text);
       this._schedule(this.speaking ? this._fallbackMs() : asked ? this.delayMs / 2 : this.delayMs);
     } else if (String(text || '').trim().split(/\s+/).length > ACKNOWLEDGEMENT_MAX_WORDS) {
       // The candidate is answering on their own.

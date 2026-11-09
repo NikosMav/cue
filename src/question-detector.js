@@ -21,18 +21,31 @@ const COMPLETE_PATTERNS = [
 const QUESTION_STARTERS = /^(what|how|why|when|where|who|which|tell|describe|explain|can|could|would|should|have|did|do|is|are|was|were)/i;
 const QUESTION_ENDINGS = /(about that|for us|to us|with you|for you|about it|to share|you handle|you approach|your experience|your background)\s*$/i;
 
+// Greek: question words (accented forms only where the plain form is a
+// common non-question word, such as "που" = "that"), and ";" or U+037E as
+// the question mark. In other text ";" is a semicolon.
+const GREEK_RE = /[Ͱ-Ͽἀ-῿]/;
+const GREEK_QUESTION_STARTERS = /^(τι|πώς|πως|γιατί|πότε|πού|ποιος|ποια|ποιο|ποιοι|ποιες|πόσο|πόσα|πόσες|πόσοι|μπορείς|μπορείτε|εξήγησε|εξηγήστε|περίγραψε|περιγράψτε|πες μου|πείτε μας|πείτε μου)(?=[\s,;;]|$)/i;
+
+/** Ends with a question mark: "?", or ";" / U+037E in Greek text. */
+function endsWithQuestionMark(text) {
+  const trimmed = String(text || '').trim();
+  if (/[?;]$/.test(trimmed)) return true;
+  return /;$/.test(trimmed) && GREEK_RE.test(trimmed);
+}
+
 function isLikelyCompleteQuestion(text) {
   const trimmed = String(text || '').trim();
   // Must be substantial (not just filler words)
   if (trimmed.length < 12) return false;
   // High confidence: ends with a question mark
-  if (/\?$/.test(trimmed)) return true;
+  if (endsWithQuestionMark(trimmed)) return true;
   // High confidence: interview phrasings that are complete without a "?"
   if (COMPLETE_PATTERNS.some((p) => p.test(trimmed))) return true;
   // Medium confidence: question starters with substantial content
-  if (QUESTION_STARTERS.test(trimmed) && trimmed.length > 25) return true;
+  if ((QUESTION_STARTERS.test(trimmed) || GREEK_QUESTION_STARTERS.test(trimmed)) && trimmed.length > 25) return true;
   // Medium confidence: common question endings
   return QUESTION_ENDINGS.test(trimmed);
 }
 
-module.exports = { isLikelyCompleteQuestion };
+module.exports = { isLikelyCompleteQuestion, endsWithQuestionMark };

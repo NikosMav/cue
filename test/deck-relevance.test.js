@@ -77,3 +77,13 @@ test('slideContext: no current slide or no deck', () => {
   assert.deepEqual(slideContext(null, 3, PIVOT), { current: null, neighbours: [], relevant: [] });
   assert.deepEqual(slideContext({ slides }, 99, 'x').current, null);
 });
+
+test('relevantSlides works for Greek: accents fold, function words do not count, notes are matched', () => {
+  const slides = [
+    { n: 1, title: 'Εισαγωγή', body: '' },
+    { n: 5, title: 'Και το άλλο', body: 'και το', notes: '' },
+    { n: 8, title: 'Διάγραμμα', body: '', notes: 'Εδώ εξηγούμε πως δουλεύει η προσωρινή μνήμη cache στον διακομιστή.' },
+    { n: 12, title: 'Τέλος', body: '' }
+  ];
+  assert.deepEqual(relevantSlides('Πώς δουλεύει η προσωρινή μνήμη και το cache;', slides, 1).map((s) => s.n), [8]);
+});

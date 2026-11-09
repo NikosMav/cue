@@ -26,10 +26,20 @@ const STOP_WORDS = new Set((
   'under until up very was we were what when where which while who whom why will with would you your yours yourself yourselves ' +
   'also get got like may might must one let lets s t ll ve re d m okay ok yeah yes please tell say said'
 ).split(' '));
+// The same for Greek, without accents (words() compares unaccented forms).
+const GREEK_STOP_WORDS = (
+  'και το τα του της των τη την τον τους τις ο η οι ενα ενας μια μιας ενος σε στο στα στη στην στον στους στις στης στου ' +
+  'απο με για προς που πως τι ποιο ποια ποιος ποιοι ποιες ειναι ηταν εχει εχουν εχω εχετε να θα δεν μη μην αν οτι ' +
+  'αυτο αυτα αυτη αυτος αυτον αυτην αυτοι αυτες εγω εσυ εμεις εσεις μου σου μας σας πολυ πιο ομως αλλα επισης ' +
+  'μπορει μπορειτε μπορεις λοιπον ναι οχι εδω εκει οταν γιατι ποτε ετσι καθε κατι'
+).split(' ');
+for (const word of GREEK_STOP_WORDS) STOP_WORDS.add(word);
 
+// Lower case without accents, so "πώς" and "πως" (or "café" and "cafe") match.
 function words(text) {
   const out = new Set();
-  for (const word of str(text).toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+  const plain = str(text).toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '');
+  for (const word of plain.split(/[^\p{L}\p{N}]+/u)) {
     if (word && !STOP_WORDS.has(word)) out.add(word);
   }
   return out;
@@ -39,7 +49,7 @@ const MIN_SCORE = 2;
 
 /**
  * Slides other than the current one and its neighbours that share at least
- * two content words with the question (over title, body and questions),
+ * two content words with the question (over title, body, notes and questions),
  * best first, ties by lower slide number.
  * @param {string} question
  * @param {{ n: number, title?: string, body?: string, questions?: string[] }[]} slides
@@ -54,7 +64,8 @@ function relevantSlides(question, slides, currentN, limit = 3) {
   const scored = [];
   for (const slide of slides) {
     if (!slide || near(slide.n)) continue;
-    const own = words([str(slide.title), str(slide.body), ...(Array.isArray(slide.questions) ? slide.questions.map(str) : [])].join(' '));
+    // Speaker notes count too: with notes as the script they are the whole talk.
+    const own = words([str(slide.title), str(slide.body), str(slide.notes), ...(Array.isArray(slide.questions) ? slide.questions.map(str) : [])].join(' '));
     let score = 0;
     for (const word of asked) if (own.has(word)) score++;
     if (score >= MIN_SCORE) scored.push({ slide, score });

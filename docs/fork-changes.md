@@ -220,7 +220,15 @@ Them is the audience, You is the presenter.
   (live answers, ask, practice, debriefs, slide scripts) and adds the rule to
   follow-ups and recaps, before the user's own rules. The coding solver writes
   its prose in that language and keeps code, identifiers and comments in
-  English. English prompts are unchanged byte for byte.
+  English. English prompts are unchanged byte for byte. For slide scripts,
+  Auto follows the slides rather than the setup description. Practice
+  questions are read with a voice for the chosen language (English and Auto
+  keep the system default). `import-profile` accepts `answerLanguage`.
+- **Greek conversations.** A line ending in ";" (or U+037E) in Greek text
+  counts as a question for auto-answer and the input box, and Greek question
+  words count as question starters. When trimming written scripts, ";" ends
+  a sentence in Greek text. Related-slide matching ignores accents, skips
+  Greek function words and also matches speaker notes.
 - **Script source** (per presentation setup, next to Script length and Follow
   slides): "Write it for me" (default) or "Use my speaker notes as written".
   With notes, each slide's script is its speaker notes word for word, line
@@ -228,9 +236,17 @@ Them is the audience, You is the presenter.
   without notes get an empty script. The import makes no AI call, needs no
   provider and leaves points, questions and key idea empty. Each line is
   shown as written, and lines starting with ▶, ⏸ or ◀ keep the stage-direction
-  style. A re-import takes corrected notes for unedited slides. Review slides
-  still edits the script; the script editor now takes up to 3,000 characters,
-  the same as the notes limit (`NOTES_CHARS`). Before, the editor cut scripts at 2,400.
+  style. The narrow layout shows the script too when a slide has no points.
+  A re-import takes corrected notes for every slide whose script was still
+  its notes; a script typed by hand stays. Live answers send the notes once,
+  and neighbouring slides without points carry a piece of their text. Script
+  length is greyed out while notes are the script. Review slides still edits
+  the script; the script editor now takes up to 3,000 characters, the same as
+  the notes limit (`NOTES_CHARS`). Before, the editor cut scripts at 2,400.
+- **Readability.** White text on filled buttons sits on a darker blue
+  (`--accent-fill`, 5.2:1) instead of the accent (3.6:1). Light-blue links
+  are lighter, small prose is at least 12px, and the last hover transitions
+  are gone from the panel and the permissions window.
 
 ## Live panel redesign
 

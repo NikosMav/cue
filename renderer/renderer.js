@@ -2477,11 +2477,18 @@
     $('#setup-script-length').value = setup.scriptLength || 'standard';
     $('#setup-follow').value = setup.followSlides || 'auto';
     $('#setup-script-source').value = setup.scriptSource || 'write';
+    syncScriptLength();
     $('#setup-activate').disabled = setup.id === settings.activeSetupId;
     if (!deckView || deckView.setupId !== setup.id) deckReviewOpen = false;
     applyKindToForm(setup.kind);
     renderDisplayPicker(setup);
   }
+
+  // Script length only applies to scripts cue writes, not to notes used as written.
+  function syncScriptLength() {
+    $('#setup-script-length').disabled = $('#setup-script-source').value === 'notes';
+  }
+  $('#setup-script-source').addEventListener('change', syncScriptLength);
 
   // Watch display: filled from the connected displays each time the form is.
   let displayPickerToken = 0;
@@ -3010,6 +3017,10 @@
     speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.02;
+    // A voice for the answer language (questions are written in it). English
+    // and Auto keep the system default voice, as before.
+    const voiceLanguage = cue.answerLanguages.resolve(settings);
+    if (voiceLanguage !== 'auto' && voiceLanguage !== 'en') utterance.lang = voiceLanguage;
     utterance.onstart = () => cue.practiceSpeaking(true);
     utterance.onend = () => cue.practiceSpeaking(false);
     utterance.onerror = () => cue.practiceSpeaking(false);

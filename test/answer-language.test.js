@@ -150,3 +150,24 @@ test('Greek scripts are trimmed at Greek question marks too, English trimming is
   const [e] = parseEnrichResponse(reply(english), [1], { scriptLength: 'short' });
   assert.ok(e.script.endsWith('six.'), 'a semicolon in English is not a sentence end');
 });
+
+test('Greek questions count as complete: ";" and the Greek question mark, and Greek question words', () => {
+  const { isLikelyCompleteQuestion, endsWithQuestionMark } = require('../src/question-detector');
+  assert.ok(isLikelyCompleteQuestion('Πώς λειτουργεί το REST;'));
+  assert.ok(isLikelyCompleteQuestion('Τι είναι ένα API;'));
+  assert.ok(isLikelyCompleteQuestion('Γιατί χρειαζόμαστε ένα API στην εφαρμογή μας'));
+  assert.ok(!endsWithQuestionMark('First this; then that;'), 'an English semicolon is not a question mark');
+  assert.ok(endsWithQuestionMark('Is it ready?  '));
+  assert.ok(!isLikelyCompleteQuestion('Ναι, συμφωνώ.'));
+});
+
+test('auto-answer halves the wait after a Greek question mark too', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'auto-answer.js'), 'utf8');
+  assert.match(src, /const asked = endsWithQuestionMark\(text\);/);
+});
+
+test('practice questions are read in the answer language; English keeps the default voice', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8').replace(/\r\n/g, '\n');
+  const speak = src.slice(src.indexOf('function speakQuestion('), src.indexOf('speechSynthesis.speak(utterance);'));
+  assert.match(speak, /if \(voiceLanguage !== 'auto' && voiceLanguage !== 'en'\) utterance\.lang = voiceLanguage;/);
+});

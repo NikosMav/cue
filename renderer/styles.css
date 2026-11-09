@@ -377,6 +377,7 @@ button:focus { outline: none; }
   color: var(--tx-1); font-size: 13px; font-family: var(--font); outline: none;
 }
 .s-select:focus { border-color: var(--accent); }
+.s-select:disabled { opacity: 0.5; cursor: default; }
 .s-select.compact { flex: 1; width: auto; }
 .s-note { color: var(--tx-mut); font-size: 12px; line-height: 1.45; }
 .whisper-card {
