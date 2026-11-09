@@ -983,6 +983,18 @@
   });
   const isStale = (id) => id !== undefined && id !== currentRequestId;
   cue.on('llm:token', ({ id, text }) => { if (!isStale(id)) appendToken(text); });
+  // The model is thinking and has written nothing yet: say so instead of a
+  // bare caret. The first token (or the final message) re-renders the bubble
+  // and replaces it. Each signal also keeps the busy failsafe away.
+  cue.on('llm:thinking', ({ id }) => {
+    if (isStale(id) || !aiEl || aiEl.dataset.raw) return;
+    setBusy(true);
+    if (aiEl.querySelector('.ai-thinking')) return;
+    const thinking = document.createElement('span');
+    thinking.className = 'ai-thinking';
+    thinking.textContent = 'Thinking…';
+    aiEl.insertBefore(thinking, aiEl.firstChild);
+  });
   cue.on('llm:done', ({ id }) => {
     if (isStale(id)) return;
     currentRequestId = null;

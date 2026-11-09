@@ -28,7 +28,7 @@ Module._load = function(request, parent, isMain) {
         anthropicBody = body;
         anthropicOptions = options;
         receivedSignal = options.signal;
-        return anthropicEvents || [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }];
+        return anthropicEvents || [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }, { type: 'message_stop' }];
       } };
     }
   };
@@ -42,7 +42,7 @@ Module._load = function(request, parent, isMain) {
   } };
   return originalLoad.call(this, request, parent, isMain);
 };
-const { createLLM } = require('../src/llm');
+const { createLLM, LENGTH_CUT_NOTE } = require('../src/llm');
 test.after(() => { Module._load = originalLoad; });
 
 for (const provider of ['openai', 'custom', 'publik', 'groq', 'minimax', 'azure', 'anthropic', 'gemini', 'ollama']) {
@@ -50,7 +50,7 @@ for (const provider of ['openai', 'custom', 'publik', 'groq', 'minimax', 'azure'
     const oldFetch = global.fetch;
     if (provider === 'ollama') global.fetch = async (_url, options) => {
       receivedSignal = options.signal;
-      return { ok: true, body: [new TextEncoder().encode('{"message":{"content":"ok"}}\n')] };
+      return { ok: true, body: [new TextEncoder().encode('{"message":{"content":"ok"},"done":true,"done_reason":"stop"}\n')] };
     };
     try {
       const signal = new AbortController().signal;
@@ -59,7 +59,9 @@ for (const provider of ['openai', 'custom', 'publik', 'groq', 'minimax', 'azure'
         models: { [provider]: { fast: 'test-model' } } });
       receivedSignal = null;
       const result = await llm.stream({ system: 'test', turns: [{ role: 'user', text: 'test' }], signal, onToken() {} });
-      assert.equal(result, 'ok');
+      // publik watches the wire for [DONE]; this fake SDK never fetches, so
+      // its answer carries the incomplete note. The signal is what is tested.
+      assert.match(result, /^ok/);
       assert.equal(receivedSignal, signal);
     } finally {
       global.fetch = oldFetch;
@@ -140,12 +142,13 @@ test('Smart raises the effort one level', async () => {
 test('a refusal or an answer lost to the output limit is reported, not shown as an empty answer', async () => {
   const llm = createLLM({ provider: 'anthropic', apiKeys: { anthropic: 'k' }, models: { anthropic: { fast: 'claude-opus-5' } } });
   try {
-    anthropicEvents = [{ type: 'message_delta', delta: { stop_reason: 'refusal' } }];
-    await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /declined this request/);
+    anthropicEvents = [{ type: 'message_delta', delta: { stop_reason: 'refusal' } }, { type: 'message_stop' }];
+    await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /safety filter stopped this answer/);
     anthropicEvents = [{ type: 'message_delta', delta: { stop_reason: 'max_tokens' } }];
     await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /whole output budget/);
-    anthropicEvents = [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } }, { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }];
-    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial');
+    // A cut answer keeps its text and says it was cut.
+    anthropicEvents = [{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } }, { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }, { type: 'message_stop' }];
+    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial' + LENGTH_CUT_NOTE);
   } finally {
     anthropicEvents = null;
   }
@@ -184,7 +187,7 @@ test('an OpenAI answer lost entirely to reasoning is reported, not shown as empt
     openaiEvents = [{ choices: [{ delta: {}, finish_reason: 'length' }] }];
     await assert.rejects(llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), /whole output budget/);
     openaiEvents = [{ choices: [{ delta: { content: 'partial' } }] }, { choices: [{ delta: {}, finish_reason: 'length' }] }];
-    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial');
+    assert.equal(await llm.stream({ system: 's', turns: [{ role: 'user', text: 'q' }], onToken: () => {} }), 'partial' + LENGTH_CUT_NOTE);
   } finally {
     openaiEvents = null;
   }

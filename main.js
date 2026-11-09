@@ -13,6 +13,7 @@ const { createLLM } = require('./src/llm');
 const { MODES, buildPromptRequest, buildDebriefRequest, splitDebrief } = require('./src/prompts');
 const { SessionStore, SessionRecorder, presentationBlock, sessionToMarkdown, exportFileName, isValidId, summarize, writeFileAtomic, planResume, QUIT_WHILE_LISTENING, RESUME_WINDOW_MS } = require('./src/sessions');
 const { streamWithWatchdog } = require('./src/stream-watchdog');
+const { giveUpTimer } = require('./src/give-up');
 const { detectConsoleSession } = require('./src/windows-session');
 const { createWarmUp } = require('./src/warmup');
 const { createClickThrough, clampToArea } = require('./src/click-through');
@@ -157,6 +158,7 @@ let slideBusy = false;
 let slideDisabled = false; // set when the chat key rejects slide captions (stops cost spam)
 let slideTxCursor = 0; // transcript.length at last emitted slide
 const STREAM_INACTIVITY_MS = 25000; // abort a stalled LLM stream so state.busy can't wedge forever
+const THINKING_PING_MS = 5000; // at most one "Thinking…" signal to the renderer per 5 s
 let batchTranscriber = null;
 // The one answer being generated. A newer request cancels it instead of
 // being dropped, so a new interview question never waits on an old answer.
@@ -836,10 +838,9 @@ async function captionSlide(imageDataUrl, transcriptSlice) {
   const settings = store.getSettings();
   const llm = createLLM(settings);
   if (!llm.ready) throw new Error(llm.configurationError || 'Complete the provider settings.');
-  let watchdog = null;
-  const stalled = new Promise((_res, reject) => {
-    watchdog = setTimeout(() => reject(new Error('slide caption timed out')), STREAM_INACTIVITY_MS);
-  });
+  // Giving up also cancels the request, so the provider stops generating
+  // (and billing) a caption nobody will see.
+  const guard = giveUpTimer(STREAM_INACTIVITY_MS, 'slide caption timed out');
   try {
     return await Promise.race([
       llm.stream({
@@ -847,12 +848,14 @@ async function captionSlide(imageDataUrl, transcriptSlice) {
         turns: [{ role: 'user', text: buildSlideUser(transcriptSlice) }],
         imageDataUrl,
         maxTokens: 300,
+        lengthCut: 'ellipsis', // a cut caption ends with "…", not a chat note
+        signal: guard.signal,
         onToken: () => {}
       }),
-      stalled
+      guard.expired
     ]);
   } finally {
-    clearTimeout(watchdog);
+    guard.clear();
   }
 }
 
@@ -1461,6 +1464,10 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
     }
     if (signal.aborted) return;
 
+    // "Thinking…" in the bubble while only reasoning arrives: at most one
+    // signal per THINKING_PING_MS, none once the answer has started.
+    let answering = false;
+    let lastThinkingAt = 0;
     const answer = await streamWithWatchdog(params => llm.stream(params), {
       system: request.system,
       cachePrefix: request.cachePrefix,
@@ -1468,7 +1475,15 @@ async function runFeature(requestedMode, userText, { auto = false } = {}) {
       effort: request.effort,
       turns: request.turns,
       imageDataUrls: images,
-      onToken: t => { latency.token(job.id); emit('llm:token', { text: t }); },
+      onToken: t => { answering = true; latency.token(job.id); emit('llm:token', { text: t }); },
+      onActivity: kind => {
+        if (kind === 'text') answering = true;
+        if (kind !== 'thinking' || answering) return;
+        const now = Date.now();
+        if (now - lastThinkingAt < THINKING_PING_MS) return;
+        lastThinkingAt = now;
+        emit('llm:thinking', {});
+      },
       onResponse: settings.provider === publik.PUBLIK_PROVIDER ? (res) => publikNoteHeaders(res && res.headers) : undefined
     }, STREAM_INACTIVITY_MS, signal);
     if (signal.aborted) return;

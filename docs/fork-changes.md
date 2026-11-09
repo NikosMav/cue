@@ -319,3 +319,18 @@ in public issues, examples and test fixtures.
   (fills only, text stays solid, no toolbar popover), and meeting memory's
   resume-after-restart became crash recovery in Sessions (unended sessions of a
   saving setup are picked back up within 30 minutes).
+- 2026-11-09, upstream main at 1971534 (v0.2.14, 41 commits). Taken: how an
+  answer ended, for every provider (a cut answer keeps its text with a "Cut
+  off" or "Incomplete" note, a safety-filter stop says so, a provider refusal
+  sentence is never shown as the answer, and an empty answer gets a message
+  instead of a blank bubble); "Thinking…" while a model only reasons, with
+  thinking counted as activity by the answer watchdog; slide captions that
+  time out now cancel their request; publik's thinking headroom, the smart
+  model for screenshots, one retry after a filtered publik-balanced answer
+  and the [DONE] check; publik Reconnect and wallet fixes in `src/publik.js`;
+  the release-workflow guard and a valid `bugfix-lab.yml`. Not taken: usage
+  telemetry (`publik-telemetry.cjs`, on by default upstream); publik-first
+  Settings and onboarding (keys stay first and open); upstream's separate
+  publik transcription batcher and its meeting-audio cut rules (the fork's
+  own batch transcriber covers every provider); meeting memory; upstream's
+  `.loop/` merge automation and its publik-build and loop workflows.

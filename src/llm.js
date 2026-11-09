@@ -228,6 +228,8 @@ function describePublikError(error, model) {
 }
 
 function formatProviderErrorMessage(error, provider, model) {
+  // An empty or cut answer already carries its plain sentence (settleAnswer).
+  if (error && error.emptyAnswer) return error;
   const label = normalizeProviderName(provider);
   const rawMessage = (error && (error.message || String(error))) || '';
 
@@ -318,6 +320,238 @@ function stripDataUrl(dataUrl) {
   return m ? { mime: m[1], b64: m[2] } : null;
 }
 
+// ---- How an answer ended (ported from upstream 0.2.11-0.2.13) ----------
+// Only a clean stop is a whole answer. A stream that ends with no usable
+// text says why instead of leaving a blank bubble; one that was cut off, or
+// stopped by a safety filter, keeps its text with a short note.
+// Reasoning models think inside the output cap: when the thinking uses it
+// all, the stream ends with "length" and no text.
+const LENGTH_EMPTY_MESSAGE = 'The model used its whole output budget before answering. Try again with Smart off, or pick another model in Settings.';
+const EMPTY_ANSWER_MESSAGE = 'The model sent back an empty answer. Ask again.';
+const LENGTH_CUT_NOTE = '\n\n(Cut off: the answer reached its length limit.)';
+const FILTER_EMPTY_MESSAGE = "The AI provider's safety filter stopped this answer. Ask again with different words.";
+const FILTER_CUT_NOTE = "\n\n(Incomplete: the AI provider's safety filter stopped this answer. Ask again with different words to get the rest.)";
+const RECITATION_EMPTY_MESSAGE = 'The AI provider stopped this answer because it repeated published text. Ask again with different words.';
+const RECITATION_CUT_NOTE = '\n\n(Incomplete: the AI provider stopped this answer because it repeated published text.)';
+const INCOMPLETE_CUT_NOTE = '\n\n(Incomplete: the answer stopped before the model finished. Ask again to get the rest.)';
+
+// Every stop reason cue knows, lower-cased: OpenAI-style finish_reason,
+// Anthropic stop_reason, Gemini finishReason, and the end-of-turn words that
+// OpenAI-compatible servers send instead of "stop". Anything else is
+// 'incomplete'.
+const CLEAN_STOPS = new Set([
+  'stop', 'stopped', 'end_turn', 'end_of_turn', 'end', 'eos', 'eos_token', 'eot', 'eot_id', 'eog',
+  'stop_sequence', 'stop_token', 'stop_word', 'tool_calls', 'tool_use', 'function_call',
+  'complete', 'completed', 'finished', 'done', 'pause_turn'
+]);
+const LENGTH_STOPS = new Set(['length', 'max_tokens', 'max_output_tokens', 'max_length', 'max_new_tokens', 'limit', 'model_context_window_exceeded']);
+const FILTER_STOPS = new Set(['content_filter', 'refusal', 'safety', 'prohibited_content', 'blocklist', 'spii', 'image_safety', 'image_prohibited_content']);
+const RECITATION_STOPS = new Set(['recitation', 'image_recitation']);
+// Gemini's "not set" value means the same as no reason at all.
+const NO_REASON = new Set(['', 'finish_reason_unspecified']);
+
+// evidence.cutShort: the stream itself shows it did not reach its end (cue
+// cancelled it; on publik, it closed before "data: [DONE]"; on Anthropic, no
+// message_stop). Without such evidence a missing stop reason is a whole
+// answer: many OpenAI-compatible servers send none.
+function stopKind(reason, refused, evidence) {
+  if (refused) return 'filter';
+  const r = String(reason || '').toLowerCase();
+  if (NO_REASON.has(r)) return evidence && evidence.cutShort ? 'incomplete' : 'clean';
+  if (CLEAN_STOPS.has(r)) return 'clean';
+  if (LENGTH_STOPS.has(r)) return 'length';
+  if (FILTER_STOPS.has(r)) return 'filter';
+  if (RECITATION_STOPS.has(r)) return 'recitation';
+  return 'incomplete';
+}
+
+const EMPTY_MESSAGES = { length: LENGTH_EMPTY_MESSAGE, filter: FILTER_EMPTY_MESSAGE, recitation: RECITATION_EMPTY_MESSAGE };
+const CUT_NOTES = { length: LENGTH_CUT_NOTE, filter: FILTER_CUT_NOTE, recitation: RECITATION_CUT_NOTE, incomplete: INCOMPLETE_CUT_NOTE };
+
+function emptyAnswerError(kind, finishReason) {
+  const error = new Error(EMPTY_MESSAGES[kind] || EMPTY_ANSWER_MESSAGE);
+  error.emptyAnswer = true;
+  error.filtered = kind === 'filter';
+  error.stopKind = kind;
+  error.finishReason = finishReason || null;
+  return error;
+}
+
+// Refusal messages some hosts stream as if they were the answer (provider
+// messages only, never "I can't help with that" phrases, which can be real
+// content). Rules:
+// - A clean stop counts as refused only when the WHOLE answer is one of the
+//   exact messages, with nothing but closing punctuation around it.
+// - A filter stop cuts the provider's message off from its start to the end
+//   of the text, if that start is within the last REFUSAL_WINDOW characters.
+// - Any other stop keeps all of its text, with its own note.
+const REFUSALS = [
+  // Xiaomi MiMo (publik-balanced); Moonshot uses the same words.
+  { start: 'The request was rejected because', exact: ['The request was rejected because it was considered high risk'] },
+  // Alibaba Qwen (DashScope "data_inspection_failed").
+  { start: 'Input data may contain inappropriate content', exact: ['Input data may contain inappropriate content'] },
+  { start: 'Output data may contain inappropriate content', exact: ['Output data may contain inappropriate content'] },
+  // DeepSeek.
+  { start: 'Content Exists Risk', exact: ['Content Exists Risk'] },
+  // Zhipu GLM, code 1301: the whole notice, or its first sentence alone.
+  { start: '系统检测到输入或生成内容可能包含不安全或敏感内容', exact: ['系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。', '系统检测到输入或生成内容可能包含不安全或敏感内容'] }
+];
+const REFUSAL_SENTENCES = REFUSALS.flatMap((r) => r.exact);
+const REFUSAL_WINDOW = 240;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const WHOLE_REFUSAL = new RegExp('^\\s*(?:(?:' +
+  REFUSAL_SENTENCES.slice().sort((a, b) => b.length - a.length).map(escapeRe).join('|') +
+  ')[\\s.。!！,，;；:："\'”’)\\]}]*)+$', 'u');
+
+// Does text[i..] start with `start`? Case-sensitive; any run of whitespace
+// counts as one space. 'full', 'partial' (the text ends inside it) or null.
+function startsAt(text, i, start) {
+  let t = i;
+  for (let k = 0; k < start.length; k++) {
+    if (t >= text.length) return 'partial';
+    if (start[k] === ' ') {
+      if (!/\s/u.test(text[t])) return null;
+      while (t < text.length && /\s/u.test(text[t])) t++;
+    } else if (text[t] === start[k]) {
+      t++;
+    } else {
+      return null;
+    }
+  }
+  return 'full';
+}
+
+// Takes the streamed text piece by piece and gives back what is safe to
+// show. Text from a possible refusal start in the last REFUSAL_WINDOW
+// characters is held until the stream ends; anything earlier streams at once.
+function refusalFilter(refusals = REFUSALS) {
+  let text = '';
+  let shown = 0;
+  let refused = false;
+  const from = () => Math.max(shown, text.length - REFUSAL_WINDOW);
+  function startAt(i) {
+    let found = null;
+    for (const r of refusals) {
+      const m = startsAt(text, i, r.start);
+      if (m === 'full') return 'full';
+      if (m) found = m;
+    }
+    return found;
+  }
+  function holdFrom() {
+    for (let i = from(); i < text.length; i++) if (startAt(i)) return i;
+    return text.length;
+  }
+  function refusalFrom() {
+    for (let i = from(); i < text.length; i++) if (startAt(i) === 'full') return i;
+    return -1;
+  }
+  function release(to) {
+    const out = text.slice(shown, to);
+    shown = to;
+    return out;
+  }
+  function drop(at) {
+    refused = true;
+    const out = release(at);
+    shown = text.length;
+    return out;
+  }
+  return {
+    push(piece) {
+      text += piece;
+      return release(holdFrom());
+    },
+    end(kind = 'clean') {
+      if (kind === 'clean') {
+        return WHOLE_REFUSAL.test(text) && !text.slice(0, shown).trim() ? drop(shown) : release(text.length);
+      }
+      if (kind !== 'filter') return release(text.length);
+      const at = refusalFrom();
+      return at < 0 ? release(text.length) : drop(at);
+    },
+    get refused() { return refused; }
+  };
+}
+
+// The visible answer of one stream: pieces pass the refusal filter on their
+// way to onToken; finish() takes the stop reason and returns the shown text
+// with its stop kind.
+function answerText(onToken) {
+  const filter = refusalFilter();
+  let text = '';
+  const emit = (piece) => { if (piece) { text += piece; onToken(piece); } };
+  return {
+    add(piece) { emit(filter.push(piece)); },
+    finish(finishReason, evidence) {
+      const kind = stopKind(finishReason, false, evidence);
+      emit(filter.end(kind));
+      return { text, kind: filter.refused ? 'filter' : kind, finishReason: finishReason || null };
+    }
+  };
+}
+
+// The end of a stream: never a blank answer, never a refusal sentence shown
+// as the answer, and an answer that did not stop cleanly says why. lengthCut
+// 'ellipsis' (slide captions) trims a cut text and ends it with "…" instead.
+function settleAnswer(answer, onToken, lengthCut) {
+  const { text, kind, finishReason } = answer;
+  if (!String(text || '').trim()) throw emptyAnswerError(kind, finishReason);
+  if (kind === 'clean') return text;
+  if (lengthCut === 'ellipsis') return trimCut(text) + '…';
+  const note = CUT_NOTES[kind];
+  onToken(note);
+  return text + note;
+}
+
+// A cut caption ends without a dangling space, comma, colon or dash.
+function trimCut(text) {
+  return String(text).replace(/[\s,;:\-–—]+$/u, '');
+}
+
+// Tells the caller what kind of chunk just arrived ('text', 'thinking' or
+// 'other'), so a model that thinks for a while is not taken for a stalled
+// stream. The reasoning text itself never leaves this module.
+function activity(onActivity, kind) {
+  if (typeof onActivity !== 'function') return;
+  try { onActivity(kind); } catch { /* a watchdog hook must never break the answer */ }
+}
+
+// One OpenAI-style chunk: its text (if any) and its finish reason (if any).
+function readChunk(part, onActivity) {
+  const choice = part && part.choices && part.choices[0];
+  const delta = (choice && choice.delta) || {};
+  const text = delta.content || '';
+  const thinking = !text && !!(delta.reasoning || delta.reasoning_content ||
+    (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length));
+  activity(onActivity, text ? 'text' : thinking ? 'thinking' : 'other');
+  return { text, finish: (choice && choice.finish_reason) || '' };
+}
+
+// publik (OpenRouter behind it) always ends a stream with a finish reason and
+// "data: [DONE]". The SDK hides [DONE], so this fetch passes the bytes
+// through unchanged and notes whether it came; a stream that closed before
+// it was cut short.
+function doneWatcher() {
+  const seen = { done: false };
+  const watchedFetch = async (input, init) => {
+    const res = await fetch(input, init);
+    if (!res.ok || !res.body || !/event-stream/i.test(res.headers.get('content-type') || '')) return res;
+    const decoder = new TextDecoder();
+    let tail = '\n';
+    const watch = new TransformStream({
+      transform(chunk, controller) {
+        const s = tail + decoder.decode(chunk, { stream: true });
+        if (/\ndata: ?\[DONE\]/.test(s)) seen.done = true;
+        tail = s.slice(-16);
+        controller.enqueue(chunk);
+      }
+    });
+    return new Response(res.body.pipeThrough(watch), { status: res.status, statusText: res.statusText, headers: res.headers });
+  };
+  return { seen, fetch: watchedFetch };
+}
+
 // OpenAI's reasoning models (o-series, GPT-5 except the -chat variants)
 // reject max_tokens on Chat Completions, and their hidden reasoning tokens
 // count against the output limit. OpenAI itself gets max_completion_tokens,
@@ -332,10 +566,11 @@ function openAIRequestShape(model, maxTokens, effort, nativeOpenAI) {
   return { max_completion_tokens: maxTokens + THINKING_HEADROOM_TOKENS, reasoning_effort: effort || 'medium' };
 }
 
-async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, nativeOpenAI = false, onToken, onResponse, signal }) {
+async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, nativeOpenAI = false, onToken, onActivity, onResponse, lengthCut, signal, watchDone }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const OpenAI = require('openai');
-  const client = new OpenAI(baseURL ? { apiKey, baseURL } : { apiKey });
+  const watcher = watchDone ? doneWatcher() : null;
+  const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}), ...(watcher ? { fetch: watcher.fetch } : {}) });
   const messages = [{ role: 'system', content: system }];
   turns.forEach((t, i) => {
     const last = i === turns.length - 1;
@@ -361,16 +596,15 @@ async function streamOpenAI({ apiKey, baseURL, model, system, turns, imageDataUr
   } else {
     stream = await pending;
   }
-  let full = '';
-  let finishReason = null;
+  const answer = answerText(onToken);
+  let finish = '';
   for await (const part of stream) {
-    const choice = part.choices && part.choices[0];
-    const d = choice && choice.delta && choice.delta.content;
-    if (d) { full += d; onToken(d); }
-    if (choice && choice.finish_reason) finishReason = choice.finish_reason;
+    const chunk = readChunk(part, onActivity);
+    if (chunk.text) answer.add(chunk.text);
+    if (chunk.finish) finish = chunk.finish;
   }
-  if (finishReason === 'length' && !full.trim()) throw new Error(OUTPUT_BUDGET_EXHAUSTED);
-  return full;
+  const cutShort = !!(signal && signal.aborted) || !!(watcher && !watcher.seen.done);
+  return settleAnswer(answer.finish(finish, { cutShort }), onToken, lengthCut);
 }
 
 // Azure AI Foundry Models API (cognitiveservices.azure.com hosts) lives under
@@ -384,7 +618,7 @@ function normalizeAzureBaseURL(raw) {
   return u;
 }
 
-async function streamAzure({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, endpoint, signal }) {
+async function streamAzure({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, onActivity, endpoint, lengthCut, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const url = normalizeAzureBaseURL(endpoint);
   if (!url) throw new Error('Missing Azure endpoint. Add your Azure AI Foundry or Azure OpenAI endpoint in Settings.');
@@ -416,12 +650,14 @@ async function streamAzure({ apiKey, model, system, turns, imageDataUrl, imageDa
     client = new OpenAI({ baseURL: url, apiKey, fetch: azureFetch });
   }
   const stream = await client.chat.completions.create({ model, messages, stream: true, max_completion_tokens: maxTokens }, { signal });
-  let full = '';
+  const answer = answerText(onToken);
+  let finish = '';
   for await (const part of stream) {
-    const d = part.choices && part.choices[0] && part.choices[0].delta && part.choices[0].delta.content;
-    if (d) { full += d; onToken(d); }
+    const chunk = readChunk(part, onActivity);
+    if (chunk.text) answer.add(chunk.text);
+    if (chunk.finish) finish = chunk.finish;
   }
-  return full;
+  return settleAnswer(answer.finish(finish, { cutShort: !!(signal && signal.aborted) }), onToken, lengthCut);
 }
 
 // Anthropic caches only on request: mark the end of the stable reference
@@ -446,7 +682,6 @@ function resolveEffort(effort, smart) {
 // Thinking tokens count against the output limit. Models that think get room
 // for it on top of the answer budget, so thinking cannot cut the answer off.
 const THINKING_HEADROOM_TOKENS = 8000;
-const OUTPUT_BUDGET_EXHAUSTED = 'The model used its whole output budget before answering. Try again with Smart off, or pick another model in Settings.';
 
 // Claude models that think unless told otherwise (Opus 5 and later, Sonnet 5,
 // Fable, Mythos). They take an effort level; Haiku 4.5 and older models reject
@@ -491,7 +726,7 @@ function geminiOutputConfig(model, maxTokens, effort) {
   return { maxOutputTokens: maxTokens };
 }
 
-async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, signal }) {
+async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, onActivity, lengthCut, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey });
@@ -512,20 +747,28 @@ async function streamAnthropic({ apiKey, model, system, cachePrefix, turns, imag
     { model, ...shape.body, system: anthropicSystem(system, cachePrefix), messages, stream: true },
     { signal, headers: shape.headers }
   );
-  let full = '';
-  let stopReason = null;
+  // stop_reason comes in message_delta (end_turn, max_tokens, refusal, ...);
+  // a stream without message_stop did not finish. Thinking deltas count as
+  // activity, so a long think is not taken for a stall.
+  const answer = answerText(onToken);
+  let stop = '';
+  let ended = false;
   for await (const ev of stream) {
-    if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') { full += ev.delta.text; onToken(ev.delta.text); }
-    else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+    if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+      activity(onActivity, 'text');
+      answer.add(ev.delta.text);
+    } else if (ev.type === 'content_block_delta' && ev.delta && (ev.delta.type === 'thinking_delta' || ev.delta.type === 'signature_delta')) {
+      activity(onActivity, 'thinking');
+    } else {
+      activity(onActivity, 'other');
+      if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason;
+      else if (ev.type === 'message_stop') ended = true;
+    }
   }
-  if (stopReason === 'refusal') {
-    throw new Error('Claude declined this request (a safety filter). Try rephrasing it, or pick another model in Settings.');
-  }
-  if (stopReason === 'max_tokens' && !full.trim()) throw new Error(OUTPUT_BUDGET_EXHAUSTED);
-  return full;
+  return settleAnswer(answer.finish(stop, { cutShort: !ended || !!(signal && signal.aborted) }), onToken, lengthCut);
 }
 
-async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, signal }) {
+async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, effort, onToken, onActivity, lengthCut, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey });
@@ -550,15 +793,23 @@ async function streamGemini({ apiKey, model, system, turns, imageDataUrl, imageD
     delete config.thinkingConfig;
     stream = await ai.models.generateContentStream({ model, contents, config });
   }
-  let full = '';
+  // finishReason comes on the last candidate (STOP, MAX_TOKENS, SAFETY,
+  // RECITATION, ...). A blocked prompt has no candidate, only
+  // promptFeedback.blockReason: the safety filter stopped it.
+  const answer = answerText(onToken);
+  let stop = '';
   for await (const chunk of stream) {
     const t = chunk && chunk.text;
-    if (t) { full += t; onToken(t); }
+    activity(onActivity, t ? 'text' : 'other');
+    if (t) answer.add(t);
+    const candidate = chunk && Array.isArray(chunk.candidates) ? chunk.candidates[0] : null;
+    if (candidate && candidate.finishReason) stop = candidate.finishReason;
+    else if (!stop && chunk && chunk.promptFeedback && chunk.promptFeedback.blockReason) stop = 'SAFETY';
   }
-  return full;
+  return settleAnswer(answer.finish(stop, { cutShort: !!(signal && signal.aborted) }), onToken, lengthCut);
 }
 
-async function streamOllama({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, signal }) {
+async function streamOllama({ apiKey, model, system, turns, imageDataUrl, imageDataUrls, maxTokens, onToken, onActivity, lengthCut, signal }) {
   const images = imagesOf(imageDataUrl, imageDataUrls);
   const baseUrl = apiKey || 'http://localhost:11434';
   const url = `${baseUrl.replace(/\/$/, '')}/api/chat`;
@@ -594,36 +845,34 @@ async function streamOllama({ apiKey, model, system, turns, imageDataUrl, imageD
     throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
   }
 
+  // Each line is one JSON object; the last has done: true and done_reason
+  // ("stop", "length", ...).
   const decoder = new TextDecoder();
-  let full = '';
+  const answer = answerText(onToken);
+  let stop = '';
+  let ended = false;
   let buffer = '';
+  const readLine = (line) => {
+    if (!line.trim()) return;
+    let data;
+    try { data = JSON.parse(line); } catch { return; }
+    const text = data.message && data.message.content;
+    const thinking = !text && !!(data.message && data.message.thinking);
+    activity(onActivity, text ? 'text' : thinking ? 'thinking' : 'other');
+    if (text) answer.add(text);
+    if (data.done) {
+      ended = true;
+      stop = data.done_reason || 'stop';
+    }
+  };
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop(); // keep incomplete line
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const data = JSON.parse(line);
-        if (data.message && data.message.content) {
-          full += data.message.content;
-          onToken(data.message.content);
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
+    lines.forEach(readLine);
   }
-  if (buffer.trim()) {
-    try {
-      const data = JSON.parse(buffer);
-      if (data.message && data.message.content) {
-        full += data.message.content;
-        onToken(data.message.content);
-      }
-    } catch (e) { }
-  }
-  return full;
+  readLine(buffer);
+  return settleAnswer(answer.finish(stop, { cutShort: !ended || !!(signal && signal.aborted) }), onToken, lengthCut);
 }
 
 function createLLM(settings) {
@@ -632,6 +881,7 @@ function createLLM(settings) {
   let apiKey = keys[provider];
   let baseURL = '';
   let configurationError = '';
+  let missingKey = false;
   const tier = settings.smart ? 'smart' : 'fast';
   const models = settings.models || {};
   let model = (models[provider] || {})[tier];
@@ -673,7 +923,8 @@ function createLLM(settings) {
     }
   } else if (provider !== 'ollama' && !apiKey) {
     // Ollama is a local server: the field holds a URL, and no key is required.
-    configurationError = `Add your ${provider} API key in Settings.`;
+    configurationError = `Add your ${normalizeProviderName(provider)} key in Settings.`;
+    missingKey = true;
   }
 
   // Azure needs a second credential: the resource endpoint.
@@ -683,39 +934,115 @@ function createLLM(settings) {
 
   const ready = !configurationError && !!model;
   const maxTokens = settings.smart ? 1400 : 700;
+  // publik's fast tier reads a screenshot too coarsely, so a question that
+  // carries one goes to the smart alias (upstream 0.2.7).
+  const visionModel = provider === PUBLIK_PROVIDER ? publikVisionModel(settings, model) : model;
+
+  // publik branches return an Error carrying `.action`; the string branches
+  // become an Error here.
+  const wrap = (error, failedModel) => {
+    const wrapped = formatProviderErrorMessage(error, provider, failedModel);
+    if (wrapped instanceof Error) return wrapped;
+    const friendly = new Error(wrapped);
+    if (isSettingsFixable(error)) friendly.action = { kind: 'settings' };
+    if (error && error.cancelled) friendly.cancelled = true; // keep cancellation visible to the caller
+    return friendly;
+  };
 
   return {
-    provider, model, apiKey, baseURL,
+    provider, model, visionModel, apiKey, baseURL,
     ready,
     configurationError,
+    missingKey,
+    providerName: normalizeProviderName(provider),
     async stream(params) {
       if (!ready) throw new Error(configurationError || `Complete the ${provider} provider settings.`);
-      const args = { apiKey, baseURL, endpoint, model, maxTokens, ...params, effort: resolveEffort(params.effort, settings.smart), turns: sanitizeTurns(params.turns) };
+      const hasImage = !!(params && (params.imageDataUrl || (Array.isArray(params.imageDataUrls) && params.imageDataUrls.length)));
+      const useModel = hasImage ? visionModel : model;
+      const args = { apiKey, baseURL, endpoint, model: useModel, maxTokens, ...params, effort: resolveEffort(params.effort, settings.smart), turns: sanitizeTurns(params.turns) };
+      // An explicit maxTokens: undefined (or any non-number) falls back to the
+      // default cap; it must never reach the request as NaN.
+      if (!(Number.isFinite(args.maxTokens) && args.maxTokens > 0)) args.maxTokens = maxTokens;
+      const visibleTokens = args.maxTokens;
+      if (provider === PUBLIK_PROVIDER) {
+        args.maxTokens = publikOutputCap(visibleTokens, useModel);
+        args.watchDone = true;
+      } else {
+        delete args.watchDone; // own keys: no publik-only behaviour
+      }
       try {
-        if (provider === 'openai') return await streamOpenAI({ ...args, nativeOpenAI: true });
-        if (provider === CUSTOM_PROVIDER) return await streamOpenAI(args);
-        if (provider === PUBLIK_PROVIDER) return await streamOpenAI(args);
-        if (provider === 'ollama') return await streamOllama(args);
-        if (provider === 'groq') return await streamOpenAI({ ...args, baseURL: GROQ_BASE_URL, imageDataUrl: groqAcceptsImages(model) ? args.imageDataUrl : null });
-        if (provider === 'cerebras') return await streamOpenAI({ ...args, baseURL: CEREBRAS_BASE_URL });
-        if (provider === 'minimax') return await streamOpenAI({ ...args, baseURL: MINIMAX_BASE_URLS[minimaxRegion] || MINIMAX_BASE_URLS.global_en });
-        if (provider === 'deepseek') return await streamOpenAI({ ...args, baseURL: DEEPSEEK_BASE_URL });
-        if (provider === 'anthropic') return await streamAnthropic(args);
-        if (provider === 'gemini') return await streamGemini(args);
-        if (provider === 'azure') return await streamAzure(args);
-        throw new Error('unknown provider: ' + provider);
+        return await streamWith(provider, args, minimaxRegion);
       } catch (error) {
-        // publik branches return an Error carrying `.action`; the string
-        // branches keep working unchanged.
-        const wrapped = formatProviderErrorMessage(error, provider, model);
-        if (wrapped instanceof Error) throw wrapped;
-        const friendly = new Error(wrapped);
-        if (isSettingsFixable(error)) friendly.action = { kind: 'settings' };
-        if (error && error.cancelled) friendly.cancelled = true; // keep cancellation visible to the caller
-        throw friendly;
+        const retryModel = provider === PUBLIK_PROVIDER ? publikRefusalRetryModel(error, useModel, settings, hasImage) : '';
+        if (!retryModel || (args.signal && args.signal.aborted)) throw wrap(error, useModel);
+        if (typeof args.onRetry === 'function') {
+          try { args.onRetry({ from: useModel, to: retryModel, finishReason: error.finishReason || null }); } catch { /* a log hook must never break the answer */ }
+        }
+        try {
+          return await streamOpenAI({ ...args, model: retryModel, maxTokens: publikOutputCap(visibleTokens, retryModel) });
+        } catch (retryError) {
+          // The retry's own empty or refused answer says what happened to it;
+          // any other failure of the retry leaves the first, honest answer.
+          if (retryError && retryError.emptyAnswer) throw wrap(retryError, retryModel);
+          error.retryFailed = (retryError && retryError.message) || String(retryError);
+          throw wrap(error, useModel);
+        }
       }
     }
   };
+}
+
+function streamWith(provider, args, minimaxRegion) {
+  if (provider === 'openai') return streamOpenAI({ ...args, nativeOpenAI: true });
+  if (provider === CUSTOM_PROVIDER) return streamOpenAI(args);
+  if (provider === PUBLIK_PROVIDER) return streamOpenAI(args);
+  if (provider === 'ollama') return streamOllama(args);
+  if (provider === 'groq') {
+    const images = groqAcceptsImages(args.model);
+    return streamOpenAI({ ...args, baseURL: GROQ_BASE_URL, imageDataUrl: images ? args.imageDataUrl : null, imageDataUrls: images ? args.imageDataUrls : null });
+  }
+  if (provider === 'cerebras') return streamOpenAI({ ...args, baseURL: CEREBRAS_BASE_URL });
+  if (provider === 'minimax') return streamOpenAI({ ...args, baseURL: MINIMAX_BASE_URLS[minimaxRegion] || MINIMAX_BASE_URLS.global_en });
+  if (provider === 'deepseek') return streamOpenAI({ ...args, baseURL: DEEPSEEK_BASE_URL });
+  if (provider === 'anthropic') return streamAnthropic(args);
+  if (provider === 'gemini') return streamGemini(args);
+  if (provider === 'azure') return streamAzure(args);
+  return Promise.reject(new Error('unknown provider: ' + provider));
+}
+
+// publik's tiers are reasoning models whose thinking counts inside the output
+// cap (prod: publik-fast p99 628 reasoning tokens, publik-balanced p99 2,691),
+// so the cap gets room for it and maxTokens stays the visible budget. The
+// user pays for tokens used, not for the cap.
+const PUBLIK_THINKING_HEADROOM = { fast: 2048, smart: 4096 };
+function publikOutputCap(visibleTokens, model) {
+  const room = model === publik.DEFAULT_MODELS.fast ? PUBLIK_THINKING_HEADROOM.fast : PUBLIK_THINKING_HEADROOM.smart;
+  return visibleTokens + room;
+}
+
+// The publik model a screenshot question uses: on the smart tier, the model
+// already chosen; on the fast tier, the smart alias, unless the user typed
+// their own Fast model (an explicit choice stands).
+function publikVisionModel(settings, fastOrSmartModel) {
+  if (settings.smart) return fastOrSmartModel;
+  const tierModels = (settings.models || {})[PUBLIK_PROVIDER] || {};
+  const fast = String(tierModels.fast || '').trim();
+  if (fast && !publik.TIER_NAMES.includes(fast)) return fastOrSmartModel;
+  return String(tierModels.smart || '').trim() || publik.DEFAULT_MODELS.smart;
+}
+
+// A publik-balanced answer the safety filter stopped before any text showed
+// is asked once more on another tier, never in a loop: publik-smart on a
+// linked install, else publik-fast for a text-only question (publik-fast
+// reads screenshots too coarsely).
+const PUBLIK_BALANCED = 'publik-balanced';
+function publikRefusalRetryModel(error, model, settings, hasImage) {
+  if (!error || !error.filtered || !error.emptyAnswer) return '';
+  if (model !== PUBLIK_BALANCED) return '';
+  const p = (settings && settings.publik) || {};
+  const claimed = ((p.wallet && p.wallet.claimState) || p.claimState) === 'claimed';
+  if (claimed) return 'publik-smart';
+  return hasImage ? '' : publik.DEFAULT_MODELS.fast;
 }
 
 module.exports = {
@@ -736,5 +1063,19 @@ module.exports = {
   CURRENT_ANTHROPIC_DEFAULT_FAST,
   CURRENT_ANTHROPIC_DEFAULT_SMART,
   PUBLIK_PROVIDER,
-  isRateLimitError
+  isRateLimitError,
+  normalizeProviderName,
+  publikOutputCap,
+  PUBLIK_THINKING_HEADROOM,
+  LENGTH_EMPTY_MESSAGE,
+  EMPTY_ANSWER_MESSAGE,
+  LENGTH_CUT_NOTE,
+  FILTER_EMPTY_MESSAGE,
+  FILTER_CUT_NOTE,
+  RECITATION_EMPTY_MESSAGE,
+  RECITATION_CUT_NOTE,
+  INCOMPLETE_CUT_NOTE,
+  REFUSAL_SENTENCES,
+  refusalFilter,
+  stopKind
 };

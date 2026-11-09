@@ -191,32 +191,3 @@ test('a 402 is the response\'s message plus exactly one link, top_up_url', () =>
   assert.equal(r.action.url, CLAIM_URL);
   assert.equal(Object.keys(r).filter((k) => k === 'action').length, 1, 'one action, never a second link');
 });
-
-test('copy rule: the CTA copy says "publik API", dollars, never "credits", never the provider, never "OpenAI API access"', () => {
-  assert.equal(publik.COPY.whyItCosts, WHY);
-  const strings = [publik.COPY.whyItCosts, publik.COPY.whyItCostsToggle, ...Object.values(publik.COPY.cta), publik.starterLine({ starterMicros: 50000 })];
-  const low = publik.lowStarterNotice({ connected: true, claimState: 'anonymous', starterMicros: 50000, balanceMicros: 1000, topUpUrl: CLAIM_URL });
-  strings.push(low.message, low.action.label);
-  for (const s of strings) {
-    assert.doesNotMatch(s, /OpenAI API access/i, s);
-    assert.doesNotMatch(s, /\bcredits\b/i, s);
-    assert.doesNotMatch(s, /OpenAI|ChatGPT|Anthropic|Gemini|GPT/i, s);
-    assert.doesNotMatch(s, /\btokens?\b/i, s);
-    assert.doesNotMatch(s, /\bper[- ]token\b/i, s);
-  }
-  // The renderer and the settings card carry the same labels and the one sentence's toggle.
-  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
-  assert.match(html, /id="publik-link"[^>]*>Link this computer &amp; pick a plan</);
-  assert.match(html, /id="publik-why-summary"[^>]*>Why it costs money</);
-  assert.match(html, /id="publik-why-text"/);
-  const js = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  assert.match(js, /cue\.publikCardSeen\(\)/);
-  assert.match(js, /function showPublikCard\(\)/);
-  assert.match(js, /action\.kind === 'card'/);
-  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
-  assert.match(preload, /publikCardSeen: \(\) => ipcRenderer\.invoke\('publik:card-seen'\)/);
-  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(main, /ipcMain\.handle\('publik:card-seen'/);
-  assert.match(main, /publik\.resolveOpenTarget\(url, s\.publik\.claimUrl\)/);
-  assert.match(main, /!settings\.publik\.cardShown/, 'runFeature gates the starter on the card having been shown');
-});

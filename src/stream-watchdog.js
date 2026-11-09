@@ -41,6 +41,13 @@ async function streamWithWatchdog(stream, params, timeoutMs = 25000, cancelSigna
           if (settled) return;
           rearm();
           params.onToken(text);
+        },
+        // Every chunk counts, thinking-only ones included: a model that
+        // thinks for a while is not a stalled stream.
+        onActivity: kind => {
+          if (settled) return;
+          rearm();
+          if (typeof params.onActivity === 'function') params.onActivity(kind);
         }
       })),
       stalled,
