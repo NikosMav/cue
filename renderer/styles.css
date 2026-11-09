@@ -498,6 +498,7 @@ button:focus { outline: none; }
 .debrief-q-hint { display: block; font-size: 12px; color: var(--tx-mut); }
 .debrief-q-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .debrief-q-status { font-size: 12px; color: var(--tx-2); }
+/* impeccable-disable-next-line side-tab -- a Markdown quote in answers, not a card. */
 .ai-text blockquote { margin: 4px 0 10px; padding: 6px 10px; border-left: 3px solid rgba(60,131,245,0.5); background: rgba(60,131,245,0.06); border-radius: 0 6px 6px 0; color: var(--tx-2); }
 /* Practice controls replace the action row while practising */
 #practice-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; white-space: nowrap; }
